@@ -1,0 +1,26 @@
+Metadata-Version: 2.1
+Name: dagster-gcp
+Version: 0.25.11
+Summary: Package for GCP-specific Dagster framework op and resource components.
+Home-page: https://github.com/dagster-io/dagster/tree/master/python_modules/libraries/dagster-gcp
+Author: Dagster Labs
+Author-email: hello@dagsterlabs.com
+License: Apache-2.0
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: License :: OSI Approved :: Apache Software License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.9,<3.13
+License-File: LICENSE
+Requires-Dist: dagster ==1.9.11
+Requires-Dist: dagster-pandas ==0.25.11
+Requires-Dist: db-dtypes
+Requires-Dist: google-api-python-client
+Requires-Dist: google-cloud-bigquery
+Requires-Dist: google-cloud-storage
+Requires-Dist: oauth2client
+Provides-Extra: pyarrow
+Requires-Dist: pyarrow ; extra == 'pyarrow'
+
