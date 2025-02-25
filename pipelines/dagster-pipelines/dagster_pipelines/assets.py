@@ -136,14 +136,14 @@ def github_project_orgs(context) -> dg.MaterializeResult:
 
     # connect to cloud sql postgres
     with cloud_sql_engine.connect() as conn:
-        query = text("select * from latest_project_toml_files")
+        query = text("select toml_file_data_url from latest_project_toml_files")
         result = conn.execute(query)
         df = pd.DataFrame(result.fetchall(), columns=result.keys())
 
         # get data from each toml file listed in the df
         all_orgs = []
-        def get_toml_data(row):
-            toml_data = get_toml_data(row['toml_file_data_url'])
+        def parse_toml_data(row):
+            toml_data = get_toml_data(row)
             project_title = toml_data['title']
             for org in toml_data['github_organizations']:
                 if 'missing' not in org:
@@ -155,7 +155,7 @@ def github_project_orgs(context) -> dg.MaterializeResult:
                     )
             return row
 
-        df.apply(get_toml_data, axis=1)  # axis=1 applies the function to each row
+        df['toml_file_data_url'].apply(parse_toml_data)
 
         # create org dataframe
         df_org = pd.DataFrame(all_orgs)

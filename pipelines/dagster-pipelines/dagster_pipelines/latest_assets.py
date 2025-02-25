@@ -146,7 +146,7 @@ def latest_github_project_repos(context) -> dg.MaterializeResult:
         DROP TABLE IF EXISTS latest_project_repos;
         CREATE TABLE IF NOT EXISTS latest_project_repos AS
         SELECT project_title, repo, data_timestamp,
-            substring(repo from 'https://github\.com/(.+)') AS repo_name
+            substring(repo from 'https://github.com/(.+)') AS repo_name
         FROM project_repos
         WHERE data_timestamp = (SELECT MAX(data_timestamp) FROM project_repos);
     """)
