@@ -5,11 +5,13 @@ import requests
 import pandas as pd
 import toml
 from sqlalchemy import text
+import re
 
 # define the asset that gets the list of project toml data files from the crypto ecosystems repo
 @dg.asset(
     required_resource_keys={"cloud_sql_postgres_resource"},
     group_name="ingestion",
+    tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
 )
 def crypto_ecosystems_project_toml_files(context) -> dg.MaterializeResult:
 
@@ -99,18 +101,19 @@ def crypto_ecosystems_project_toml_files(context) -> dg.MaterializeResult:
         result = conn.execute(preview_query)
         result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
 
-        return dg.MaterializeResult(
-            metadata={
-                "row_count": dg.MetadataValue.int(row_count),
-                "preview": dg.MetadataValue.md(result_df.to_markdown(index=False)),
-            }
-        )
+    return dg.MaterializeResult(
+        metadata={
+            "row_count": dg.MetadataValue.int(row_count),
+            "preview": dg.MetadataValue.md(result_df.to_markdown(index=False)),
+        }
+    )
 
 
 # define the asset that gets all the list of github orgs for a project. Use latest project toml files from the project_toml_files table
 @dg.asset(
     required_resource_keys={"cloud_sql_postgres_resource"},
     group_name="ingestion",
+    tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
 )
 def github_project_orgs(context) -> dg.MaterializeResult:
     # Get the cloud sql postgres resource
@@ -187,6 +190,7 @@ def github_project_orgs(context) -> dg.MaterializeResult:
 @dg.asset(
     required_resource_keys={"cloud_sql_postgres_resource"},
     group_name="ingestion",
+    tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
 )
 def github_project_sub_ecosystems(context) -> dg.MaterializeResult:
     # Get the cloud sql postgres resource
@@ -212,14 +216,14 @@ def github_project_sub_ecosystems(context) -> dg.MaterializeResult:
 
     # connect to cloud sql postgres
     with cloud_sql_engine.connect() as conn:
-        query = text("select * from latest_project_toml_files")
+        query = text("select toml_file_data_url from latest_project_toml_files")
         result = conn.execute(query)
         df = pd.DataFrame(result.fetchall(), columns=result.keys())
 
         # get data from each toml file listed in the df
         all_subecosystems = []
-        def get_toml_data(row):
-            toml_data = get_toml_data(row['toml_file_data_url'])
+        def parse_toml_data(row):
+            toml_data = get_toml_data(row)
             project_title = toml_data['title']
             # Check if 'sub_ecosystems' key exists
             if 'sub_ecosystems' in toml_data:
@@ -236,7 +240,7 @@ def github_project_sub_ecosystems(context) -> dg.MaterializeResult:
                             )
             return row
 
-        df.apply(get_toml_data, axis=1)  # axis=1 applies the function to each row
+        df['toml_file_data_url'].apply(parse_toml_data)
 
         # create org dataframe
         df_subecosystems = pd.DataFrame(all_subecosystems)
@@ -268,6 +272,7 @@ def github_project_sub_ecosystems(context) -> dg.MaterializeResult:
 @dg.asset(
     required_resource_keys={"cloud_sql_postgres_resource"},
     group_name="ingestion",
+    tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
 )
 def github_project_repos(context) -> dg.MaterializeResult:
     # Get the cloud sql postgres resource
@@ -291,16 +296,46 @@ def github_project_repos(context) -> dg.MaterializeResult:
         response.raise_for_status()
         return toml.loads(response.text)
 
+    def get_repo_source(repo_url):
+        """
+        Determines the source (e.g., GitHub, Bitbucket, GitLab) of a repository
+        from its URL.
+
+        Args:
+            repo_url: The URL of the repository.
+
+        Returns:
+            A string representing the source (e.g., "github", "bitbucket", "gitlab"),
+            or "unknown" if the source cannot be determined.
+        """
+        if not isinstance(repo_url, str):  # Handle potential non-string input
+            return "unknown"
+
+        # Lowercase the URL for case-insensitive matching
+        repo_url = repo_url.lower()
+
+        # Use regular expressions for more robust matching
+        if re.search(r"github\.com", repo_url):
+            return "github"
+        elif re.search(r"bitbucket\.org", repo_url):
+            return "bitbucket"
+        elif re.search(r"gitlab\.com", repo_url):
+            return "gitlab"
+        elif re.search(r"sourceforge\.net", repo_url): #Example of adding another source.
+            return "sourceforge"
+        else:
+            return "unknown"
+
     # connect to cloud sql postgres
     with cloud_sql_engine.connect() as conn:
-        query = text("select * from latest_project_toml_files")
+        query = text("select toml_file_data_url from latest_project_toml_files")
         result = conn.execute(query)
         df = pd.DataFrame(result.fetchall(), columns=result.keys())
 
         # get data from each toml file listed in the df
         all_repos = []
-        def get_toml_data(row):
-            toml_data = get_toml_data(row['toml_file_data_url'])
+        def parse_toml_data(row):
+            toml_data = get_toml_data(row)
             project_title = toml_data['title']
             # Check if 'repo' key exists
             if 'repo' in toml_data:
@@ -310,8 +345,9 @@ def github_project_repos(context) -> dg.MaterializeResult:
                         if 'missing' not in repo:
                             all_repos.append(
                                 {
-                                "project_title": project_title,
-                                "repo": repo['url'],
+                                    "project_title": project_title,
+                                    "repo": repo['url'],
+                                    "repo_source": get_repo_source(repo['url'])
                                 }
                             )
                 else:
@@ -321,7 +357,7 @@ def github_project_repos(context) -> dg.MaterializeResult:
                     }
             return row
 
-        df.apply(get_toml_data, axis=1)  # axis=1 applies the function to each row
+        df['toml_file_data_url'].apply(parse_toml_data)
 
         # create org dataframe
         df_repos = pd.DataFrame(all_repos)
