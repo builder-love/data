@@ -1,15 +1,5 @@
-Welcome to your new dbt project!
+## dbt integration
 
-### Using the starter project
+This project uses dbt models to transform and load ingested data. View the existing transform and load operations in the /models folder. dbt models are scheduled using dagster. 
 
-Try running the following commands:
-- dbt run
-- dbt test
-
-
-### Resources:
-- Learn more about dbt [in the docs](https://docs.getdbt.com/docs/introduction)
-- Check out [Discourse](https://discourse.getdbt.com/) for commonly asked questions and answers
-- Join the [chat](https://community.getdbt.com/) on Slack for live discussions and support
-- Find [dbt events](https://events.getdbt.com) near you
-- Check out [the blog](https://blog.getdbt.com/) for the latest news on dbt's development and best practices
+dbt is used to normalize, clean, and load data to downstream environments of raw ingestion. These tasks are not exclusively handled by dbt, but where dbt offers a better tool for the job it has been used. 
