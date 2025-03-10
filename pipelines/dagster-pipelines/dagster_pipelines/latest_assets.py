@@ -18,11 +18,11 @@ def latest_project_toml_files(context) -> dg.MaterializeResult:
 
         # create latest project toml files data table with the transformed data
         query = text("""
-            DROP TABLE IF EXISTS latest_project_toml_files;
-            CREATE TABLE IF NOT EXISTS latest_project_toml_files AS
+            DROP TABLE IF EXISTS clean.latest_project_toml_files;
+            CREATE TABLE IF NOT EXISTS clean.latest_project_toml_files AS
             SELECT toml_file_data_url, data_timestamp
-            FROM project_toml_files
-            WHERE data_timestamp = (SELECT MAX(data_timestamp) FROM project_toml_files);
+            FROM raw.project_toml_files
+            WHERE data_timestamp = (SELECT MAX(data_timestamp) FROM raw.project_toml_files);
         """)
 
         # Execute the query
@@ -30,12 +30,12 @@ def latest_project_toml_files(context) -> dg.MaterializeResult:
         conn.commit()
 
         # capture asset metadata
-        preview_query = text("select count(*) from latest_project_toml_files")
+        preview_query = text("select count(*) from clean.latest_project_toml_files")
         result = conn.execute(preview_query)
         # Fetch all rows into a list of tuples
         row_count = result.fetchone()[0]
 
-        preview_query = text("select * from latest_project_toml_files limit 10")
+        preview_query = text("select * from clean.latest_project_toml_files limit 10")
         result = conn.execute(preview_query)
         result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
 
@@ -61,11 +61,11 @@ def latest_github_project_orgs(context) -> dg.MaterializeResult:
 
         # create latest project organizations data table with the transformed data
         query = text("""
-            DROP TABLE IF EXISTS latest_project_organizations;
-            CREATE TABLE IF NOT EXISTS latest_project_organizations AS
+            DROP TABLE IF EXISTS clean.latest_project_organizations;
+            CREATE TABLE IF NOT EXISTS clean.latest_project_organizations AS
             SELECT project_title, project_organization_url, data_timestamp
-            FROM project_organizations
-            WHERE data_timestamp = (SELECT MAX(data_timestamp) FROM project_organizations);
+            FROM raw.project_organizations
+            WHERE data_timestamp = (SELECT MAX(data_timestamp) FROM raw.project_organizations);
         """)
 
         # Execute the query
@@ -73,12 +73,12 @@ def latest_github_project_orgs(context) -> dg.MaterializeResult:
         conn.commit()
 
         # capture asset metadata
-        preview_query = text("select count(*) from latest_project_organizations")
+        preview_query = text("select count(*) from clean.latest_project_organizations")
         result = conn.execute(preview_query)
         # Fetch all rows into a list of tuples
         row_count = result.fetchone()[0]
 
-        preview_query = text("select * from latest_project_organizations limit 10")
+        preview_query = text("select * from clean.latest_project_organizations limit 10")
         result = conn.execute(preview_query)
         result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
 
@@ -105,11 +105,11 @@ def latest_github_project_sub_ecosystems(context) -> dg.MaterializeResult:
 
         # create latest project sub ecosystems data table with the transformed data
         query = text("""
-            DROP TABLE IF EXISTS latest_project_sub_ecosystems;
-            CREATE TABLE IF NOT EXISTS latest_project_sub_ecosystems AS
+            DROP TABLE IF EXISTS clean.latest_project_sub_ecosystems;
+            CREATE TABLE IF NOT EXISTS clean.latest_project_sub_ecosystems AS
             SELECT project_title, sub_ecosystem, data_timestamp
-            FROM project_sub_ecosystems
-            WHERE data_timestamp = (SELECT MAX(data_timestamp) FROM project_sub_ecosystems);
+            FROM raw.project_sub_ecosystems
+            WHERE data_timestamp = (SELECT MAX(data_timestamp) FROM raw.project_sub_ecosystems);
         """)
 
         # Execute the query
@@ -117,12 +117,12 @@ def latest_github_project_sub_ecosystems(context) -> dg.MaterializeResult:
         conn.commit()
 
         # capture asset metadata
-        preview_query = text("select count(*) from latest_project_sub_ecosystems")
+        preview_query = text("select count(*) from clean.latest_project_sub_ecosystems")
         result = conn.execute(preview_query)
         # Fetch all rows into a list of tuples
         row_count = result.fetchone()[0]
 
-        preview_query = text("select * from latest_project_sub_ecosystems limit 10")
+        preview_query = text("select * from clean.latest_project_sub_ecosystems limit 10")
         result = conn.execute(preview_query)
         result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
 
@@ -149,24 +149,24 @@ def latest_github_project_repos(context) -> dg.MaterializeResult:
 
         # create latest project repos data table with the transformed data
         query = text("""
-            DROP TABLE IF EXISTS latest_project_repos;
-            CREATE TABLE IF NOT EXISTS latest_project_repos AS
+            DROP TABLE IF EXISTS clean.latest_project_repos;
+            CREATE TABLE IF NOT EXISTS clean.latest_project_repos AS
             SELECT project_title, repo, repo_source, data_timestamp,
             substring(repo from 'https://github.com/(.+)') AS repo_name
-            FROM project_repos
-            WHERE data_timestamp = (SELECT MAX(data_timestamp) FROM project_repos);
+            FROM raw.project_repos
+            WHERE data_timestamp = (SELECT MAX(data_timestamp) FROM raw.project_repos);
         """)
 
         conn.execute(query)
         conn.commit()
 
         # capture asset metadata
-        preview_query = text("select count(*) from latest_project_repos")
+        preview_query = text("select count(*) from clean.latest_project_repos")
         result = conn.execute(preview_query)
         # Fetch all rows into a list of tuples
         row_count = result.fetchone()[0]
 
-        preview_query = text("select * from latest_project_repos limit 10")
+        preview_query = text("select * from clean.latest_project_repos limit 10")
         result = conn.execute(preview_query)
         result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
 

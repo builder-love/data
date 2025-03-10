@@ -1,5 +1,6 @@
 import os
 
+from pathlib import Path
 import time
 import dagster as dg
 import pandas as pd
@@ -8,7 +9,21 @@ import requests
 import json
 import random
 from dagster_pipelines.latest_assets import latest_github_project_repos
+from dagster_dbt import DbtCliResource, dbt_assets
+from dagster import asset, AssetExecutionContext
+from dagster_pipelines.resources import dbt_resource
 
+################################################ normalized time series data ################################################
+@dbt_assets(
+    manifest="/home/builder-love/data/pipelines/dbt-pipelines/dbt_pipelines/target/manifest.json",
+    select="fqn:*"  # Select ALL dbt resources
+)
+def all_dbt_assets(context: AssetExecutionContext, dbt_resource: DbtCliResource):
+    yield from dbt_resource.cli(["build"], context=context).stream()
+
+########################################################################################################################
+
+################################################ latest and distinct data ################################################
 # define the asset that gets the distinct repo list from the latest_github_project_repos table
 @dg.asset(
     required_resource_keys={"cloud_sql_postgres_resource"},
@@ -25,20 +40,20 @@ def latest_distinct_github_project_repos(context) -> dg.MaterializeResult:
 
         # create latest project toml files data table with the transformed data
         conn.execute(text("""
-            DROP TABLE IF EXISTS latest_distinct_project_repos;
-            CREATE TABLE IF NOT EXISTS latest_distinct_project_repos AS
+            DROP TABLE IF EXISTS clean.latest_distinct_project_repos;
+            CREATE TABLE IF NOT EXISTS clean.latest_distinct_project_repos AS
             SELECT DISTINCT repo, repo_source, EXTRACT(EPOCH FROM NOW()) as data_timestamp
-            FROM latest_project_repos;
+            FROM raw.latest_project_repos;
         """))
         conn.commit()
 
         # capture asset metadata
-        preview_query = text("select count(*) from latest_distinct_project_repos")
+        preview_query = text("select count(*) from clean.latest_distinct_project_repos")
         result = conn.execute(preview_query)
         # Fetch all rows into a list of tuples
         row_count = result.fetchone()[0]
 
-        preview_query = text("select * from latest_distinct_project_repos limit 10")
+        preview_query = text("select * from clean.latest_distinct_project_repos limit 10")
         result = conn.execute(preview_query)
         result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
 
@@ -48,6 +63,10 @@ def latest_distinct_github_project_repos(context) -> dg.MaterializeResult:
             "preview": dg.MetadataValue.md(result_df.to_markdown(index=False)),
         }
     )
+
+########################################################################################################################
+
+################################################ active repos list #######################################################
 
 # define the asset that gets the active, distinct repo list from the latest_distinct_project_repos table
 @dg.asset(
@@ -108,7 +127,7 @@ def latest_active_distinct_github_project_repos(context) -> dg.MaterializeResult
         else:
             return False
 
-    def check_github_repo_exists(repo_url, gh_pat):
+    def check_github_repo_exists(repo_urls, gh_pat, repo_source):
         """
         Checks if GitHub repository exists using the GraphQL API.
 
@@ -202,9 +221,9 @@ def latest_active_distinct_github_project_repos(context) -> dg.MaterializeResult
                         for j, repo_url in enumerate(batch):
                             repo_data = data['data'].get(f'repo{j}')
                             if repo_data:
-                                results[repo_url] = True
+                                results[repo_url] = {"is_active": True, "repo_source": repo_source}
                             else:
-                                results[repo_url] = False
+                                results[repo_url] = {"is_active": False, "repo_source": repo_source}
                     break
 
                 except requests.exceptions.RequestException as e:
@@ -216,7 +235,7 @@ def latest_active_distinct_github_project_repos(context) -> dg.MaterializeResult
                     if attempt == max_retries - 1:
                         print(f"Max retries reached or unrecoverable error for batch. Giving up. Error: {e}")
                         for repo_url in batch:
-                            results[repo_url] = False
+                            results[repo_url] = {"is_active": False, "repo_source": repo_source}
                         break
                     # --- Rate Limit Handling (REST API style - for 403/429) ---
                     if isinstance(e, requests.exceptions.HTTPError) and e.response.status_code in (403, 429):
@@ -240,12 +259,12 @@ def latest_active_distinct_github_project_repos(context) -> dg.MaterializeResult
                 except KeyError as e:
                     print(f"KeyError: {e}. Response: {data}")
                     for repo_url in batch:
-                        results[repo_url] = False
+                        results[repo_url] = {"is_active": False, "repo_source": repo_source}
                     break
                 except Exception as e:
                     print(f"An unexpected error occurred: {e}")
                     for repo_url in batch:
-                        results[repo_url] = False
+                        results[repo_url] = {"is_active": False, "repo_source": repo_source}
                     break
         return results
 
@@ -255,7 +274,7 @@ def latest_active_distinct_github_project_repos(context) -> dg.MaterializeResult
         # query the latest_distinct_project_repos table to get the distinct repo list
         result = conn.execute(
             text("""select repo, repo_source 
-                    from latest_distinct_project_repos"""
+                    from clean.latest_distinct_project_repos"""
                 )
             )
         distinct_repo_df = pd.DataFrame(result.fetchall(), columns=result.keys())
@@ -266,10 +285,15 @@ def latest_active_distinct_github_project_repos(context) -> dg.MaterializeResult
     # get github pat
     gh_pat = os.getenv('go_blockchain_ecosystem')
 
-    results = check_github_repo_exists(github_urls, gh_pat)
+    results = check_github_repo_exists(github_urls, gh_pat, 'github')
 
     # write results to pandas dataframe
-    results_df = pd.DataFrame(results.items(), columns=['repo', 'is_active'])
+    results_df = pd.DataFrame(
+        [
+            {"repo": url, "is_active": data["is_active"], "repo_source": data["repo_source"]}
+            for url, data in results.items()
+        ]
+    )
 
     # now get non-github repos urls
     non_github_urls = distinct_repo_df[distinct_repo_df['repo_source'] != 'github']
@@ -286,20 +310,20 @@ def latest_active_distinct_github_project_repos(context) -> dg.MaterializeResult
         results_df = pd.concat([results_df, non_github_urls])
 
     # add unix datetime column
-    results_df['data_timestamp'] = pd.Timestamp.now().timestamp()
+    results_df['data_timestamp'] = pd.Timestamp.now()
 
     # write the data to the latest_active_distinct_project_repos table
-    results_df.to_sql('latest_active_distinct_project_repos', cloud_sql_engine, if_exists='replace', index=False)
+    results_df.to_sql('latest_active_distinct_project_repos', cloud_sql_engine, if_exists='replace', index=False, schema='raw')
 
     with cloud_sql_engine.connect() as conn:
 
         # # capture asset metadata
-        preview_query = text("select count(*) from latest_active_distinct_project_repos")
+        preview_query = text("select count(*) from raw.latest_active_distinct_project_repos")
         result = conn.execute(preview_query)
         # Fetch all rows into a list of tuples
         row_count = result.fetchone()[0]
 
-        preview_query = text("select * from latest_active_distinct_project_repos limit 10")
+        preview_query = text("select * from raw.latest_active_distinct_project_repos")
         result = conn.execute(preview_query)
         result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
 
@@ -309,3 +333,5 @@ def latest_active_distinct_github_project_repos(context) -> dg.MaterializeResult
             "preview": dg.MetadataValue.md(result_df.to_markdown(index=False)),
         }
     )
+
+    ########################################################################################################################
