@@ -133,6 +133,8 @@ celerybeat.pid
 env/
 venv/
 pipelines/venv/
+dbt_venv/
+pipelines/dbt_venv/
 ENV/
 env.bak/
 venv.bak/

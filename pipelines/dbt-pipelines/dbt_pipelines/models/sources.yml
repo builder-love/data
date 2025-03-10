@@ -1,0 +1,13 @@
+version: 2
+
+sources:
+  - name: raw
+    database: postgres
+    schema: raw
+    tables:
+      - name: project_toml_files
+      - name: project_sub_ecosystems
+      - name: project_repos_stargaze_count
+      - name: project_repos_fork_count
+      - name: project_repos
+      - name: project_organizations

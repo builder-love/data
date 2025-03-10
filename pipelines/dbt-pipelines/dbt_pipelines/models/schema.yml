@@ -1,0 +1,28 @@
+version: 2
+
+models:
+  - name: normalized_project_toml_files
+    columns:
+      - name: toml_file_data_url
+        tests:
+          - not_null
+      - name: data_timestamp
+        tests:
+          - not_null
+    tests:
+      - unique_combination_of_columns:
+          column_names: [toml_file_data_url, data_timestamp]
+  - name: normalized_project_organizations
+    columns:
+      - name: data_timestamp
+        tests:
+          - not_null
+      - name: project_organization_url
+        tests:
+          - not_null
+      - name: project_title
+        tests:
+          - not_null
+    tests:
+      - unique_combination_of_columns:
+          column_names: [project_organization_url, project_title, data_timestamp]
