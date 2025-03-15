@@ -25,5 +25,5 @@ There are four schemas in the database: raw, clean, public, and api
 - The clean schema consists of some point in time “snapshot” tables, as well as time series data
 - Most tables in the clean schema have had data processing routines and checks performed (i.e., anomalies and errors, etc.)
 - Clean schema tables do not update unless something has changed in the raw source tables.
-- The public schema is an exact copy of the clean schema, and is meant to be a stable environment for the builder.love platform production environment, meaning the public schema will not update if there are errors upstream
-- The api schema is a series of views for the API
+- The prod schema is an exact copy of the clean schema, and is meant to be a stable environment for the builder.love platform production environment, meaning the prod schema will not update if there are errors upstream
+- The api schema is a series of views for the API, sourced from prod schema
