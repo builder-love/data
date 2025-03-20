@@ -1,6 +1,19 @@
 from dagster import schedule, ScheduleDefinition, define_asset_job
-from dagster_pipelines.jobs import crypto_ecosystems_project_toml_files_job, github_project_orgs_job, github_project_sub_ecosystems_job, github_project_repos_job, latest_active_distinct_project_repos_job, project_repos_stargaze_count_job, project_repos_fork_count_job, normalized_dbt_assets_job
-
+from dagster_dbt import build_schedule_from_dbt_selection
+from dagster_pipelines.jobs import (
+    crypto_ecosystems_project_toml_files_job, 
+    github_project_orgs_job, 
+    github_project_sub_ecosystems_job, 
+    github_project_repos_job, 
+    latest_active_distinct_project_repos_job, 
+    project_repos_stargaze_count_job, 
+    project_repos_fork_count_job, 
+    normalized_dbt_assets_job, 
+    project_repos_languages_job,
+    latest_dbt_assets_job,
+    project_repos_commit_count_job
+)
+from dagster_pipelines.cleaning_assets import all_dbt_assets
 # create a schedule to run crypto_ecosystems_project_toml_files_job every 15 days at midnight
 @schedule(
     job=crypto_ecosystems_project_toml_files_job,
@@ -85,7 +98,7 @@ def github_project_repos_schedule(context):
 # create a schedule to run latest_active_distinct_project_repos_job every 15 days at midnight
 @schedule(
     job=latest_active_distinct_project_repos_job,
-    cron_schedule="40 0 15 * *", 
+    cron_schedule="10 0 7,21 * *", 
     execution_timezone="America/New_York"
 )
 def latest_active_distinct_project_repos_schedule(context):
@@ -122,10 +135,10 @@ def project_repos_stargaze_count_schedule(context):
 
     return {}
 
-# create a schedule to run project_repos_fork_count_job every 7 days at midnight
+# create a schedule to run project_repos_fork_count_job every saturday at midnight
 @schedule(
     job=project_repos_fork_count_job,
-    cron_schedule="20 0 * * 0", 
+    cron_schedule="10 0 * * 6", 
     execution_timezone="America/New_York"
 )
 def project_repos_fork_count_schedule(context):
@@ -142,6 +155,46 @@ def project_repos_fork_count_schedule(context):
 
     return {}
 
+# create a schedule to run project_repos_languages_job on the 16th of each month at midnight
+@schedule(
+    job=project_repos_languages_job,
+    cron_schedule="0 0 16 * *", 
+    execution_timezone="America/New_York"
+)
+def project_repos_languages_schedule(context):
+    # Log the start time of the job
+    context.log.info(f"project_repos_languages_schedule job started at: {context.scheduled_execution_time}")
+    start_time = context.scheduled_execution_time
+
+    # Log the end time of the job
+    context.log.info(f"project_repos_languages_schedule job ended at: {context.scheduled_execution_time}")
+    end_time = context.scheduled_execution_time
+    
+    # Log the duration of the job
+    context.log.info(f"project_repos_languages_schedule job duration: {end_time - start_time}")
+
+    return {}
+
+# create a schedule to run project_repos_commit_count_job on the 16th of each month at midnight
+@schedule(
+    job=project_repos_commit_count_job,
+    cron_schedule="10 0 * * 5", 
+    execution_timezone="America/New_York"
+)
+def project_repos_commit_count_schedule(context):
+    # Log the start time of the job
+    context.log.info(f"project_repos_commit_count_schedule job started at: {context.scheduled_execution_time}")
+    start_time = context.scheduled_execution_time
+
+    # Log the end time of the job
+    context.log.info(f"project_repos_commit_count_schedule job ended at: {context.scheduled_execution_time}")
+    end_time = context.scheduled_execution_time
+    
+    # Log the duration of the job
+    context.log.info(f"project_repos_commit_count_schedule job duration: {end_time - start_time}")
+
+    return {}
+
 # create a schedule to run timestamp_normalized_project_toml_files_job every day at midnight est
 # Create the schedule
 normalized_dbt_assets_schedule = ScheduleDefinition(
@@ -149,4 +202,22 @@ normalized_dbt_assets_schedule = ScheduleDefinition(
     cron_schedule="30 22 * * *",
     execution_timezone="America/New_York", 
     name="normalized_dbt_assets_daily_schedule",  # Give the schedule a name
+)
+
+# to select a specific dbt asset, use the following code
+# normalized_dbt_assets_schedule = build_schedule_from_dbt_selection(
+#     [all_dbt_assets],
+#     job_name="normalized_dbt_assets_job",  # Give the schedule a name
+#     cron_schedule="50 9 * * *",
+#     execution_timezone="America/New_York", 
+#     dbt_select="fqn:normalized_project_organizations"
+# )
+
+# create a schedule to run latest_dbt_assets_job every day at midnight est
+# Create the schedule
+latest_dbt_assets_schedule = ScheduleDefinition(
+    job=latest_dbt_assets_job,  # The job to run
+    cron_schedule="0 23 * * *",
+    execution_timezone="America/New_York", 
+    name="latest_dbt_assets_daily_schedule",  # Give the schedule a name
 )
