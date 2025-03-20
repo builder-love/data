@@ -1,15 +1,7 @@
-Welcome to your new dbt project!
+## How do we use dbt?
 
-### Using the starter project
+dbt is used to normalize, clean, and load data between schemas and databases. 
 
-Try running the following commands:
-- dbt run
-- dbt test
+dbt models are a good choice for cleaning and normalizing data since it is mostly standard SQL with standard database object testing built in.
 
-
-### Resources:
-- Learn more about dbt [in the docs](https://docs.getdbt.com/docs/introduction)
-- Check out [Discourse](https://discourse.getdbt.com/) for commonly asked questions and answers
-- Join the [chat](https://community.getdbt.com/) on Slack for live discussions and support
-- Find [dbt events](https://events.getdbt.com) near you
-- Check out [the blog](https://blog.getdbt.com/) for the latest news on dbt's development and best practices
+Ingestion and operation orchestration is handled by dagster, which offers the advantage of a robus user interface and the flexibility of Python.
