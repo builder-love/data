@@ -130,11 +130,15 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.dbt_venv
+.api_venv
 env/
 venv/
-pipelines/venv/
 dbt_venv/
+api_venv/
+pipelines/venv/
 pipelines/dbt_venv/
+pipelines/api_venv/
 ENV/
 env.bak/
 venv.bak/
