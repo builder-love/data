@@ -27,11 +27,29 @@ sources:
     raw:
       +schema: raw
       +database: postgres
+    clean:
+      +schema: clean
+      +database: postgres
+    prod:
+      +schema: prod
+      +database: postgres
+    api:
+      +schema: api
+      +database: postgres
 
 # clean models should materialize targets as tables in the 'clean' schema
 models:
   dbt_pipelines:
-    +materialized: view
+    +materialized: table
     clean:
       +materialized: incremental
       +schema: clean
+    raw:
+      +materialized: table
+      +schema: raw
+    prod:
+      +materialized: table
+      +schema: prod
+    api:
+      +materialized: view
+      +schema: api

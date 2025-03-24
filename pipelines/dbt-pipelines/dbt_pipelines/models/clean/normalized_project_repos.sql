@@ -1,14 +1,14 @@
--- normalized_project_toml_files.sql
+-- normalized_project_repos.sql
 -- create an incremental table in clean with data_timestamp intervals >25 days apart
--- project_toml_files raw table
+-- project_repos raw table
 
 {{ config(
     materialized='incremental',
-    unique_key='toml_file_data_url || data_timestamp',
+    unique_key='project_title || repo || data_timestamp',
     tags=['timestamp_normalized']
 ) }}
 
-{% set initial_load_timestamp = '2025-02-13T06:45:09.319014Z' %}
+{% set initial_load_timestamp = '2025-03-01T17:09:17.279689Z' %}
 
 {% if is_incremental() %}
 
@@ -60,7 +60,7 @@
 
     raw_data_timestamps as (
         select data_timestamp, count(*) as record_count
-        from {{ source('raw', 'project_toml_files') }}
+        from {{ source('raw', 'project_repos') }}
         group by 1
     ),
 
@@ -77,7 +77,7 @@
     SELECT
         po.*
     FROM
-        {{ source('raw', 'project_toml_files') }} po
+        {{ source('raw', 'project_repos') }} po
 
     WHERE po.data_timestamp in (select load_timestamps from load_timestamps)
 
@@ -87,7 +87,7 @@
     SELECT
         po.*
     FROM
-        {{ source('raw', 'project_toml_files') }} po 
+        {{ source('raw', 'project_repos') }} po 
     WHERE po.data_timestamp = '{{ initial_load_timestamp }}'::timestamp
     
 {% endif %}

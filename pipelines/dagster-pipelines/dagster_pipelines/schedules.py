@@ -14,6 +14,9 @@ from dagster_pipelines.jobs import (
     project_repos_commit_count_job
 )
 from dagster_pipelines.cleaning_assets import all_dbt_assets
+from dagster_pipelines.load_data_jobs import refresh_prod_schema
+from dagster_pipelines.api_data import refresh_api_schema
+
 # create a schedule to run crypto_ecosystems_project_toml_files_job every 15 days at midnight
 @schedule(
     job=crypto_ecosystems_project_toml_files_job,
@@ -192,6 +195,47 @@ def project_repos_commit_count_schedule(context):
     
     # Log the duration of the job
     context.log.info(f"project_repos_commit_count_schedule job duration: {end_time - start_time}")
+
+    return {}
+
+# create a schedule to run refresh_prod_schema every night at midnight
+@schedule(
+    job=refresh_prod_schema,
+    cron_schedule="0 0 * * *",
+    execution_timezone="America/New_York"
+)
+def refresh_prod_schema_schedule(context):
+    # Log the start time of the job
+    context.log.info(f"refresh_prod_schema_schedule job started at: {context.scheduled_execution_time}")
+    start_time = context.scheduled_execution_time
+
+    # Log the end time of the job
+    context.log.info(f"refresh_prod_schema_schedule job ended at: {context.scheduled_execution_time}")
+    end_time = context.scheduled_execution_time
+
+    # Log the duration of the job
+    context.log.info(f"refresh_prod_schema_schedule job duration: {end_time - start_time}")
+
+    return {}
+
+# create a schedule to run refresh_api_schema every night at 1 am est
+# note, refreshing the api schema is not required but we do it to ensure any newly added api models are executed and no tests are failing
+@schedule(
+    job=refresh_api_schema,
+    cron_schedule="0 1 * * *",
+    execution_timezone="America/New_York"
+)
+def refresh_api_schema_schedule(context):
+    # Log the start time of the job
+    context.log.info(f"refresh_api_schema_schedule job started at: {context.scheduled_execution_time}")
+    start_time = context.scheduled_execution_time
+
+    # Log the end time of the job
+    context.log.info(f"refresh_api_schema_schedule job ended at: {context.scheduled_execution_time}")
+    end_time = context.scheduled_execution_time
+
+    # Log the duration of the job
+    context.log.info(f"refresh_api_schema_schedule job duration: {end_time - start_time}")
 
     return {}
 
