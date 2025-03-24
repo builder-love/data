@@ -9,13 +9,14 @@ charset-normalizer==3.4.1
 click==8.1.8
 coloredlogs==14.0
 cryptography==44.0.0
-dagster==1.9.11
-dagster-cloud==1.9.11
-dagster-cloud-cli==1.9.11
-dagster-graphql==1.9.11
-dagster-pipes==1.9.11
-dagster-postgres==0.25.11
-dagster-webserver==1.9.11
+dagster==1.10.4
+dagster-webserver==1.10.4
+dagster-graphql==1.10.4 
+dagster-pipes==1.10.4  
+dagster-postgres==0.26.6
+dagster-cloud==1.10.4 
+dagster-cloud-cli==1.10.4 
+dagster-dbt==0.26.4
 -e git+https://github.com/builder-love/data.git@846d9b6b046b74bc26f4373a60749fcccb5df737#egg=dagster_pipelines&subdirectory=pipelines/dagster-pipelines
 Deprecated==1.2.18
 docstring_parser==0.16
