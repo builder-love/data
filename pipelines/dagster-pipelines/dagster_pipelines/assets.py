@@ -5,6 +5,7 @@ import requests
 import pandas as pd
 import toml
 from sqlalchemy import text
+import sqlalchemy
 import re
 import time
 import random
@@ -527,7 +528,7 @@ def latest_active_distinct_github_project_repos(context) -> dg.MaterializeResult
         api_url = "https://api.github.com/graphql"
         headers = {"Authorization": f"bearer {gh_pat}"}
         results = {}  # Store results: {url: True/False}
-        batch_size = 250  # Adjust as needed
+        batch_size = 200  # Adjust as needed
         cpu_time_used = 0
         real_time_used = 0
         real_time_window = 60
@@ -573,7 +574,7 @@ def latest_active_distinct_github_project_repos(context) -> dg.MaterializeResult
 
             base_delay = 1
             max_delay = 60
-            max_retries = 5
+            max_retries = 8
 
             for attempt in range(max_retries):
                 print(f"attempt: {attempt}")
@@ -603,7 +604,7 @@ def latest_active_distinct_github_project_repos(context) -> dg.MaterializeResult
 
                     time_since_start = time.time() - start_time
                     print(f"time_since_start: {time_since_start:.2f} seconds")
-                    time.sleep(3)  # Consistent delay
+                    time.sleep(2.5)  # Consistent delay
                     
                     # use raise for status to catch errors
                     response.raise_for_status()
@@ -680,7 +681,7 @@ def latest_active_distinct_github_project_repos(context) -> dg.MaterializeResult
                         if e.response.status_code in (502, 504):
                             count_502_errors +=1
                             print(f"This process has generated {count_502_errors} 502/504 errors in total.")
-                            delay = 1 * (2 ** attempt) + random.uniform(0, 1)
+                            delay = 1
                             print(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
                             time.sleep(delay)
                             continue
@@ -910,12 +911,13 @@ def github_project_repos_stargaze_count(context) -> dg.MaterializeResult:
         api_url = "https://api.github.com/graphql"
         headers = {"Authorization": f"bearer {gh_pat}"}
         results = {}  # Store results: {url: stargaze_count}
-        batch_size = 300  # Adjust as needed
+        batch_size = 180  # Adjust as needed
         cpu_time_used = 0
         real_time_used = 0
         real_time_window = 60
         cpu_time_limit = 50
         count_403_errors = 0
+        count_502_errors = 0
         batch_time_history = []
 
         for i in range(0, len(repo_urls), batch_size):
@@ -957,7 +959,7 @@ def github_project_repos_stargaze_count(context) -> dg.MaterializeResult:
 
             base_delay = 1
             max_delay = 60
-            max_retries = 5
+            max_retries = 8
 
             for attempt in range(max_retries):
                 print(f"attempt: {attempt}")
@@ -1057,7 +1059,9 @@ def github_project_repos_stargaze_count(context) -> dg.MaterializeResult:
                     # rate limit handling
                     if isinstance(e, requests.exceptions.HTTPError):
                         if e.response.status_code in (502, 504):
-                            delay = 1 * (2 ** attempt) + random.uniform(0, 1)
+                            count_502_errors += 1
+                            print(f"This process has generated {count_502_errors} 502/504 errors in total.")
+                            delay = 1
                             print(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
                             time.sleep(delay)
                             continue
@@ -1108,7 +1112,10 @@ def github_project_repos_stargaze_count(context) -> dg.MaterializeResult:
             print(f"Total CPU time used: {cpu_time_used:.2f} seconds")
             print(f"Total real time used: {real_time_used:.2f} seconds")
 
-        return results, count_403_errors
+        return results, {
+            'count_403_errors': count_403_errors,
+            'count_502_errors': count_502_errors
+        }
 
     # Execute the query
     with cloud_sql_engine.connect() as conn:
@@ -1129,7 +1136,7 @@ def github_project_repos_stargaze_count(context) -> dg.MaterializeResult:
     results = get_github_repo_stargaze_count(github_urls, gh_pat)
 
     github_results = results[0]
-    count_403_errors_github_api = results[1]
+    count_http_errors_github_api = results[1]
 
     # write results to pandas dataframe
     results_df = pd.DataFrame(github_results.items(), columns=['repo', 'stargaze_count'])
@@ -1172,7 +1179,8 @@ def github_project_repos_stargaze_count(context) -> dg.MaterializeResult:
         metadata={
             "row_count": dg.MetadataValue.int(row_count),
             "preview": dg.MetadataValue.md(result_df.to_markdown(index=False)),
-            "count_403_errors": dg.MetadataValue.int(count_403_errors_github_api)
+            "count_403_errors": dg.MetadataValue.int(count_http_errors_github_api['count_403_errors']),
+            "count_502_errors": dg.MetadataValue.int(count_http_errors_github_api['count_502_errors'])
         }
     )
 
@@ -1282,11 +1290,12 @@ def github_project_repos_fork_count(context) -> dg.MaterializeResult:
         api_url = "https://api.github.com/graphql"
         headers = {"Authorization": f"bearer {gh_pat}"}
         results = {}  # Store results: {url: fork_count}
-        batch_size = 300  # Adjust as needed
+        batch_size = 180  # Adjust as needed
         cpu_time_used = 0
         real_time_used = 0
         real_time_window = 60
         cpu_time_limit = 50
+        count_502_errors = 0
         count_403_errors = 0
         batch_time_history = []
 
@@ -1326,7 +1335,7 @@ def github_project_repos_fork_count(context) -> dg.MaterializeResult:
 
             base_delay = 1
             max_delay = 60
-            max_retries = 5
+            max_retries = 8
 
             for attempt in range(max_retries):
                 print(f"attempt: {attempt}")
@@ -1386,7 +1395,7 @@ def github_project_repos_fork_count(context) -> dg.MaterializeResult:
                             else:
                                 print(f"GraphQL Error: {error}") #Print all the errors.
 
-                    # write the url and stargaze count to the database
+                    # write the url and fork count to the database
                     if 'data' in data:
                         for j, repo_url in enumerate(batch):
                             if repo_url in processed_in_batch:  # CRUCIAL CHECK
@@ -1420,7 +1429,9 @@ def github_project_repos_fork_count(context) -> dg.MaterializeResult:
                     # --- Rate Limit Handling (REST API style - for 403/429) ---
                     if isinstance(e, requests.exceptions.HTTPError):
                         if e.response.status_code in (502, 504):
-                            delay = 1 * (2 ** attempt) + random.uniform(0, 1)
+                            count_502_errors += 1
+                            print(f"This process has generated {count_502_errors} 502/504 errors in total.")
+                            delay = 1
                             print(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
                             time.sleep(delay)
                             continue
@@ -1470,7 +1481,10 @@ def github_project_repos_fork_count(context) -> dg.MaterializeResult:
             print(f"Total CPU time used: {cpu_time_used:.2f} seconds")
             print(f"Total real time used: {real_time_used:.2f} seconds")
 
-        return results, count_403_errors
+        return results, {
+            'count_403_errors': count_403_errors,
+            'count_502_errors': count_502_errors
+        }
 
     # Execute the query
     with cloud_sql_engine.connect() as conn:
@@ -1490,7 +1504,7 @@ def github_project_repos_fork_count(context) -> dg.MaterializeResult:
     results = get_github_repo_fork_count(github_urls, gh_pat)
 
     github_results = results[0]
-    count_403_errors_github_api = results[1]
+    count_http_errors_github_api = results[1]
 
     # write results to pandas dataframe
     results_df = pd.DataFrame(github_results.items(), columns=['repo', 'fork_count'])
@@ -1533,7 +1547,8 @@ def github_project_repos_fork_count(context) -> dg.MaterializeResult:
         metadata={
             "row_count": dg.MetadataValue.int(row_count),
             "preview": dg.MetadataValue.md(result_df.to_markdown(index=False)),
-            "count_403_errors_github_api": dg.MetadataValue.int(count_403_errors_github_api)
+            "count_403_errors_github_api": dg.MetadataValue.int(count_http_errors_github_api['count_403_errors']),
+            "count_502_errors_github_api": dg.MetadataValue.int(count_http_errors_github_api['count_502_errors'])
         }
     )
 
@@ -1556,7 +1571,7 @@ def github_project_repos_languages(context) -> dg.MaterializeResult:
 
         # add a 0.25 second delay to avoid rate limiting
         # note: this is simplified solution but there are not many non-github repos
-        time.sleep(0.25)
+        time.sleep(0.5)
 
         if repo_source == "bitbucket":
             # Extract owner and repo_slug from the URL
@@ -1715,7 +1730,7 @@ def github_project_repos_languages(context) -> dg.MaterializeResult:
 
             base_delay = 1
             max_delay = 60
-            max_retries = 5
+            max_retries = 8
 
             for attempt in range(max_retries):
                 print(f"attempt: {attempt}")
@@ -1744,7 +1759,7 @@ def github_project_repos_languages(context) -> dg.MaterializeResult:
                     response = requests.post(api_url, json={'query': query, 'variables': variables}, headers=headers)
                     time_since_start = time.time() - start_time
                     print(f"time_since_start: {time_since_start:.2f} seconds")
-                    time.sleep(3)  # Consistent delay
+                    time.sleep(2.5)  # Consistent delay
 
                     response.raise_for_status()
                     data = response.json()
@@ -1824,7 +1839,7 @@ def github_project_repos_languages(context) -> dg.MaterializeResult:
                         if e.response.status_code in (502, 504):
                             count_502_errors += 1
                             print(f"This process has generated {count_502_errors} 502/504 errors in total.")
-                            delay = 1 * (2 ** attempt) + random.uniform(0, 1)
+                            delay = 1
                             print(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
                             time.sleep(delay)
                             continue
@@ -1934,7 +1949,7 @@ def github_project_repos_languages(context) -> dg.MaterializeResult:
     # now get non-github repos urls
     non_github_results_df = repo_df[repo_df['repo_source'] != 'github']
 
-    # if non_github_urls is not empty, get fork count
+    # if non_github_urls is not empty, get language data
     if not non_github_results_df.empty:
         print("found non-github repos. Getting repo language data...")
         # Use list comprehension to get data for each non-github repo
@@ -1974,25 +1989,42 @@ def github_project_repos_languages(context) -> dg.MaterializeResult:
     # wrap in try except
     try:
         if not all_repos_df.empty:
-            all_repos_df.to_sql('project_repos_languages', cloud_sql_engine, if_exists='append', index=False, schema='raw')
+            all_repos_df.to_sql(
+                'project_repos_languages', 
+                cloud_sql_engine, 
+                if_exists='append', 
+                index=False, 
+                schema='raw',
+                dtype={
+                    "size": sqlalchemy.types.BIGINT,
+                    "repo_languages_total_bytes": sqlalchemy.types.BIGINT
+                    }
+                )
 
             # create variable to store the count of rows written to the database
             row_count_this_run = all_repos_df.shape[0]
+
+            with cloud_sql_engine.connect() as conn:
+                # capture asset metadata
+                preview_query = text("select count(*) from raw.project_repos_languages")
+                result = conn.execute(preview_query)
+                # Fetch all rows into a list of tuples
+                row_count = result.fetchone()[0]
+
+                preview_query = text("select * from raw.project_repos_languages limit 10")
+                result = conn.execute(preview_query)
+                result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
         else:
             # raise an error
             raise ValueError("No data to write")
             row_count_this_run = 0
+            row_count = 0
+            result_df = pd.DataFrame()
+            count_http_errors_github_api = {
+                'count_403_errors': 0,
+                'count_502_errors': 0
+            }
 
-        with cloud_sql_engine.connect() as conn:
-            # capture asset metadata
-            preview_query = text("select count(*) from raw.project_repos_languages")
-            result = conn.execute(preview_query)
-            # Fetch all rows into a list of tuples
-            row_count = result.fetchone()[0]
-
-            preview_query = text("select * from raw.project_repos_languages limit 10")
-            result = conn.execute(preview_query)
-            result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
     except Exception as e:
         print(f"error: {e}")
 
@@ -2025,7 +2057,7 @@ def github_project_repos_commits(context) -> dg.MaterializeResult:
 
         # add a 0.25 second delay to avoid rate limiting
         # note: this is simplified solution but there are not many non-github repos
-        time.sleep(0.25)
+        time.sleep(0.5)
 
         if repo_source == "bitbucket":
             # Extract owner and repo_slug from the URL
@@ -2159,7 +2191,7 @@ def github_project_repos_commits(context) -> dg.MaterializeResult:
         api_url = "https://api.github.com/graphql"
         headers = {"Authorization": f"bearer {gh_pat}"}
         results = {}
-        batch_size = 50  # Adjust as needed
+        batch_size = 75  # Adjust as needed
         cpu_time_used = 0
         real_time_used = 0
         real_time_window = 60
@@ -2211,7 +2243,7 @@ def github_project_repos_commits(context) -> dg.MaterializeResult:
 
             base_delay = 1
             max_delay = 60
-            max_retries = 5
+            max_retries = 8
 
             for attempt in range(max_retries):
                 print(f"attempt: {attempt}")
@@ -2246,7 +2278,7 @@ def github_project_repos_commits(context) -> dg.MaterializeResult:
                     #     print(f"{key}: {value}")
                     time_since_start = time.time() - start_time
                     print(f"time_since_start: {time_since_start:.2f} seconds")
-                    time.sleep(1.25)  # Consistent delay
+                    time.sleep(1.2)  # Consistent delay
 
                     response.raise_for_status()
                     data = response.json()
@@ -2316,7 +2348,7 @@ def github_project_repos_commits(context) -> dg.MaterializeResult:
                         if e.response.status_code in (502, 504):
                             count_502_errors += 1
                             print(f"This process has generated {count_502_errors} 502/504 errors in total.")
-                            delay = 1 * (2 ** attempt) + random.uniform(0, 1)
+                            delay = 1
                             print(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
                             time.sleep(delay)
                             continue
@@ -2399,7 +2431,7 @@ def github_project_repos_commits(context) -> dg.MaterializeResult:
 
     # if non_github_urls is not empty, get fork count
     if not non_github_results_df.empty:
-        print("found non-github repos. Getting repo language data...")
+        print("found non-github repos. Getting repo commit data...")
         print(f"number of non-github urls: {non_github_results_df.shape[0]}")
         # Use list comprehension to get data for each non-github repo
         commit_data = [
@@ -2432,6 +2464,9 @@ def github_project_repos_commits(context) -> dg.MaterializeResult:
         # all_repos_df.drop_duplicates(subset=['repo', 'language_name', 'repo_languages_total_bytes'], keep='first', inplace=True)
         # Add data_timestamp 
         all_repos_df['data_timestamp'] = pd.Timestamp.now()
+
+        # Cast the count column to integer *before* writing to the database
+        all_repos_df['commit_count'] = all_repos_df['commit_count'].astype(int)
 
     # write results to database
     # wrap in try except

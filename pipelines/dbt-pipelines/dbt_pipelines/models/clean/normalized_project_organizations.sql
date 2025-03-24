@@ -1,17 +1,18 @@
 -- normalized_project_organizations.sql
 -- create an incremental table in clean with data_timestamp intervals >25 days apart
+-- exclude outlier batches based on standard deviation from the clean table
 -- project_organizations raw table
 -- 
 {{ config(
     materialized='incremental',
-    unique_key='project_organization_url || data_timestamp',
+    unique_key='project_title || project_organization_url || data_timestamp',
     tags=['timestamp_normalized']
 ) }}
 
-{% set initial_load_timestamp = '2025-02-11T14:54:07.695448Z' %}  -- Define the initial run timestamp
+{% set initial_load_timestamp = '2025-02-11T14:54:07.695448Z' %}
 
 {% if is_incremental() %}
-    -- Get the latest timestamp from the *target* (clean) table
+
     {% set max_clean_timestamp_query %}
         SELECT MAX(data_timestamp) FROM {{ this }}
     {% endset %}
@@ -19,28 +20,75 @@
     {% set max_clean_timestamp_results = run_query(max_clean_timestamp_query) %}
 
     {% if execute %}
-        {# Return the first column #}
         {% set max_clean_timestamp = max_clean_timestamp_results.columns[0].values()[0] %}
+        {% if max_clean_timestamp == none %}
+            {% set max_clean_timestamp = (modules.datetime.datetime.fromisoformat(initial_load_timestamp.replace('Z', '+00:00'))).isoformat() %}
+        {% endif %} 
     {% else %}
-        {% set max_clean_timestamp = none %}
+        {% set max_clean_timestamp = (modules.datetime.datetime.fromisoformat(initial_load_timestamp.replace('Z', '+00:00'))).isoformat() %}
     {% endif %}
 
-{% endif %}
+    -- get stats for outlier exclusion
+    {% set stats_query %}
+        -- Calculate the count of records for each data_timestamp in the clean table
+        with record_counts AS (
+            SELECT 
+                data_timestamp, 
+                COUNT(*) AS record_count
+            FROM {{ this }} -- Use {{ this }} to refer to the current model (clean table)
+            GROUP BY data_timestamp
+        )
 
-WITH
-  raw_data AS (
+        -- Calculate the mean and standard deviation of the record counts from the clean table
+        SELECT 
+            AVG(record_count) AS mean_count, 
+            coalesce(STDDEV(record_count), 0) AS stddev_count
+        FROM record_counts
+    {% endset %}
+
+    {% set stats_results = run_query(stats_query) %}
+
+    {% if execute %}
+        {% set mean_count = stats_results.columns[0].values()[0] %}
+        {% set stddev_count = stats_results.columns[1].values()[0] %}
+    {% else %}
+        {% set mean_count = 0 %}
+        {% set stddev_count = 0 %}
+    {% endif %}
+    
+
+    WITH 
+
+    raw_data_timestamps as (
+        select data_timestamp, count(*) as record_count
+        from {{ source('raw', 'project_organizations') }}
+        group by 1
+    ),
+
+    -- Identify the latest data_timestamp in the raw table
+    load_timestamps AS (
+        SELECT data_timestamp AS load_timestamps
+        FROM raw_data_timestamps
+        where data_timestamp >= '{{ max_clean_timestamp }}'::timestamp + INTERVAL '6 days'
+        AND record_count <= ({{ mean_count }} + (5 * {{ stddev_count }}))
+        AND record_count >= ({{ mean_count }} - (5 * {{ stddev_count }}))
+    )
+
+    -- Select all records from the raw table
     SELECT
-        *,
-        (select max(data_timestamp) from {{ source('raw', 'project_organizations') }}) as max_raw_timestamp
+        po.*
     FROM
-      {{ source('raw', 'project_organizations') }}
-  )
-SELECT
-    *
-FROM
-  raw_data
-{% if is_incremental() %}
-  WHERE max_raw_timestamp >= '{{max_clean_timestamp}}'::timestamp + INTERVAL '25 days'
+        {{ source('raw', 'project_organizations') }} po
+
+    WHERE po.data_timestamp in (select load_timestamps from load_timestamps)
+
 {% else %}
-  WHERE data_timestamp = '{{ initial_load_timestamp }}'::timestamp  -- Filter by timestamp on initial load
+
+    -- Select all records from the raw table
+    SELECT
+        po.*
+    FROM
+        {{ source('raw', 'project_organizations') }} po 
+    WHERE po.data_timestamp = '{{ initial_load_timestamp }}'::timestamp
+    
 {% endif %}
