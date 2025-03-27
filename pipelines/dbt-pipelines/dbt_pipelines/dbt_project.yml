@@ -53,3 +53,5 @@ models:
     api:
       +materialized: view
       +schema: api
+      +grants:
+        select: ['api_user']

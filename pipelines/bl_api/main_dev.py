@@ -4,20 +4,21 @@ from typing import List, Optional
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from dotenv import load_dotenv
+
+load_dotenv()  # Load environment variables from .env file
 
 app = FastAPI()
 
-# Database connection details (from environment variables / secrets)
-DB_HOST = os.environ.get("DATABASE_HOST")
-DB_USER = os.environ.get("DATABASE_USER")
-DB_PASSWORD = os.environ.get("DATABASE_PASSWORD")
-DB_NAME = os.environ.get("DATABASE_NAME")
+# Database connection details (from environment variables)
+DB_HOST = os.getenv("DATABASE_HOST")
+DB_USER = os.getenv("DATABASE_USER")
+DB_PASSWORD = os.getenv("DATABASE_PASSWORD")
+DB_NAME = os.getenv("DATABASE_NAME")
 
 # Database Connection Function (Dependency)
 def get_db_connection():
-    conn = None  # Initialize conn as None
     try:
-        print(f"Attempting DB connection to host={DB_HOST} db={DB_NAME} user={DB_USER}") # Added log
         conn = psycopg2.connect(
             host=DB_HOST,
             user=DB_USER,
@@ -25,24 +26,10 @@ def get_db_connection():
             database=DB_NAME,
             cursor_factory=RealDictCursor,  # Return results as dictionaries
         )
-        print("DB connection successful.") # Added log
-        yield conn # Yield connection only if successful
-    except psycopg2.OperationalError as e:
-        # Log the error AND potentially the connection details used (be careful with passwords!)
-        print(f"Database connection error (OperationalError): {e}")
-        print(f"Failed connection details: host={DB_HOST}, user={DB_USER}, db={DB_NAME}") # Log details used
-        raise HTTPException(status_code=503, detail=f"Database connection error: {e}") from e
-    except Exception as e:
-        print(f"Unexpected error during DB connection attempt: {type(e).__name__} - {e}")
-        raise HTTPException(status_code=500, detail=f"Unexpected error during DB connection: {type(e).__name__} - {e}") from e
+        yield conn
     finally:
-        # This block will now always execute, and 'conn' will always be defined
-        if conn is not None: # Check if conn was successfully assigned
-            print("Closing database connection.") # Added log
-            conn.close()
-        else:
-            # This branch is reached if connect() failed
-            print("No active database connection to close.") # Added log
+        if conn:
+           conn.close()
 
 
 ####################################################### forks #######################################################
@@ -58,10 +45,7 @@ async def get_top_100_forks(db: psycopg2.extensions.connection = Depends(get_db_
     """
     Retrieves the top 100 projects by forks from the api schema in postgresdatabase.
     """
-    if db is None: # Good check, though get_db_connection should raise exceptions
-         raise HTTPException(status_code=503, detail="Database not connected")
     try:
-        # Use 'db' (the connection object) directly to get a cursor
         with db.cursor() as cur:
             cur.execute("SELECT * FROM api.top_100_forks;")  # Use your view
             results = cur.fetchall()
@@ -73,10 +57,6 @@ async def get_top_100_forks(db: psycopg2.extensions.connection = Depends(get_db_
 async def get_top_100_forks_project(project_title: str, db: psycopg2.extensions.connection = Depends(get_db_connection)):
      """Retrieves a single project by project_title."""
      try:
-        if db is None: # Good check, though get_db_connection should raise exceptions
-            raise HTTPException(status_code=503, detail="Database not connected")
-
-        # Use 'db' (the connection object) directly to get a cursor
         with db.cursor() as cur:
              cur.execute("SELECT * FROM api.top_100_forks WHERE project_title = %s;", (project_title,))
              result = cur.fetchone()
@@ -104,9 +84,6 @@ async def get_top_100_stars(db: psycopg2.extensions.connection = Depends(get_db_
     Retrieves the top 100 projects by stars from the api schema in postgresdatabase.
     """
     try:
-        if db is None: # Good check, though get_db_connection should raise exceptions
-            raise HTTPException(status_code=503, detail="Database not connected")
-        # Use 'db' (the connection object) directly to get a cursor
         with db.cursor() as cur:
             cur.execute("SELECT * FROM api.top_100_stars;")  # Use your view
             results = cur.fetchall()
@@ -118,9 +95,6 @@ async def get_top_100_stars(db: psycopg2.extensions.connection = Depends(get_db_
 async def get_top_100_stars_project(project_title: str, db: psycopg2.extensions.connection = Depends(get_db_connection)):
      """Retrieves a single project by project_title."""
      try:
-        if db is None: # Good check, though get_db_connection should raise exceptions
-            raise HTTPException(status_code=503, detail="Database not connected")
-        # Use 'db' (the connection object) directly to get a cursor
         with db.cursor() as cur:
              cur.execute("SELECT * FROM api.top_100_stars WHERE project_title = %s;", (project_title,))
              result = cur.fetchone()
