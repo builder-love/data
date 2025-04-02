@@ -70,8 +70,8 @@
         SELECT data_timestamp AS load_timestamps
         FROM raw_data_timestamps
         where data_timestamp >= '{{ max_clean_timestamp }}'::timestamp + INTERVAL '6 days'
-        AND record_count <= ({{ mean_count }} + (5 * {{ stddev_count }}))
-        AND record_count >= ({{ mean_count }} - (5 * {{ stddev_count }}))
+        AND record_count <= ({{ mean_count }} * 1.5)
+        AND record_count >= ({{ mean_count }} * 0.5)
     )
 
     -- Select all records from the raw table
