@@ -1,3 +1,5 @@
+import os
+from pathlib import Path
 from sqlalchemy import create_engine
 from dagster import resource
 from dagster_dbt import DbtCliResource
@@ -23,9 +25,21 @@ def cloud_sql_postgres_resource(context):
     engine = create_engine(conn_str)
     return engine
 
+# define the path to dbt project directory
+# Get the absolute path to the directory containing this file (resources.py)
+_THIS_FILE_DIR = Path(__file__).parent.resolve()
+_PROJECT_ROOT_PATH = _THIS_FILE_DIR.parent.parent
+
+# this calculates the path relative to the current file (resources.py)
+# assumes resources.py -> dagster_pipelines -> dagster-pipelines -> data -> dbt-pipelines/dbt_pipelines
+DBT_PROJECT_PATH = _PROJECT_ROOT_PATH / "dbt-pipelines" / "dbt_pipelines"
+
+# Calculate path to the dbt executable inside dbt_venv
+DBT_EXECUTABLE_PATH = _PROJECT_ROOT_PATH / "dbt_venv" / "bin" / "dbt"
+
 # define dbt resource
 dbt_resource = DbtCliResource(
-    project_dir="/home/builder-love/data/pipelines/dbt-pipelines/dbt_pipelines",  # Absolute path
-    profiles_dir="/root/.dbt",
-    executable="/home/builder-love/data/pipelines/dbt_venv/bin/dbt"  # Absolute path to dbt in venv
+    project_dir=os.fspath(DBT_PROJECT_PATH),  
+    profiles_dir=os.fspath(DBT_PROJECT_PATH),
+    executable=os.fspath(DBT_EXECUTABLE_PATH)
 )
