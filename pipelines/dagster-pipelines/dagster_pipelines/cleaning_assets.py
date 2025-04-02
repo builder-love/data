@@ -16,8 +16,15 @@ import gzip
 import psycopg2
 
 ################################################ normalized time series data ################################################
+
+# this calculates the path relative to the current file (resources.py)
+# assumes resources.py -> dagster_pipelines -> dagster-pipelines -> data -> dbt-pipelines/dbt_pipelines
+_THIS_FILE_DIR = Path(__file__).parent.resolve()
+_PROJECT_ROOT_PATH = _THIS_FILE_DIR.parent.parent
+MANIFEST_PATH = _PROJECT_ROOT_PATH / "dbt-pipelines" / "dbt_pipelines" / "target" / "manifest.json"
+
 @dbt_assets(
-    manifest="/home/builder-love/data/pipelines/dbt-pipelines/dbt_pipelines/target/manifest.json",
+    manifest=MANIFEST_PATH,
     select="fqn:*"  # Select ALL dbt resources
 )
 def all_dbt_assets(context: AssetExecutionContext, dbt_resource: DbtCliResource):

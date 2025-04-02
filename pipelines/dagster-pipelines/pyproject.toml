@@ -1,12 +1,13 @@
 [project]
 name = "dagster_pipelines"
 version = "0.1.0"
-description = "Add your description here"
+description = "builder.love data orchestration"
 readme = "README.md"
 requires-python = ">=3.9,<3.13"
 dependencies = [
     "dagster",
     "dagster-cloud",
+    "dagster-dbt",
 ]
 
 [project.optional-dependencies]
