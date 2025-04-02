@@ -2465,8 +2465,8 @@ def github_project_repos_commits(context) -> dg.MaterializeResult:
         # Add data_timestamp 
         all_repos_df['data_timestamp'] = pd.Timestamp.now()
 
-        # Cast the count column to integer *before* writing to the database
-        all_repos_df['commit_count'] = all_repos_df['commit_count'].astype(int)
+        # Cast the count column to integer *before* writing to the database; fill na with 0
+        all_repos_df['commit_count'] = all_repos_df['commit_count'].fillna(0).astype(int)
 
     # write results to database
     # wrap in try except
