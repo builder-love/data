@@ -1,0 +1,12 @@
+dbt_pipelines:
+  outputs:
+    prod:
+      dbname: "postgres"
+      host: "{{ env_var('cloud_sql_postgres_host') }}"
+      pass: "{{ env_var('cloud_sql_password')  }}"
+      port: 5432
+      schema: public
+      threads: 4
+      type: "{{ env_var('cloud_sql_postgres_db')  }}"
+      user: "{{ env_var('cloud_sql_user')  }}"
+  target: prod
