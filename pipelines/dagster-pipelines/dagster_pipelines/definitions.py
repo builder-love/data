@@ -30,7 +30,9 @@ from dagster_pipelines.jobs import (
     normalized_dbt_assets_job, 
     project_repos_languages_job,
     latest_dbt_assets_job,
-    project_repos_commit_count_job
+    project_repos_commit_count_job,
+    project_repos_contributors_job,
+    process_compressed_contributors_data_job
 )
 from dagster_pipelines.schedules import (
     crypto_ecosystems_project_toml_files_schedule, 
@@ -45,7 +47,8 @@ from dagster_pipelines.schedules import (
     latest_dbt_assets_schedule,
     project_repos_commit_count_schedule,
     refresh_prod_schema_schedule,
-    refresh_api_schema_schedule
+    refresh_api_schema_schedule,
+    project_repos_contributors_schedule
 )
 from dagster_pipelines.load_data_jobs import refresh_prod_schema
 from dagster_pipelines.api_data import refresh_api_schema
@@ -90,6 +93,7 @@ defs = Definitions(
         refresh_prod_schema, 
         latest_dbt_assets_job,
         project_repos_commit_count_job,
+        project_repos_contributors_job,
         refresh_api_schema
         ],
     schedules=[
@@ -105,6 +109,7 @@ defs = Definitions(
         latest_dbt_assets_schedule,
         project_repos_commit_count_schedule,
         refresh_prod_schema_schedule,
-        refresh_api_schema_schedule
+        refresh_api_schema_schedule,
+        project_repos_contributors_schedule
         ],
 )
