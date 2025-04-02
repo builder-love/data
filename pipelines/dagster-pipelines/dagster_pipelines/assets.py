@@ -12,6 +12,7 @@ import random
 import gzip
 import json
 import psycopg2
+from urllib.parse import urlparse
 
 # define the asset that gets the list of project toml data files from the crypto ecosystems repo
 @dg.asset(
@@ -2465,8 +2466,8 @@ def github_project_repos_commits(context) -> dg.MaterializeResult:
         # Add data_timestamp 
         all_repos_df['data_timestamp'] = pd.Timestamp.now()
 
-        # Cast the count column to integer *before* writing to the database
-        all_repos_df['commit_count'] = all_repos_df['commit_count'].astype(int)
+        # Cast the count column to integer *before* writing to the database; convert nulls to 0
+        all_repos_df['commit_count'] = all_repos_df['commit_count'].fillna(0).astype(int)
 
     # write results to database
     # wrap in try except
@@ -2505,7 +2506,7 @@ def github_project_repos_commits(context) -> dg.MaterializeResult:
     )
 
 
-# define the asset that gets the contributor count for a repo
+# define the asset that gets the contributors for a repo
 @dg.asset(
     required_resource_keys={"cloud_sql_postgres_resource"},
     group_name="ingestion",
@@ -2530,10 +2531,10 @@ def github_project_repos_contributors(context) -> dg.MaterializeResult:
                     return next_page_url
             print("No next page found")
         else:
-            print("Link header not found in response")
+            print("Link header not found in response. No next page found.")
         return None
 
-    def get_contributors_list(owner, repo_name, headers):
+    def get_contributors_list(owner, repo_name, gh_pat):
         """
         Fetches contributors for a repository, handles pagination, and respects rate limits.
 
@@ -2549,77 +2550,142 @@ def github_project_repos_contributors(context) -> dg.MaterializeResult:
         contributors_list = []
         page_num = 1
         per_page = 100
-        max_retries = 3
+        max_retries = 5
+        count_403_errors = 0
+        count_502_errors = 0
 
         for attempt in range(max_retries):
+            pagination_successful_this_attempt = True
+            return_204_no_contributors = False
 
-            while api_url:
-                print(f"Fetching contributors from {api_url}")
+            while api_url is not None:
+                print(f"Fetching page {page_num} of contributors from {api_url}")
 
                 try:
-                    response = requests.get(api_url, headers=headers, params={"page": page_num, "per_page": per_page, "anon": True})
+                    # Prepare the request headers with your GitHub PAT
+                    # Prepare headers (only auth and accept)
+                    headers = {
+                        "Authorization": f"Bearer {gh_pat}",
+                        "Accept": "application/vnd.github.v3+json"
+                    }
 
-                    if response.status_code == 204:
-                        print("No contributors found.")
-                        break
+                    # Prepare parameters for pagination
+                    params = {
+                        "per_page": per_page,
+                        "anon": "true"
+                    }
+
+                    # standard time delay
+                    time.sleep(1)
+
+                    # Make the request
+                    response = requests.get(api_url, headers=headers, params=params)
+                    
+                    # get next page url
+                    if response is not None:
+                        if response.status_code == 204:
+                            print("No contributors found.")
+                            api_url = None
+                            return_204_no_contributors = True
+                            break
+                    
+                        # get next page url
+                        next_page_url = get_next_page(response)
 
                     # Now proceed with processing the response
                     response.raise_for_status()
 
                     contributors = response.json()
-                    
-                    contributors_list += contributors
-                    if len(contributors) < per_page:
-                        print("Reached the last page of contributors.")
-                        break  # No more pages
+
+                    # Only extend if contributors is not None and is a list
+                    if isinstance(contributors, list):
+                        contributors_list.extend(contributors)
+                        print(f"Fetched {len(contributors_list)} contributors so far")
+                    else:
+                        print(f"Warning: Expected a list of contributors, got {type(contributors)}. Response: {contributors}")
+                        # Decide how to handle this - stop? continue? For now, stop pagination.
+                        api_url = None
+                        pagination_successful_this_attempt = False # Mark as potentially incomplete
+                        continue
                     page_num += 1
-                    api_url = f"https://api.github.com/repos/{owner}/{repo_name}/contributors"  # Reset the API URL for the next page
+                    api_url = next_page_url
 
                 except requests.exceptions.RequestException as e:
-                    print(f"Error fetching contributors for {api_url}: {response.status_code}")
-                    print(f"Status Code: {response.status_code}")
-                    # Extract rate limit information from headers
-                    print(" \n resource usage tracking:")
-                    rate_limit_info = {
-                        'remaining': response.headers.get('x-ratelimit-remaining'),
-                        'used': response.headers.get('x-ratelimit-used'),
-                        'reset': response.headers.get('x-ratelimit-reset'),
-                        'retry_after': response.headers.get('retry-after')
-                    }
-                    print("Rate Limit Info:", rate_limit_info)
-                    print("\n")
-                    print(f"error: {e}")
-                    print("\n")
+                    # Log the error and attempt number
+                    print(f"\nError during request for {api_url} on attempt {attempt + 1}/{max_retries}: {e}\n")
+                    pagination_successful_this_attempt = False
+
+                    # Safely get status_code and headers for logging and decisions
+                    status_code = getattr(getattr(e, 'response', None), 'status_code', None)
+                    headers = getattr(getattr(e, 'response', None), 'headers', {})
+                    print(f"Status Code (if available): {status_code}")
+                    # (You can add back the rate limit info logging here if desired)
+
+                    # ===== CHECK FOR MAX RETRIES =====
                     if attempt == max_retries - 1:
-                        print(f"Max retries reached or unrecoverable error for batch. Giving up. Error: {e}")
+                        print(f"Max retries ({max_retries}) reached for {api_url}. Giving up on this repository.")
+                        api_url = None # Set api_url to None to stop pagination loop AFTER this failed attempt
+                        # Break from the inner while loop. Since this was the last attempt,
+                        # the outer for loop will also terminate naturally.
                         break
-                    # --- Rate Limit Handling (REST API style - for 403/429) ---
-                    if isinstance(e, requests.exceptions.HTTPError) and e.response.status_code in (403, 429):
-                        retry_after = e.response.headers.get('Retry-After')
-                        if retry_after:  # Use Retry-After if available
-                            delay = int(retry_after)
-                            print(f"Rate limited (REST - Retry-After). Waiting for {delay} seconds...")
-                            time.sleep(delay)
-                            continue # Retry the entire batch
-                        else:
-                            # Fallback to exponential backoff *only* if Retry-After is missing
-                            delay = 1 * (2 ** attempt) + random.uniform(0, 1)  # Exponential backoff
-                            print(f"Rate limited (REST - Exponential Backoff). Waiting for {delay:.2f} seconds...")
-                            time.sleep(delay)
-                            continue # Retry the entire batch
-                    else:
-                        # Handle other request exceptions (non-rate-limit errors)
-                        delay = 1 * (2 ** attempt) + random.uniform(0, 1)  # Exponential backoff
-                        print(f"Request failed: {e}. Waiting for {delay:.2f} seconds...")
-                        time.sleep(delay)
-                except KeyError as e:
-                    print(f"KeyError: {e}. Response: {data}")
-                    break
-                except Exception as e:
-                    print(f"An unexpected error occurred: {e}")
+                    # ==================================
+
+                    # --- DETERMINE DELAY (if not max retries) ---
+                    delay = 1 # Default delay
+                    if status_code in (403, 429):
+                        count_403_errors += 1
+                        retry_after = headers.get('Retry-After')
+                        delay = int(retry_after) if retry_after else (1 * (2 ** attempt) + random.uniform(0, 1))
+                        print(f"Rate limited (Status {status_code}). Waiting for {delay:.2f} seconds before next attempt...")
+                    elif status_code in (502, 504):
+                        count_502_errors += 1
+                        delay = 1 * (2 ** attempt) + random.uniform(0, 1)
+                        print(f"Server error (Status {status_code}). Waiting for {delay:.2f} seconds before next attempt...")
+                    else: # Other RequestException or non-specific HTTPError
+                        delay = 1 * (2 ** attempt) + random.uniform(0, 1)
+                        print(f"Request error. Waiting for {delay:.2f} seconds before next attempt...")
+
+                    time.sleep(delay)
+
+                    # --- How to Retry ---
+                    # retry loop outside pagination loop
+                    # breaking the inner loop means the next attempt will restart pagination from page 1.
+                    print("Breaking inner pagination loop to proceed to the next retry attempt.")
+                    # We break the 'while' loop here. The 'for attempt' loop will then go to the next iteration.
+                    # This means the next attempt restarts pagination for this repo.
                     break
 
-        return contributors_list
+                # Make sure they also set api_url = None and break if they should cause the function to give up on the repo.
+                except KeyError as e:
+                    print(f"KeyError processing response: {e}") # Avoid printing potentially large 'response' object
+                    pagination_successful_this_attempt = False
+                    api_url = None # Give up
+                    break
+                except Exception as e:
+                    print(f"An unexpected error occurred processing response: {e}")
+                    pagination_successful_this_attempt = False
+                    api_url = None # Give up
+                    break
+
+            # Check if pagination completed successfully this attempt
+            if pagination_successful_this_attempt and api_url is None:
+                # The 'while' loop finished because api_url became None naturally (not via error break)
+                print(f"Pagination completed successfully for {owner}/{repo_name} on attempt {attempt + 1}.")
+                break # <<<--- EXIT THE OUTER 'for attempt:' LOOP ---<<<
+            elif attempt == max_retries - 1:
+                # This attempt failed (pagination_successful flag is False), and it was the last attempt.
+                print(f"Failed to fetch all pages for {owner}/{repo_name} after {max_retries} attempts.")
+                # No break needed, outer 'for' loop terminates naturally.
+            elif api_url is None and return_204_no_contributors:
+                print(f"No contributors found for {owner}/{repo_name} after {attempt + 1} attempts.")
+                break
+            else:
+                # This attempt failed, but more retries remain.
+                print(f"Attempt {attempt + 1} failed, proceeding to next attempt.")
+                # Let the outer 'for' loop continue.
+
+        # End of 'for attempt...' loop
+        return contributors_list, count_403_errors, count_502_errors
 
     # Fetch all repo names from the database
     with cloud_sql_engine.connect() as conn:
@@ -2640,6 +2706,10 @@ def github_project_repos_contributors(context) -> dg.MaterializeResult:
     print(f"number of github repos: {len(github_repos)}")
 
     project_contributors = []
+    count_403_errors = 0
+    count_502_errors = 0
+    count_403_errors_sum = 0
+    count_502_errors_sum = 0
     for i in range(len(github_repos)):  # Loop through all repos
         try:
             print(f"\n Processing {i} of {len(github_repos)}")
@@ -2648,13 +2718,14 @@ def github_project_repos_contributors(context) -> dg.MaterializeResult:
             owner = repo_names_no_url[i].split("/")[0]
             repo_name = repo_names_no_url[i].split("/")[1]
 
-            # Prepare the request headers with your GitHub PAT
-            headers = {"Authorization": f"Bearer {gh_pat}", "anon": "true", "per_page": "100", "Accept": "application/vnd.github.v3+json"}
-
             # get the list of contributors
-            contributors_list = get_contributors_list(owner, repo_name, headers)
+            contributors_list, count_403_errors, count_502_errors = get_contributors_list(owner, repo_name, gh_pat)
 
-                                # Compresses contributor data
+            # track http errors
+            count_403_errors_sum += count_403_errors
+            count_502_errors_sum += count_502_errors
+
+            # Compresses contributor data
             contributors_json = json.dumps(contributors_list).encode('utf-8')
             compressed_contributors_data = gzip.compress(contributors_json)
 
@@ -2688,5 +2759,7 @@ def github_project_repos_contributors(context) -> dg.MaterializeResult:
             metadata={
                 "row_count": dg.MetadataValue.int(row_count),
                 "preview": dg.MetadataValue.md(result_df.to_markdown(index=False)),
+                "count_403_errors": dg.MetadataValue.int(count_403_errors_sum),
+                "count_502_errors": dg.MetadataValue.int(count_502_errors_sum),
             }
         )
