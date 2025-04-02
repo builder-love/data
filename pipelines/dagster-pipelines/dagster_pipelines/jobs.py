@@ -10,7 +10,11 @@ from dagster_pipelines.assets import (
     github_project_repos_stargaze_count, 
     github_project_repos_fork_count, 
     github_project_repos_languages,
-    github_project_repos_commits
+    github_project_repos_commits,
+    github_project_repos_contributors
+)
+from dagster_pipelines.cleaning_assets import (
+    process_compressed_contributors_data
 )
 
 
@@ -84,6 +88,22 @@ project_repos_commit_count_job = dg.define_asset_job(
     selection=["github_project_repos_commits"],
     tags={"github_api": "True"},
     description="Gets the commit count for each repo from the github api and appends it to the raw.github_project_repos_commits table"
+)
+
+# create a job to run github_project_repos_contributors asset
+project_repos_contributors_job = dg.define_asset_job(
+    "project_repos_contributors_refresh", 
+    selection=["github_project_repos_contributors"],
+    tags={"github_api": "True"},
+    description="Gets the contributors for each repo from the github api, compresses the data and appends it to the raw.github_project_repos_contributors table"
+)
+
+# create a job to run process_compressed_contributors_data asset
+process_compressed_contributors_data_job = dg.define_asset_job(
+    "process_compressed_contributors_data_refresh", 
+    selection=["process_compressed_contributors_data"],
+    tags={"github_api": "True"},
+    description="Extracts, decompresses, and inserts data into the clean table. Only for the latest data in the raw.project_repos_contributors table. Performs checks for outliers before refreshing clean table."
 )
 
 # Define a Dagster job that uses the dbt assets
