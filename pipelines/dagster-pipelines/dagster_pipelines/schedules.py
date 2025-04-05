@@ -12,7 +12,8 @@ from dagster_pipelines.jobs import (
     project_repos_languages_job,
     latest_dbt_assets_job,
     project_repos_commit_count_job,
-    project_repos_contributors_job
+    project_repos_contributors_job,
+    period_change_data_dbt_assets_job
 )
 from dagster_pipelines.cleaning_assets import all_dbt_assets
 from dagster_pipelines.load_data_jobs import refresh_prod_schema
@@ -260,11 +261,11 @@ def refresh_api_schema_schedule(context):
 
     return {}
 
-# create a schedule to run timestamp_normalized_project_toml_files_job every day at midnight est
+# create a schedule to run timestamp_normalized_project_toml_files_job every day at 1130 est
 # Create the schedule
 normalized_dbt_assets_schedule = ScheduleDefinition(
     job=normalized_dbt_assets_job,  # The job to run
-    cron_schedule="30 22 * * *",
+    cron_schedule="30 23 * * *",
     execution_timezone="America/New_York", 
     name="normalized_dbt_assets_daily_schedule",  # Give the schedule a name
 )
@@ -278,11 +279,20 @@ normalized_dbt_assets_schedule = ScheduleDefinition(
 #     dbt_select="fqn:normalized_project_organizations"
 # )
 
-# create a schedule to run latest_dbt_assets_job every day at midnight est
+# create a schedule to run latest_dbt_assets_job every day at 1030 est
 # Create the schedule
 latest_dbt_assets_schedule = ScheduleDefinition(
     job=latest_dbt_assets_job,  # The job to run
-    cron_schedule="0 23 * * *",
+    cron_schedule="30 22 * * *",
     execution_timezone="America/New_York", 
     name="latest_dbt_assets_daily_schedule",  # Give the schedule a name
+)
+
+# create a schedule to run period_change_data_dbt_assets_job every day at midnight est
+# Create the schedule
+period_change_data_dbt_assets_schedule = ScheduleDefinition(
+    job=period_change_data_dbt_assets_job,  # The job to run
+    cron_schedule="0 0 * * *",
+    execution_timezone="America/New_York", 
+    name="period_change_data_dbt_assets_daily_schedule",  # Give the schedule a name
 )
