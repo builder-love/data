@@ -121,3 +121,11 @@ latest_dbt_assets_job = define_asset_job(
     selection="tag:latest_clean_data",
     description="Runs the get latest data dbt models"
 )
+
+# Define a Dagster job that uses the dbt assets
+# run tag:period_change_data dbt assets
+period_change_data_dbt_assets_job = define_asset_job(
+    name="period_change_data_dbt_assets_job", 
+    selection="tag:period_change_data",
+    description="Runs the period change data dbt models to create views"
+)

@@ -9,8 +9,8 @@ import requests
 import json
 import random
 from dagster_pipelines.assets import github_project_repos_contributors
-from dagster_dbt import DbtCliResource, dbt_assets
-from dagster import asset, AssetExecutionContext
+from dagster_dbt import DbtCliResource, DagsterDbtTranslator, dbt_assets
+from dagster import asset, AssetExecutionContext, AssetKey
 from dagster_pipelines.resources import dbt_resource
 import gzip
 import psycopg2
@@ -23,13 +23,42 @@ _THIS_FILE_DIR = Path(__file__).parent.resolve()
 _PROJECT_ROOT_PATH = _THIS_FILE_DIR.parent.parent
 MANIFEST_PATH = _PROJECT_ROOT_PATH / "dbt-pipelines" / "dbt_pipelines" / "target" / "manifest.json"
 
-@dbt_assets(
+# Define Custom Translator for dbt sources
+class CustomDbtTranslator(DagsterDbtTranslator):
+    def get_asset_key(self, dbt_resource_props) -> AssetKey:
+        """
+        Override this method to customize asset key generation.
+        """
+        # Get the default asset key first
+        asset_key = super().get_asset_key(dbt_resource_props)
+
+        # Check if the resource is a dbt source
+        if dbt_resource_props["resource_type"] == "source":
+            # Prepend 'sources' (or anything unique) to the key path
+            # This changes ['clean', 'latest_project_repos'] to ['sources', 'clean', 'latest_project_repos']
+            # for the source only.
+            return AssetKey(["sources"] + asset_key.path) 
+
+        # For all other resource types (like models), use the default key
+        return asset_key
+
+# --- Use the Translator in your dbt_assets definition ---
+# Make sure DBT_MANIFEST_PATH points to your actual manifest.json
+# If it doesn't exist, run `dbt build` or `dbt compile` in your dbt project first.
+if MANIFEST_PATH.exists():
+    @dbt_assets(
     manifest=MANIFEST_PATH,
+    dagster_dbt_translator=CustomDbtTranslator(),
     select="fqn:*"  # Select ALL dbt resources
-)
-def all_dbt_assets(context: AssetExecutionContext, dbt_resource: DbtCliResource):
-    yield from dbt_resource.cli(["run"], context=context).stream()
-    yield from dbt_resource.cli(["test"], context=context).stream()
+    )
+    def all_dbt_assets(context: AssetExecutionContext, dbt_resource: DbtCliResource):
+        yield from dbt_resource.cli(["run"], context=context).stream()
+        yield from dbt_resource.cli(["test"], context=context).stream()
+else:
+    # Handle case where manifest doesn't exist (e.g., define empty assets list or raise error)
+    print(f"WARNING: dbt manifest not found at {MANIFEST_PATH}. Skipping dbt asset definition.")
+    # Define an empty list or handle appropriately if dbt assets are optional
+    all_dbt_assets = []
 
 # to select a specific dbt asset, use the following code
 # @dbt_assets(
