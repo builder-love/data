@@ -1,4 +1,4 @@
--- create a view that shows the latest project repos and their fork count
+-- create a table that shows the latest project repos and their fork count
 
 {{ config(
     materialized='table',

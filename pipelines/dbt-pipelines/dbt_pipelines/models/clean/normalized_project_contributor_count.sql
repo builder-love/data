@@ -1,15 +1,14 @@
--- normalized_project_organizations.sql
+-- normalized_project_contributor_count.sql
 -- create an incremental table in clean with data_timestamp intervals >25 days apart
--- exclude outlier batches based on standard deviation from the clean table
--- project_organizations raw table
+-- project_repos_stargaze_count raw table
 -- 
 {{ config(
     materialized='incremental',
-    unique_key='project_title || project_organization_url || data_timestamp',
+    unique_key='project_title || data_timestamp',
     tags=['timestamp_normalized']
 ) }}
 
-{% set initial_load_timestamp = '2025-02-11T14:54:07.695448Z' %}
+{% set initial_load_timestamp = '2025-01-13T00:06:13.501155Z' %}
 
 {% if is_incremental() %}
 
@@ -61,7 +60,7 @@
 
     raw_data_timestamps as (
         select data_timestamp, count(*) as record_count
-        from {{ source('raw', 'project_organizations') }}
+        from {{ source('clean', 'latest_project_contributor_count') }}
         group by 1
     ),
 
@@ -78,7 +77,7 @@
     SELECT
         po.*
     FROM
-        {{ source('raw', 'project_organizations') }} po
+        {{ source('clean', 'latest_project_contributor_count') }} po
 
     WHERE po.data_timestamp in (select load_timestamps from load_timestamps)
 
@@ -88,7 +87,7 @@
     SELECT
         po.*
     FROM
-        {{ source('raw', 'project_organizations') }} po 
+        {{ source('clean', 'latest_project_contributor_count') }} po 
     WHERE po.data_timestamp = '{{ initial_load_timestamp }}'::timestamp
     
 {% endif %}
