@@ -41,6 +41,10 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 8, period: day}
+      - name: project_repos_contributors
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 45, period: day}
   - name: clean
     database: postgres
     schema: clean
@@ -190,60 +194,17 @@ sources:
         freshness: 
           warn_after: {count: 32, period: day}
       - name: latest_project_repos_contributors
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
   - name: prod
     database: postgres
     schema: prod
     tables:
-      - name: normalized_project_toml_files
-      - name: normalized_project_sub_ecosystems
-      - name: normalized_project_organizations
-      - name: normalized_project_repos
-      - name: normalized_project_repos_fork_count
-      - name: normalized_project_repos_stargaze_count
-      - name: normalized_project_repos_languages
-      - name: normalized_project_repos_commit_count
-      - name: normalized_project_contributor_count
-      - name: normalized_project_repos_contributor_count
-      - name: normalized_project_fork_count
-      - name: normalized_active_distinct_project_repos
-      - name: normalized_project_stargaze_count
       - name: normalized_project_commit_count
-      - name: normalized_top_projects
-      - name: latest_active_distinct_project_repos
-      - name: latest_distinct_project_repos
-      - name: latest_project_organizations
-      - name: latest_project_repos
-      - name: latest_project_sub_ecosystems
-      - name: latest_project_toml_files
-      - name: latest_project_repos_commit_count
-      - name: latest_project_repos_fork_count
-      - name: latest_project_repos_languages
-      - name: latest_project_repos_stargaze_count
-      - name: latest_project_contributor_count
-      - name: latest_distinct_projects
+      - name: normalized_project_contributor_count
+      - name: normalized_project_fork_count
+      - name: normalized_project_stargaze_count
       - name: latest_top_projects
       - name: latest_project_fork_count
       - name: latest_project_stargaze_count
-      - name: four_week_change_project_contributor_count
-      - name: four_week_change_project_fork_count
-      - name: four_week_change_project_stargaze_count
-      - name: four_week_change_project_commit_count
-  - name: api
-    database: postgres
-    schema: api
-    tables:
-      - name: top_100_projects_fork_count
-        description: "Top 100 projects by fork count"
-      - name: top_100_projects_stargaze_count
-        description: "Top 100 projects by stargaze count"
-      - name: top_50_projects_fork_trend
-        description: "Top 50 projects by fork count trend"
-      - name: top_50_projects_stargaze_trend
-        description: "Top 50 projects by stargaze count trend"
-      - name: top_50_projects_commit_trend
-        description: "Top 50 projects by commit count trend"
-      - name: top_50_projects_contributor_trend
-        description: "Top 50 projects by contributor count trend"
-      - name: top_50_projects
-        description: "Top 50 projects by weighted score"
-      

@@ -16,7 +16,7 @@ with latest_project_repos_contributors as (
     repo,
     contributor_login,
     data_timestamp
-  from {{ source('clean', 'latest_project_repos_contributors') }}
+  from {{ source('clean','latest_project_repos_contributors') }}
   where LOWER(contributor_type) IN ('user', 'anonymous') 
     and contributor_contributions > 0 
     and contributor_contributions is not null
@@ -27,7 +27,7 @@ project_contributor_count as (
   count(distinct contributors.contributor_login) contributor_count,
   max(contributors.data_timestamp) data_timestamp
 
-  from latest_project_repos_contributors contributors left join {{ source('clean', 'latest_project_repos') }} lpr
+  from latest_project_repos_contributors contributors left join {{ ref('latest_project_repos') }} lpr
     on contributors.repo = lpr.repo
   where lpr.project_title is not null
   group by 1

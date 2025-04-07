@@ -9,11 +9,11 @@
 
 WITH latest_timestamp AS (
     SELECT MAX(data_timestamp) as max_ts
-    FROM {{ ref('normalized_project_repos_stargaze_count') }}  -- Refers to the *normalized* table
+    FROM {{ ref('normalized_project_repos_stargaze_count') }}
 )
 SELECT
     repo,
     stargaze_count,
     data_timestamp
-FROM {{ ref('normalized_project_repos_stargaze_count') }}  -- Refers to the *normalized* table
+FROM {{ ref('normalized_project_repos_stargaze_count') }}
 WHERE data_timestamp = (SELECT max_ts FROM latest_timestamp)
