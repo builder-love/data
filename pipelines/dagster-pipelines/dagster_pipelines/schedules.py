@@ -202,7 +202,7 @@ def project_repos_commit_count_schedule(context):
 # create a schedule to run project_repos_contributors_job on the 16th of each month at midnight
 @schedule(
     job=project_repos_contributors_job,
-    cron_schedule="0 0 8,24 * *", 
+    cron_schedule="0 0 20 * *", 
     execution_timezone="America/New_York"
 )
 def project_repos_contributors_schedule(context):
