@@ -15,7 +15,7 @@ select
   repo, 
   count(distinct contributor_login) as contributor_count,
   max(data_timestamp) data_timestamp
-from {{ source('clean', 'latest_project_repos_contributors') }} 
+from {{ source('clean','latest_project_repos_contributors') }} 
 where LOWER(contributor_type) IN ('user', 'anonymous') 
     and contributor_contributions > 0 
     and contributor_contributions is not null

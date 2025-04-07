@@ -8,7 +8,7 @@
 
 WITH latest_timestamp AS (
     SELECT MAX(data_timestamp) as max_ts
-    FROM {{ ref('normalized_project_repos_languages') }}  -- Refers to the *normalized* table
+    FROM {{ ref('normalized_project_repos_languages') }}  
 )
 SELECT
     repo,
@@ -16,5 +16,5 @@ SELECT
     size,
     repo_languages_total_bytes,
     data_timestamp
-FROM {{ ref('normalized_project_repos_languages') }}  -- Refers to the *normalized* table
+FROM {{ ref('normalized_project_repos_languages') }}  
 WHERE data_timestamp = (SELECT max_ts FROM latest_timestamp)

@@ -23,14 +23,14 @@ with all_metrics as (
     COALESCE(fork_change.fork_count_pct_change_over_4_weeks,0) fork_count_pct_change_over_4_weeks,
     COALESCE(stargaze_change.stargaze_count_pct_change_over_4_weeks,0) stargaze_count_pct_change_over_4_weeks
     
-  from {{ source('clean', 'latest_distinct_projects') }} p left join {{ source('clean', 'latest_project_fork_count') }} f 
-    on p.project_title = f.project_title left join {{ source('clean', 'latest_project_stargaze_count') }} s
-    on p.project_title = s.project_title left join {{ source('clean', 'latest_project_commit_count') }} cc
-    on p.project_title = cc.project_title left join {{ source('clean', 'latest_project_contributor_count') }} c
-    on p.project_title = c.project_title left join {{ source('clean', 'four_week_change_project_commit_count') }} commit_change
-    on p.project_title = commit_change.project_title left join {{ source('clean', 'four_week_change_project_contributor_count') }} contributor_change
-    on p.project_title = contributor_change.project_title left join {{ source('clean', 'four_week_change_project_fork_count') }} fork_change
-    on p.project_title = fork_change.project_title left join {{ source('clean', 'four_week_change_project_stargaze_count') }} stargaze_change
+  from {{ ref('latest_distinct_projects') }} p left join {{ ref('latest_project_fork_count') }} f 
+    on p.project_title = f.project_title left join {{ ref('latest_project_stargaze_count') }} s
+    on p.project_title = s.project_title left join {{ ref('latest_project_commit_count') }} cc
+    on p.project_title = cc.project_title left join {{ ref('latest_project_contributor_count') }} c
+    on p.project_title = c.project_title left join {{ ref('four_week_change_project_commit_count') }} commit_change
+    on p.project_title = commit_change.project_title left join {{ ref('four_week_change_project_contributor_count') }} contributor_change
+    on p.project_title = contributor_change.project_title left join {{ ref('four_week_change_project_fork_count') }} fork_change
+    on p.project_title = fork_change.project_title left join {{ ref('four_week_change_project_stargaze_count') }} stargaze_change
     on p.project_title = stargaze_change.project_title
 ),
 

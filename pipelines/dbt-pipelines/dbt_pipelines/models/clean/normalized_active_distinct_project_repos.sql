@@ -60,7 +60,7 @@
 
     raw_data_timestamps as (
         select data_timestamp, count(*) as record_count
-        from {{ source('clean', 'latest_active_distinct_project_repos') }}
+        from {{ ref('latest_active_distinct_project_repos') }}
         group by 1
     ),
 
@@ -77,7 +77,7 @@
     SELECT
         po.*
     FROM
-        {{ source('clean', 'latest_active_distinct_project_repos') }} po
+        {{ ref('latest_active_distinct_project_repos') }} po
 
     WHERE po.data_timestamp in (select load_timestamps from load_timestamps)
 
@@ -87,7 +87,7 @@
     SELECT
         po.*
     FROM
-        {{ source('clean', 'latest_active_distinct_project_repos') }} po 
+        {{ ref('latest_active_distinct_project_repos') }} po 
     WHERE po.data_timestamp = '{{ initial_load_timestamp }}'::timestamp
     
 {% endif %}

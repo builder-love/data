@@ -15,7 +15,7 @@ WITH WeeklySnapshot AS (
         DATE_TRUNC('week', data_timestamp)::DATE AS snapshot_week_start, -- Start date of the week
         MAX(data_timestamp) AS max_timestamp_in_week
     FROM 
-        {{ source('clean', 'normalized_project_commit_count') }}
+        {{ ref('normalized_project_commit_count') }}
     WHERE 
         commit_count IS NOT NULL
     GROUP BY 
@@ -32,7 +32,7 @@ LatestWeeklyProjectCommitCount AS (
     FROM 
         WeeklySnapshot ws
     JOIN 
-        {{ source('clean', 'normalized_project_commit_count') }} f 
+        {{ ref('normalized_project_commit_count') }} f 
         ON ws.project_title = f.project_title 
         AND ws.max_timestamp_in_week = f.data_timestamp
     WHERE 

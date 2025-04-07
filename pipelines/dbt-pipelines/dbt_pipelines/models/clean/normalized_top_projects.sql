@@ -60,7 +60,7 @@
 
     raw_data_timestamps as (
         select data_timestamp, count(*) as record_count
-        from {{ source('clean', 'latest_top_projects') }}
+        from {{ ref('latest_top_projects') }}
         group by 1
     ),
 
@@ -77,7 +77,7 @@
     SELECT
         po.*
     FROM
-        {{ source('clean', 'latest_top_projects') }} po
+        {{ ref('latest_top_projects') }} po
 
     WHERE po.data_timestamp in (select load_timestamps from load_timestamps)
 
@@ -87,7 +87,7 @@
     SELECT
         po.*
     FROM
-        {{ source('clean', 'latest_top_projects') }} po 
+        {{ ref('latest_top_projects') }} po 
     WHERE po.data_timestamp = '{{ initial_load_timestamp }}'::timestamp
     
 {% endif %}

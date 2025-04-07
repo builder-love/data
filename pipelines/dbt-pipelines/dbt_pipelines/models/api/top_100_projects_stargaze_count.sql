@@ -13,6 +13,6 @@ select
   TO_CHAR(data_timestamp, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS latest_data_timestamp,
   stargaze_count
 
-from {{ source('prod', 'latest_project_stargaze_count') }}
+from {{ ref('latest_project_stargaze_count') }}
 
 limit 100
