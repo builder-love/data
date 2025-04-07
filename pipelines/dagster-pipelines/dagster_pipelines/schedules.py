@@ -13,7 +13,9 @@ from dagster_pipelines.jobs import (
     latest_dbt_assets_job,
     project_repos_commit_count_job,
     project_repos_contributors_job,
-    period_change_data_dbt_assets_job
+    period_change_data_dbt_assets_job,
+    project_repos_watcher_count_job,
+    project_repos_is_fork_job
 )
 from dagster_pipelines.cleaning_assets import all_dbt_assets
 from dagster_pipelines.load_data_jobs import refresh_prod_schema
@@ -200,6 +202,26 @@ def project_repos_commit_count_schedule(context):
 
     return {}
 
+# create a schedule to run project_repos_watcher_count_job every 7 days at midnight
+@schedule(
+    job=project_repos_watcher_count_job,
+    cron_schedule="10 0 * * 1", 
+    execution_timezone="America/New_York"
+)
+def project_repos_watcher_count_schedule(context):
+    # Log the start time of the job
+    context.log.info(f"project_repos_watcher_count_schedule job started at: {context.scheduled_execution_time}")
+    start_time = context.scheduled_execution_time
+
+    # Log the end time of the job
+    context.log.info(f"project_repos_watcher_count_schedule job ended at: {context.scheduled_execution_time}")
+    end_time = context.scheduled_execution_time
+    
+    # Log the duration of the job
+    context.log.info(f"project_repos_watcher_count_schedule job duration: {end_time - start_time}")
+
+    return {}
+
 # create a schedule to run project_repos_contributors_job on the 16th of each month at midnight
 @schedule(
     job=project_repos_contributors_job,
@@ -217,6 +239,26 @@ def project_repos_contributors_schedule(context):
     
     # Log the duration of the job
     context.log.info(f"project_repos_contributors_schedule job duration: {end_time - start_time}")
+
+    return {}
+
+# create a schedule to run project_repos_is_fork_job every 7 days at midnight
+@schedule(
+    job=project_repos_is_fork_job,
+    cron_schedule="10 0 * * 2", 
+    execution_timezone="America/New_York"
+)
+def project_repos_is_fork_schedule(context):
+    # Log the start time of the job
+    context.log.info(f"project_repos_is_fork_schedule job started at: {context.scheduled_execution_time}")
+    start_time = context.scheduled_execution_time
+
+    # Log the end time of the job
+    context.log.info(f"project_repos_is_fork_schedule job ended at: {context.scheduled_execution_time}")
+    end_time = context.scheduled_execution_time
+    
+    # Log the duration of the job
+    context.log.info(f"project_repos_is_fork_schedule job duration: {end_time - start_time}")
 
     return {}
 

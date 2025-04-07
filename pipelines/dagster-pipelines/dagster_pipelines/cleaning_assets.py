@@ -183,7 +183,7 @@ def process_compressed_contributors_data(context) -> dg.MaterializeResult:
         # Fetch all rows into a list of tuples
         row_count = result.fetchone()[0]
 
-        preview_query = text("select * from clean.latest_project_repos_contributors")
+        preview_query = text("select * from clean.latest_project_repos_contributors limit 10")
         result = conn.execute(preview_query)
         result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
 
