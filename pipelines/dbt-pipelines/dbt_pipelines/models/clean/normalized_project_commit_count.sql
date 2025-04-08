@@ -1,15 +1,14 @@
--- normalized_project_organizations.sql
--- create an incremental table in clean with data_timestamp intervals >25 days apart
--- exclude outlier batches based on standard deviation from the clean table
--- project_organizations raw table
--- 
+-- normalized_project_commit_count.sql
+-- create an incremental table in clean with data_timestamp intervals >6 days apart
+-- project_repos_commit_count raw table
+
 {{ config(
     materialized='incremental',
-    unique_key='project_title || project_organization_url || data_timestamp',
+    unique_key='project_title || data_timestamp',
     tags=['timestamp_normalized']
 ) }}
 
-{% set initial_load_timestamp = '2025-02-11T14:54:07.695448Z' %}
+{% set initial_load_timestamp = '2025-03-31T13:55:41.132697Z' %}
 
 {% if is_incremental() %}
 
@@ -61,7 +60,7 @@
 
     raw_data_timestamps as (
         select data_timestamp, count(*) as record_count
-        from {{ source('raw', 'project_organizations') }}
+        from {{ ref('latest_project_commit_count') }}
         group by 1
     ),
 
@@ -69,7 +68,7 @@
     load_timestamps AS (
         SELECT data_timestamp AS load_timestamps
         FROM raw_data_timestamps
-        where data_timestamp >= '{{ max_clean_timestamp }}'::timestamp + INTERVAL '25 days'
+        where data_timestamp >= '{{ max_clean_timestamp }}'::timestamp + INTERVAL '6 days'
         AND record_count <= ({{ mean_count }} * 1.5)
         AND record_count >= ({{ mean_count }} * 0.5)
     )
@@ -78,7 +77,7 @@
     SELECT
         po.*
     FROM
-        {{ source('raw', 'project_organizations') }} po
+        {{ ref('latest_project_commit_count') }} po
 
     WHERE po.data_timestamp in (select load_timestamps from load_timestamps)
 
@@ -88,7 +87,7 @@
     SELECT
         po.*
     FROM
-        {{ source('raw', 'project_organizations') }} po 
+        {{ ref('latest_project_commit_count') }} po 
     WHERE po.data_timestamp = '{{ initial_load_timestamp }}'::timestamp
     
 {% endif %}

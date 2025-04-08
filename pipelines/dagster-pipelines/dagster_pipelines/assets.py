@@ -1597,7 +1597,7 @@ def github_project_repos_languages(context) -> dg.MaterializeResult:
 
                 primary_language = response.json()['language']
 
-                # Get the watcher count from the 'size' field
+                # Get the languages
                 return {'repo': repo_url, 'language_name': primary_language, 'size': None, 'repo_languages_total_bytes': None}
 
             except requests.exceptions.RequestException as e:
@@ -2505,6 +2505,807 @@ def github_project_repos_commits(context) -> dg.MaterializeResult:
         }
     )
 
+
+# define the asset that gets the watcher count for a repo
+@dg.asset(
+    required_resource_keys={"cloud_sql_postgres_resource"},
+    group_name="ingestion",
+    tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
+)
+def github_project_repos_watcher_count(context) -> dg.MaterializeResult:
+    # Get the cloud sql postgres resource
+    cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+
+    # get the github personal access token
+    gh_pat = os.environ.get("go_blockchain_ecosystem")
+
+    def get_non_github_repo_watcher_count(repo_url, repo_source):
+
+        print(f"processing non-githubrepo: {repo_url}")
+
+        # add a 1 second delay to avoid rate limiting
+        # note: this is simplified solution but there are not many non-github repos
+        time.sleep(0.5)
+
+        if repo_source == "bitbucket":
+            # Extract owner and repo_slug from the URL
+            try:
+                parts = repo_url.rstrip('/').split('/')
+                owner = parts[-2]
+                repo_slug = parts[-1]
+                if '.' in repo_slug:
+                    repo_slug = repo_slug.split('.')[0]
+            except IndexError:
+                print(f"Invalid Bitbucket URL format: {repo_url}")
+                return None
+
+            try:
+                # Construct the correct Bitbucket API endpoint
+                api_url = f"https://api.bitbucket.org/2.0/repositories/{owner}/{repo_slug}"
+
+                response = requests.get(api_url)
+
+                # check if the response is successful
+                response.raise_for_status()
+
+                watchers_url = response.json()['links']['watchers']['href']
+                watchers_response = requests.get(watchers_url)
+                watchers_response.raise_for_status()
+                watchers_data = watchers_response.json()
+
+                # Get the watcher count from the 'size' field
+                return watchers_data['size']
+
+            except requests.exceptions.RequestException as e:
+                print(f"Error fetching data from Bitbucket API: {e}")
+                return None
+            except KeyError as e:
+                print(f"Error: missing key in response.  Key: {e}")
+                return None
+            except Exception as e:
+                print(f"An unexpected error has occurred: {e}")
+                return None
+
+        elif repo_source == "gitlab":
+            try:
+                parts = repo_url.rstrip('/').split('/')
+                project_path = "/".join(parts[3:])
+                project_path_encoded = requests.utils.quote(project_path, safe='')
+            except IndexError:
+                print(f"Invalid GitLab URL format: {repo_url}")
+                return {'repo': repo_url, 'watcher_count': None}
+
+            api_url = f"https://gitlab.com/api/v4/projects/{project_path_encoded}"  
+
+            try:
+                response = requests.get(api_url)  # No headers needed for unauthenticated access
+                response.raise_for_status()
+
+                # now access watchers endpoint
+                watchers_url = f"https://gitlab.com/api/v4/projects/{response.json()['id']}/users?subscribed=true?per_page=100"
+                watchers = []
+                while watchers_url:
+                    try:
+                        time.sleep(0.2)
+                        response = requests.get(watchers_url)
+                        response.raise_for_status()
+
+                        if response.status_code == 200:
+                            watchers.extend(response.json())
+                            link_header = response.headers.get("Link")
+                            if link_header:
+                                next_link = None
+                                links = link_header.split(",")
+                                for link in links:
+                                    if 'rel="next"' in link:
+                                        next_link = link.split(";")[0].strip()  # Remove extra spaces
+                                        next_link = next_link.strip("<>").strip()  # Remove angle brackets
+                                        break
+                                watchers_url = next_link
+                            else:
+                                watchers_url = None
+                        else:
+                            print(f"Error: {response.status_code}")
+                            break
+                    except requests.exceptions.RequestException as e:
+                        print(f"Error fetching data from GitLab API: {e}")
+                        break
+                
+                # return the watcher count data
+                if watchers:
+                    return len(watchers)
+                else:
+                    return None
+                    
+            except requests.exceptions.RequestException as e:
+                print(f"Error fetching data from GitLab API: {e}")
+                return None
+            except KeyError as e:
+                print(f"Error: missing key in response.  Key: {e}") 
+                return None
+            except Exception as e:
+                print(f"An unexpected error has occurred: {e}")
+                return None
+        else:
+            return None
+
+    def get_github_repo_watcher_count(repo_urls, gh_pat):
+        """
+        Queries the watcher count for a GitHub repository using the GraphQL API.
+
+        Args:
+            repo_urls: A list of GitHub repository URLs.
+
+        Returns:
+            A dictionary mapping each repository URL to the watcher count.
+        """
+
+        if not repo_urls:  # Handle empty input list
+            return [], 0
+
+        api_url = "https://api.github.com/graphql"
+        headers = {"Authorization": f"bearer {gh_pat}"}
+        results = {}  # Store results: {url: watcher_count}
+        batch_size = 120  # Adjust as needed
+        cpu_time_used = 0
+        real_time_used = 0
+        real_time_window = 60
+        cpu_time_limit = 50
+        count_502_errors = 0
+        count_403_errors = 0
+        batch_time_history = []
+
+        for i in range(0, len(repo_urls), batch_size):
+            print(f"processing batch: {i} - {i + batch_size}")
+            # calculate the time it takes to process the batch
+            start_time = time.time()
+            batch = repo_urls[i:i + batch_size]
+            processed_in_batch = set()  # Track successfully processed repos *within this batch*
+            query = "query ("  # Start the query definition
+            variables = {}
+
+            # 1. Declare variables in the query definition
+            for j, repo_url in enumerate(batch):
+                try:
+                    parts = repo_url.rstrip('/').split('/')
+                    owner = parts[-2]
+                    name = parts[-1]
+                except IndexError:
+                    print(f"Invalid GitHub URL format: {repo_url}")
+                    continue
+
+                query += f"$owner{j}: String!, $name{j}: String!,"  # Declare variables
+                variables[f"owner{j}"] = owner
+                variables[f"name{j}"] = name
+
+            query = query.rstrip(",")  # Remove trailing comma
+            query += ") {\n"  # Close the variable declaration
+
+            # 2. Construct the query body (using the declared variables)
+            for j, repo_url in enumerate(batch):
+                query += f"""  repo{j}: repository(owner: $owner{j}, name: $name{j}) {{
+                        watchers {{
+                            totalCount
+                        }}
+                }}\n"""
+
+            query += "}"
+
+            base_delay = 1
+            max_delay = 60
+            max_retries = 8
+
+            for attempt in range(max_retries):
+                print(f"attempt: {attempt}")
+                
+                try:
+                    if cpu_time_used >= cpu_time_limit and real_time_used < real_time_window:
+                        extra_delay = (cpu_time_used - cpu_time_limit) / 2
+                        extra_delay = max(1, extra_delay)
+                        print(f"CPU time limit reached. Delaying for {extra_delay:.2f} seconds.")
+                        time.sleep(extra_delay)
+                        print(f"resetting cpu_time_used and real_time_used to 0")
+                        cpu_time_used = 0
+                        real_time_used = 0
+                        start_time = time.time()
+                    elif real_time_used >= real_time_window and cpu_time_used < cpu_time_limit:
+                        print(f"real time limit reached without CPU time limit reached. Resetting counts.")
+                        cpu_time_used = 0
+                        real_time_used = 0
+                    elif real_time_used >= real_time_window and cpu_time_used >= cpu_time_limit:
+                        print(f"real time limit reached. CPU time limit reached. Resetting counts.")
+                        cpu_time_used = 0
+                        real_time_used = 0
+                    elif real_time_used < real_time_window and cpu_time_used < cpu_time_limit:
+                        print('cpu time limit not reached. Continuing...')
+
+                    response = requests.post(api_url, json={'query': query, 'variables': variables}, headers=headers)
+                    time_since_start = time.time() - start_time
+                    print(f"time_since_start: {time_since_start:.2f} seconds")
+                    time.sleep(2)  # Consistent delay
+
+                    # use raise for status to catch errors
+                    response.raise_for_status()
+                    data = response.json()
+
+                    if 'errors' in data:
+                        print(f"Status Code: {response.status_code}")
+                        # Extract rate limit information from headers
+                        print(" \n resource usage tracking:")
+                        rate_limit_info = {
+                            'remaining': response.headers.get('x-ratelimit-remaining'),
+                            'used': response.headers.get('x-ratelimit-used'),
+                            'reset': response.headers.get('x-ratelimit-reset'),
+                            'retry_after': response.headers.get('retry-after')
+                        }
+                        print(f"Rate Limit Info: {rate_limit_info}\n")
+
+                        for error in data['errors']:
+                            if error['type'] == 'RATE_LIMITED':
+                                reset_at = response.headers.get('X-RateLimit-Reset')
+                                if reset_at:
+                                    delay = int(reset_at) - int(time.time()) + 1
+                                    delay = max(1, delay)
+                                    delay = min(delay, max_delay)
+                                    print(f"Rate limited.  Waiting for {delay} seconds...")
+                                    time.sleep(delay)
+                                    continue  # Retry the entire batch
+                            else:
+                                print(f"GraphQL Error: {error}") #Print all the errors.
+
+                    # write the url and watcher count to the database
+                    if 'data' in data:
+                        for j, repo_url in enumerate(batch):
+                            if repo_url in processed_in_batch:  # CRUCIAL CHECK
+                                continue  # Skip if already processed
+                            repo_data = data['data'].get(f'repo{j}')
+                            if repo_data:
+                                results[repo_url] = repo_data['watchers']['totalCount']
+                                processed_in_batch.add(repo_url)  # Mark as processed
+                            else:
+                                print(f"repo_data is empty for repo: {repo_url}\n")
+                    break
+
+                except requests.exceptions.RequestException as e:
+                    print(f"there was a request exception on attempt: {attempt}\n")
+                    print(f"procesing batch: {batch}\n")
+                    print(f"Status Code: {response.status_code}")
+                    # Extract rate limit information from headers
+                    print(" \n resource usage tracking:")
+                    rate_limit_info = {
+                        'remaining': response.headers.get('x-ratelimit-remaining'),
+                        'used': response.headers.get('x-ratelimit-used'),
+                        'reset': response.headers.get('x-ratelimit-reset'),
+                        'retry_after': response.headers.get('retry-after')
+                    }
+                    print(f"Rate Limit Info: {rate_limit_info}\n")
+
+                    print(f"the error is: {e}\n")
+                    if attempt == max_retries - 1:
+                        print(f"Max retries reached or unrecoverable error for batch. Giving up.")
+                        break
+                    # --- Rate Limit Handling (REST API style - for 403/429) ---
+                    if isinstance(e, requests.exceptions.HTTPError):
+                        if e.response.status_code in (502, 504):
+                            count_502_errors += 1
+                            print(f"This process has generated {count_502_errors} 502/504 errors in total.")
+                            delay = 1
+                            print(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
+                            time.sleep(delay)
+                            continue
+                        elif e.response.status_code in (403, 429):
+                            count_403_errors += 1
+                            print(f"This process has generated {count_403_errors} 403/429 errors in total.")
+                            retry_after = response.headers.get('Retry-After')
+                            if retry_after:
+                                delay = int(retry_after)
+                                print(f"Rate limited (REST - Retry-After). Waiting for {delay} seconds...")
+                                time.sleep(delay)
+                                continue
+                            else:
+                                delay = 1 * (2 ** attempt) + random.uniform(0, 1)
+                                print(f"Rate limited (REST - Exponential Backoff). Waiting for {delay:.2f} seconds...")
+                                time.sleep(delay)
+                                continue
+                    else:
+                        delay = 1 * (2 ** attempt) + random.uniform(0, 1)
+                        print(f"Request failed: {e}. Waiting for {delay:.2f} seconds...")
+                        time.sleep(delay)
+
+                except KeyError as e:
+                    print(f"KeyError: {e}. Response: {data}")
+                    # Don't append here; handle errors at the end
+                    break
+                except Exception as e:
+                    print(f"An unexpected error occurred: {e}")
+                    # Don't append here; handle errors at the end
+                    break
+
+            # Handle any repos that failed *all* retries (or were invalid URLs)
+            for repo_url in batch:
+                if repo_url not in processed_in_batch:
+                    results[repo_url] = None
+                    print(f"adding repo to results after max retries, or was invalid url: {repo_url}")
+
+            end_time = time.time()
+            batch_time = end_time - start_time
+            cpu_time_used += time_since_start
+            real_time_used += batch_time
+            batch_time_history.append(batch_time)
+            if batch_time_history and len(batch_time_history) > 10:
+                print(f"average batch time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
+            print(f"batch {i} - {i + batch_size} completed. Total repos to process: {len(repo_urls)}")
+            print(f"time taken to process batch {i}: {batch_time:.2f} seconds")
+            print(f"Total CPU time used: {cpu_time_used:.2f} seconds")
+            print(f"Total real time used: {real_time_used:.2f} seconds")
+
+        return results, {
+            'count_403_errors': count_403_errors,
+            'count_502_errors': count_502_errors
+        }
+
+    # Execute the query
+    with cloud_sql_engine.connect() as conn:
+
+        # query the latest_distinct_project_repos table to get the distinct repo list
+        result = conn.execute(
+            text("""select repo, repo_source from clean.latest_active_distinct_project_repos where is_active = true"""
+                )
+            )
+        repo_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+
+    # Filter for GitHub URLs
+    github_urls = repo_df[repo_df['repo_source'] == 'github']['repo'].tolist()
+
+    print(f"number of github urls: {len(github_urls)}")
+
+    # check if github_urls is not empty
+    if github_urls:
+        results = get_github_repo_watcher_count(github_urls, gh_pat)
+
+        github_results = results[0]
+        count_http_errors_github_api = results[1]
+
+        # write results to pandas dataframe
+        results_df = pd.DataFrame(github_results.items(), columns=['repo', 'watcher_count'])
+    else:
+        results_df = pd.DataFrame(columns=['repo', 'watcher_count'])
+
+    # now get non-github repos urls
+    non_github_results_df = repo_df[repo_df['repo_source'] != 'github']
+
+    # if non_github_urls is not empty, get watcher count
+    if not non_github_results_df.empty:
+        print("found non-github repos. Getting repo watcher count...")
+        # apply distinct_repo_df['repo'] to get watcher count
+        non_github_results_df['watcher_count'] = non_github_results_df.apply(
+            lambda row: get_non_github_repo_watcher_count(row['repo'], row['repo_source']), axis=1
+        )
+
+        # drop the repo_source column
+        non_github_results_df = non_github_results_df.drop(columns=['repo_source'])
+
+        # append non_github_urls to results_df
+        results_df = pd.concat([results_df, non_github_results_df])
+
+    # check if results_df is not empty
+    if not results_df.empty:
+        # add unix datetime column
+        results_df['data_timestamp'] = pd.Timestamp.now()
+
+        # write results to database
+        results_df.to_sql('project_repos_watcher_count', cloud_sql_engine, if_exists='append', index=False, schema='raw')
+
+        with cloud_sql_engine.connect() as conn:
+            # capture asset metadata
+            preview_query = text("select count(*) from raw.project_repos_watcher_count")
+            result = conn.execute(preview_query)
+            # Fetch all rows into a list of tuples
+            row_count = result.fetchone()[0]
+
+            preview_query = text("select * from raw.project_repos_watcher_count limit 10")
+            result = conn.execute(preview_query)
+            result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+
+        return dg.MaterializeResult(
+            metadata={
+                "row_count": dg.MetadataValue.int(row_count),
+                "preview": dg.MetadataValue.md(result_df.to_markdown(index=False)),
+                "count_403_errors_github_api": dg.MetadataValue.int(count_http_errors_github_api['count_403_errors']),
+                "count_502_errors_github_api": dg.MetadataValue.int(count_http_errors_github_api['count_502_errors'])
+            }
+        )
+    else:
+        return dg.MaterializeResult(
+            metadata={"row_count": dg.MetadataValue.int(0)}
+        )
+
+# define the asset that gets the boolean isFork for a repo
+@dg.asset(
+    required_resource_keys={"cloud_sql_postgres_resource"},
+    group_name="ingestion",
+    tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
+)
+def github_project_repos_is_fork(context) -> dg.MaterializeResult:
+    # Get the cloud sql postgres resource
+    cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+
+    # get the github personal access token
+    gh_pat = os.environ.get("go_blockchain_ecosystem")
+
+    def get_non_github_repo_is_fork(repo_url, repo_source):
+
+        print(f"processing non-githubrepo: {repo_url}")
+
+        # add a 1 second delay to avoid rate limiting
+        # note: this is simplified solution but there are not many non-github repos
+        time.sleep(0.5)
+
+        if repo_source == "bitbucket":
+            # Extract owner and repo_slug from the URL
+            try:
+                parts = repo_url.rstrip('/').split('/')
+                owner = parts[-2]
+                repo_slug = parts[-1]
+                if '.' in repo_slug:
+                    repo_slug = repo_slug.split('.')[0]
+            except IndexError:
+                print(f"Invalid Bitbucket URL format: {repo_url}")
+                return None
+
+            try:
+                # Construct the correct Bitbucket API endpoint
+                api_url = f"https://api.bitbucket.org/2.0/repositories/{owner}/{repo_slug}"
+
+                response = requests.get(api_url)
+
+                # check if the response is successful
+                response.raise_for_status()
+
+                # check if parent key is included in the response
+                if 'parent' in response.json():
+                    # check if parent key is not None
+                    if response.json()['parent'] is not None:
+                        return True
+                    else:
+                        return False
+                else:
+                    return False
+            except requests.exceptions.RequestException as e:
+                print(f"Error fetching data from Bitbucket API: {e}")
+                return None
+            except KeyError as e:
+                print(f"Error: missing key in response.  Key: {e}")
+                return None
+            except Exception as e:
+                print(f"An unexpected error has occurred: {e}")
+                return None
+
+        elif repo_source == "gitlab":
+            try:
+                parts = repo_url.rstrip('/').split('/')
+                project_path = "/".join(parts[3:])
+                project_path_encoded = requests.utils.quote(project_path, safe='')
+            except IndexError:
+                print(f"Invalid GitLab URL format: {repo_url}")
+                return {'repo': repo_url, 'watcher_count': None}
+
+            api_url = f"https://gitlab.com/api/v4/projects/{project_path_encoded}"  
+
+            try:
+                response = requests.get(api_url)  # No headers needed for unauthenticated access
+                response.raise_for_status()
+
+                # now access check if the forked_from_project key is included in the response endpoint
+                if 'forked_from_project' in response.json():
+                    # check if the forked_from_project key is not None
+                    if response.json()['forked_from_project'] is not None:
+                        return True
+                    else:
+                        return False
+                else:
+                    return False
+
+            except requests.exceptions.RequestException as e:
+                print(f"Error fetching data from GitLab API: {e}")
+                return None
+            except KeyError as e:
+                print(f"Error: missing key in response.  Key: {e}")
+                return None
+            except Exception as e:
+                print(f"An unexpected error has occurred: {e}")
+                return None
+        else:
+            return None
+
+    def get_github_repo_is_fork(repo_urls, gh_pat):
+        """
+        Queries the isFork count for a GitHub repository using the GraphQL API.
+
+        Args:
+            repo_urls: A list of GitHub repository URLs.
+
+        Returns:
+            A dictionary mapping each repository URL to the isFork count.
+        """
+
+        if not repo_urls:  # Handle empty input list
+            return [], 0
+
+        api_url = "https://api.github.com/graphql"
+        headers = {"Authorization": f"bearer {gh_pat}"}
+        results = {}  # Store results: {url: watcher_count}
+        batch_size = 120  # Adjust as needed
+        cpu_time_used = 0
+        real_time_used = 0
+        real_time_window = 60
+        cpu_time_limit = 50
+        count_502_errors = 0
+        count_403_errors = 0
+        batch_time_history = []
+
+        for i in range(0, len(repo_urls), batch_size):
+            print(f"processing batch: {i} - {i + batch_size}")
+            # calculate the time it takes to process the batch
+            start_time = time.time()
+            batch = repo_urls[i:i + batch_size]
+            processed_in_batch = set()  # Track successfully processed repos *within this batch*
+            query = "query ("  # Start the query definition
+            variables = {}
+
+            # 1. Declare variables in the query definition
+            for j, repo_url in enumerate(batch):
+                try:
+                    parts = repo_url.rstrip('/').split('/')
+                    owner = parts[-2]
+                    name = parts[-1]
+                except IndexError:
+                    print(f"Invalid GitHub URL format: {repo_url}")
+                    continue
+
+                query += f"$owner{j}: String!, $name{j}: String!,"  # Declare variables
+                variables[f"owner{j}"] = owner
+                variables[f"name{j}"] = name
+
+            query = query.rstrip(",")  # Remove trailing comma
+            query += ") {\n"  # Close the variable declaration
+
+            # 2. Construct the query body (using the declared variables)
+            for j, repo_url in enumerate(batch):
+                query += f"""  repo{j}: repository(owner: $owner{j}, name: $name{j}) {{
+                        isFork
+                }}\n"""
+
+            query += "}"
+
+            base_delay = 1
+            max_delay = 60
+            max_retries = 8
+
+            for attempt in range(max_retries):
+                print(f"attempt: {attempt}")
+                
+                try:
+                    if cpu_time_used >= cpu_time_limit and real_time_used < real_time_window:
+                        extra_delay = (cpu_time_used - cpu_time_limit) / 2
+                        extra_delay = max(1, extra_delay)
+                        print(f"CPU time limit reached. Delaying for {extra_delay:.2f} seconds.")
+                        time.sleep(extra_delay)
+                        print(f"resetting cpu_time_used and real_time_used to 0")
+                        cpu_time_used = 0
+                        real_time_used = 0
+                        start_time = time.time()
+                    elif real_time_used >= real_time_window and cpu_time_used < cpu_time_limit:
+                        print(f"real time limit reached without CPU time limit reached. Resetting counts.")
+                        cpu_time_used = 0
+                        real_time_used = 0
+                    elif real_time_used >= real_time_window and cpu_time_used >= cpu_time_limit:
+                        print(f"real time limit reached. CPU time limit reached. Resetting counts.")
+                        cpu_time_used = 0
+                        real_time_used = 0
+                    elif real_time_used < real_time_window and cpu_time_used < cpu_time_limit:
+                        print('cpu time limit not reached. Continuing...')
+
+                    response = requests.post(api_url, json={'query': query, 'variables': variables}, headers=headers)
+                    time_since_start = time.time() - start_time
+                    print(f"time_since_start: {time_since_start:.2f} seconds")
+                    time.sleep(3)  # Consistent delay
+
+                    # use raise for status to catch errors
+                    response.raise_for_status()
+                    data = response.json()
+
+                    if 'errors' in data:
+                        print(f"Status Code: {response.status_code}")
+                        # Extract rate limit information from headers
+                        print(" \n resource usage tracking:")
+                        rate_limit_info = {
+                            'remaining': response.headers.get('x-ratelimit-remaining'),
+                            'used': response.headers.get('x-ratelimit-used'),
+                            'reset': response.headers.get('x-ratelimit-reset'),
+                            'retry_after': response.headers.get('retry-after')
+                        }
+                        print(f"Rate Limit Info: {rate_limit_info}\n")
+
+                        for error in data['errors']:
+                            if error['type'] == 'RATE_LIMITED':
+                                reset_at = response.headers.get('X-RateLimit-Reset')
+                                if reset_at:
+                                    delay = int(reset_at) - int(time.time()) + 1
+                                    delay = max(1, delay)
+                                    delay = min(delay, max_delay)
+                                    print(f"Rate limited.  Waiting for {delay} seconds...")
+                                    time.sleep(delay)
+                                    continue  # Retry the entire batch
+                            else:
+                                print(f"GraphQL Error: {error}") #Print all the errors.
+
+                    # write the url and isFork to the database
+                    if 'data' in data:
+                        for j, repo_url in enumerate(batch):
+                            if repo_url in processed_in_batch:  # CRUCIAL CHECK
+                                continue  # Skip if already processed
+                            repo_data = data['data'].get(f'repo{j}')
+                            if repo_data:
+                                results[repo_url] = repo_data['isFork']
+                                processed_in_batch.add(repo_url)  # Mark as processed
+                            else:
+                                print(f"repo_data is empty for repo: {repo_url}\n")
+                    break
+
+                except requests.exceptions.RequestException as e:
+                    print(f"there was a request exception on attempt: {attempt}\n")
+                    print(f"procesing batch: {batch}\n")
+                    print(f"Status Code: {response.status_code}")
+                    # Extract rate limit information from headers
+                    print(" \n resource usage tracking:")
+                    rate_limit_info = {
+                        'remaining': response.headers.get('x-ratelimit-remaining'),
+                        'used': response.headers.get('x-ratelimit-used'),
+                        'reset': response.headers.get('x-ratelimit-reset'),
+                        'retry_after': response.headers.get('retry-after')
+                    }
+                    print(f"Rate Limit Info: {rate_limit_info}\n")
+
+                    print(f"the error is: {e}\n")
+                    if attempt == max_retries - 1:
+                        print(f"Max retries reached or unrecoverable error for batch. Giving up.")
+                        break
+                    # --- Rate Limit Handling (REST API style - for 403/429) ---
+                    if isinstance(e, requests.exceptions.HTTPError):
+                        if e.response.status_code in (502, 504):
+                            count_502_errors += 1
+                            print(f"This process has generated {count_502_errors} 502/504 errors in total.")
+                            delay = 1
+                            print(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
+                            time.sleep(delay)
+                            continue
+                        elif e.response.status_code in (403, 429):
+                            count_403_errors += 1
+                            print(f"This process has generated {count_403_errors} 403/429 errors in total.")
+                            retry_after = response.headers.get('Retry-After')
+                            if retry_after:
+                                delay = int(retry_after)
+                                print(f"Rate limited (REST - Retry-After). Waiting for {delay} seconds...")
+                                time.sleep(delay)
+                                continue
+                            else:
+                                delay = 1 * (2 ** attempt) + random.uniform(0, 1)
+                                print(f"Rate limited (REST - Exponential Backoff). Waiting for {delay:.2f} seconds...")
+                                time.sleep(delay)
+                                continue
+                    else:
+                        delay = 1 * (2 ** attempt) + random.uniform(0, 1)
+                        print(f"Request failed: {e}. Waiting for {delay:.2f} seconds...")
+                        time.sleep(delay)
+
+                except KeyError as e:
+                    print(f"KeyError: {e}. Response: {data}")
+                    # Don't append here; handle errors at the end
+                    break
+                except Exception as e:
+                    print(f"An unexpected error occurred: {e}")
+                    # Don't append here; handle errors at the end
+                    break
+
+            # Handle any repos that failed *all* retries (or were invalid URLs)
+            for repo_url in batch:
+                if repo_url not in processed_in_batch:
+                    results[repo_url] = None
+                    print(f"adding repo to results after max retries, or was invalid url: {repo_url}")
+
+            end_time = time.time()
+            batch_time = end_time - start_time
+            cpu_time_used += time_since_start
+            real_time_used += batch_time
+            batch_time_history.append(batch_time)
+            if batch_time_history and len(batch_time_history) > 10:
+                print(f"average batch time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
+            print(f"batch {i} - {i + batch_size} completed. Total repos to process: {len(repo_urls)}")
+            print(f"time taken to process batch {i}: {batch_time:.2f} seconds")
+            print(f"Total CPU time used: {cpu_time_used:.2f} seconds")
+            print(f"Total real time used: {real_time_used:.2f} seconds")
+
+        return results, {
+            'count_403_errors': count_403_errors,
+            'count_502_errors': count_502_errors
+        }
+
+    # Execute the query
+    with cloud_sql_engine.connect() as conn:
+
+        # query the latest_distinct_project_repos table to get the distinct repo list
+        result = conn.execute(
+            text("""select repo, repo_source from clean.latest_active_distinct_project_repos where is_active = true"""
+                )
+            )
+        repo_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+
+    # Filter for GitHub URLs
+    github_urls = repo_df[repo_df['repo_source'] == 'github']['repo'].tolist()
+
+    print(f"number of github urls: {len(github_urls)}")
+
+    # check if github_urls is not empty
+    if github_urls:
+        results = get_github_repo_is_fork(github_urls, gh_pat)
+
+        github_results = results[0]
+        count_http_errors_github_api = results[1]
+
+        # write results to pandas dataframe
+        results_df = pd.DataFrame(github_results.items(), columns=['repo', 'is_fork'])
+    else:
+        results_df = pd.DataFrame(columns=['repo', 'is_fork'])
+
+    # now get non-github repos urls
+    non_github_results_df = repo_df[repo_df['repo_source'] != 'github']
+
+    # if non_github_urls is not empty, get watcher count
+    if not non_github_results_df.empty:
+        print("found non-github repos. Getting repo isFork...")
+        # apply distinct_repo_df['repo'] to get watcher count
+        non_github_results_df['is_fork'] = non_github_results_df.apply(
+            lambda row: get_non_github_repo_is_fork(row['repo'], row['repo_source']), axis=1
+        )
+
+        # drop the repo_source column
+        non_github_results_df = non_github_results_df.drop(columns=['repo_source'])
+
+        # append non_github_urls to results_df
+        results_df = pd.concat([results_df, non_github_results_df])
+
+    # check if results_df is not empty
+    if not results_df.empty:
+        # add unix datetime column
+        results_df['data_timestamp'] = pd.Timestamp.now()
+
+        # write results to database
+        results_df.to_sql('project_repos_is_fork', cloud_sql_engine, if_exists='append', index=False, schema='raw')
+
+        with cloud_sql_engine.connect() as conn:
+            # capture asset metadata
+            preview_query = text("select count(*) from raw.project_repos_is_fork")
+            result = conn.execute(preview_query)
+            # Fetch all rows into a list of tuples
+            row_count = result.fetchone()[0]
+
+            preview_query = text("select * from raw.project_repos_is_fork limit 10")
+            result = conn.execute(preview_query)
+            result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+
+        return dg.MaterializeResult(
+            metadata={
+                "row_count": dg.MetadataValue.int(row_count),
+                "preview": dg.MetadataValue.md(result_df.to_markdown(index=False)),
+                "count_403_errors_github_api": dg.MetadataValue.int(count_http_errors_github_api['count_403_errors']),
+                "count_502_errors_github_api": dg.MetadataValue.int(count_http_errors_github_api['count_502_errors'])
+            }
+        )
+    else:
+        return dg.MaterializeResult(
+            metadata={"row_count": dg.MetadataValue.int(0)}
+        )
 
 # define the asset that gets the contributors for a repo
 @dg.asset(

@@ -5,7 +5,7 @@ dbt_pipelines:
       host: "{{ env_var('cloud_sql_postgres_host') }}"
       pass: "{{ env_var('cloud_sql_password')  }}"
       port: 5432
-      schema: public
+      schema: clean
       threads: 4
       type: "{{ env_var('cloud_sql_postgres_db')  }}"
       user: "{{ env_var('cloud_sql_user')  }}"

@@ -41,6 +41,10 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 8, period: day}
+      - name: project_repos_contributors
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 45, period: day}
   - name: clean
     database: postgres
     schema: clean
@@ -65,6 +69,10 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 8, period: day}
+      - name: normalized_project_fork_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
       - name: normalized_project_repos_stargaze_count
         loaded_at_field: data_timestamp
         freshness: 
@@ -74,6 +82,30 @@ sources:
         freshness: 
           warn_after: {count: 32, period: day}
       - name: normalized_project_repos_commit_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
+      - name: normalized_project_contributor_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: normalized_project_repos_contributor_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: normalized_active_distinct_project_repos
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: normalized_project_stargaze_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
+      - name: normalized_project_commit_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
+      - name: normalized_top_projects
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 8, period: day}
@@ -105,7 +137,15 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 8, period: day}
+      - name: latest_project_commit_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
       - name: latest_project_repos_fork_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
+      - name: latest_project_fork_count
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 8, period: day}
@@ -117,29 +157,54 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 8, period: day}
-      - name: top_100_forks
-      - name: top_100_stars
+      - name: latest_project_stargaze_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
+      - name: latest_project_contributor_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: latest_project_repos_contributor_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: latest_distinct_projects
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: latest_top_projects
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
+      - name: four_week_change_project_contributor_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: four_week_change_project_fork_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: four_week_change_project_stargaze_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: four_week_change_project_commit_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: latest_project_repos_contributors
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
   - name: prod
     database: postgres
     schema: prod
     tables:
-      - name: normalized_project_toml_files
-      - name: normalized_project_sub_ecosystems
-      - name: normalized_project_organizations
-      - name: normalized_project_repos
-      - name: normalized_project_repos_fork_count
-      - name: normalized_project_repos_stargaze_count
-      - name: normalized_project_repos_languages
-      - name: normalized_project_repos_commit_count
-      - name: latest_active_distinct_project_repos
-      - name: latest_distinct_project_repos
-      - name: latest_project_organizations
-      - name: latest_project_repos
-      - name: latest_project_sub_ecosystems
-      - name: latest_project_toml_files
-      - name: latest_project_repos_commit_count
-      - name: latest_project_repos_fork_count
-      - name: latest_project_repos_languages
-      - name: latest_project_repos_stargaze_count
-      - name: top_100_forks
-      - name: top_100_stargaze
+      - name: normalized_project_commit_count
+      - name: normalized_project_contributor_count
+      - name: normalized_project_fork_count
+      - name: normalized_project_stargaze_count
+      - name: latest_top_projects
+      - name: latest_project_fork_count
+      - name: latest_project_stargaze_count
