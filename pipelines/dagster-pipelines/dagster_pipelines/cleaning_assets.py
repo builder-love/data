@@ -84,6 +84,85 @@ def process_compressed_contributors_data(context) -> dg.MaterializeResult:
     # Get the cloud sql postgres resource
     cloud_sql_engine = context.resources.cloud_sql_postgres_resource
 
+    # Define table names constants for clarity and easy changes
+    staging_table_name = "latest_project_repos_contributors_staging"
+    final_table_name = "latest_project_repos_contributors"
+    old_table_name = "latest_project_repos_contributors_old"
+    schema_name = "clean"
+
+    def run_validations(context, df: pd.DataFrame, engine):
+        """Runs validation checks on the DataFrame against the existing final table. Raises ValueError if checks fail."""
+        context.log.info("Running validations...")
+
+        context.log.info("Checking if DataFrame is empty...")
+        if df.empty:
+            raise ValueError("Validation failed: Input DataFrame is empty.")
+        context.log.info("DataFrame is not empty.")
+
+        context.log.info("Checking if 'repo' column contains NULL values...")
+        if df['repo'].isnull().any():
+            raise ValueError("Validation failed: 'repo' column contains NULL values.")
+        context.log.info("'repo' column does not contain NULL values.")
+
+        existing_record_count_val = None
+        existing_data_timestamp_val = None
+
+        try:
+            context.log.info(f"Checking existing data in {schema_name}.{final_table_name}...")
+            with engine.connect() as conn:
+                # Check if final table exists first
+                table_exists_result = conn.execute(text(
+                    f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = '{schema_name}' AND table_name = '{final_table_name}');"
+                ))
+                final_table_exists = table_exists_result.scalar_one() # Use scalar_one for single boolean result
+
+                if final_table_exists:
+                    result_count = conn.execute(text(f"SELECT COUNT(*) FROM {schema_name}.{final_table_name}"))
+                    existing_record_count_val = result_count.scalar()
+
+                    result_ts = conn.execute(text(f"SELECT MAX(data_timestamp) FROM {schema_name}.{final_table_name}"))
+                    existing_data_timestamp_val = result_ts.scalar() # Can be None/NaT if table empty/no timestamp
+                else:
+                    context.log.warning(f"Final table {schema_name}.{final_table_name} does not exist. Skipping comparison checks.")
+                    # Allow first run where the table doesn't exist yet
+
+        except Exception as e:
+            context.log.error(f"Error accessing existing data in {schema_name}.{final_table_name}: {e}", exc_info=True)
+            # If comparison is essential, raise. If optional on first run, just warn. Let's raise.
+            raise ValueError(f"Validation failed: Error accessing existing data in {schema_name}.{final_table_name}.")
+
+        # --- Comparison Validations (only if existing data was found) ---
+        if existing_record_count_val is not None:
+            context.log.info(f"Checking record count deviation (New: {df.shape[0]}, Existing: {existing_record_count_val})...")
+            if existing_record_count_val > 0:
+                deviation = abs(df.shape[0] - existing_record_count_val) / existing_record_count_val
+                if deviation > 0.5:
+                    raise ValueError(f"Validation failed: Record count deviation ({deviation:.1%}) exceeds 50%.")
+                context.log.info(f"Record count deviation ({deviation:.1%}) within 50% threshold.")
+            elif df.shape[0] > 0:
+                context.log.warning("Existing table had 0 records, new data has records.")
+            else: # Both 0
+                context.log.info("Both existing and new data appear empty.")
+                raise ValueError("Validation failed: Both existing and new data appear empty.")
+
+
+        if existing_data_timestamp_val is not None and not pd.isna(existing_data_timestamp_val):
+            # Timestamps need to be timezone-aware for proper comparison
+            now_ts = pd.Timestamp.now(tz='UTC') # Assuming UTC, adjust if necessary
+            existing_data_timestamp_val_aware = pd.Timestamp(existing_data_timestamp_val).tz_localize('UTC') # Assuming stored as naive UTC
+
+            context.log.info(f"Checking data timestamp (Existing: {existing_data_timestamp_val_aware}, Threshold: 25 days)...")
+            # Check if existing data timestamp is EARLIER than 25 days ago (i.e., older than 25 days)
+            if existing_data_timestamp_val_aware > (now_ts - pd.Timedelta(days=25)):
+                # Raise error only if data is NEWER than 25 days
+                raise ValueError(f"Validation failed: Existing data timestamp ({existing_data_timestamp_val_aware}) is not older than 25 days.")
+            context.log.info("Existing data timestamp is more than 25 days old.")
+        elif final_table_exists: # Only warn if table existed but timestamp was null/missing
+            context.log.warning("Could not retrieve a valid existing data timestamp for comparison.")
+
+        context.log.info("Validations passed.")
+        return True
+
     # Execute the query
     # Extracts, decompresses, and inserts data into the clean table.
     try:
@@ -97,7 +176,12 @@ def process_compressed_contributors_data(context) -> dg.MaterializeResult:
             ))
             rows = pd.DataFrame(result.fetchall(), columns=result.keys())
 
+            if rows.empty:
+                raise ValueError("Validation failed: DataFrame is empty.")
+                return dg.MaterializeResult(metadata={"row_count": 0, "message": "No raw data found."})
+
             # capture the data in a list
+            print(f"Fetched {len(rows)} repos with compressed data. Decompressing...")
             data = []
             for repo, compressed_data in rows.itertuples(index=False):
 
@@ -163,35 +247,83 @@ def process_compressed_contributors_data(context) -> dg.MaterializeResult:
                             "contributor_contributions": contributor['contributions'],
                             "contributor_email": contributor['email'],
                         })
-    except psycopg2.Error as e:
-        print(f"Error processing data: {e}")
-        conn.rollback()
 
-    # write the data to a pandas dataframe
-    contributors_df = pd.DataFrame(data)
+        if not data:
+            print("Data list is empty after processing raw rows.")
+            raise ValueError("Validation failed: Data is empty.")
 
-    # add unix datetime column
-    contributors_df['data_timestamp'] = pd.Timestamp.now()
+        # write the data to a pandas dataframe
+        contributors_df = pd.DataFrame(data)
 
-    # write the data to the clean.project_repos_contributors table
-    contributors_df.to_sql('latest_project_repos_contributors', cloud_sql_engine, if_exists='replace', index=False, schema='clean')
+        # add unix datetime column
+        contributors_df['data_timestamp'] = pd.Timestamp.now()
+        print(f"Created decompressed dataframe with {len(contributors_df)} rows.")
 
-    with cloud_sql_engine.connect() as conn:
-        # # capture asset metadata
-        preview_query = text("select count(*) from clean.latest_project_repos_contributors")
-        result = conn.execute(preview_query)
-        # Fetch all rows into a list of tuples
-        row_count = result.fetchone()[0]
+        # Run Validations (Comparing processed data against current FINAL table)
+        run_validations(context, contributors_df, cloud_sql_engine)
 
-        preview_query = text("select * from clean.latest_project_repos_contributors limit 10")
-        result = conn.execute(preview_query)
-        result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+        # Write DataFrame to Staging Table first
+        context.log.info(f"Writing data to staging table {schema_name}.{staging_table_name}...")
+        contributors_df.to_sql(
+            staging_table_name,
+            cloud_sql_engine,
+            if_exists='replace', # Replace staging table safely
+            index=False,
+            schema=schema_name,
+            chunksize=10000 # Good for large dataframes
+        )
+        print("Successfully wrote to staging table.")
 
-    return dg.MaterializeResult(
-        metadata={
-            "row_count": dg.MetadataValue.int(row_count),
-            "preview": dg.MetadataValue.md(result_df.to_markdown(index=False)),
-        }
-    )
+        # Perform Atomic Swap via Transaction
+        print(f"Validation passed. Performing atomic swap to update {schema_name}.{final_table_name}...")
+        with cloud_sql_engine.connect() as conn:
+            with conn.begin(): # Start transaction
+                # Use CASCADE if Foreign Keys might point to the table
+                print(f"Dropping old table {schema_name}.{old_table_name} if it exists...")
+                conn.execute(text(f"DROP TABLE IF EXISTS {schema_name}.{old_table_name} CASCADE;"))
 
+                print(f"Renaming current {schema_name}.{final_table_name} to {schema_name}.{old_table_name} (if it exists)...")
+                conn.execute(text(f"ALTER TABLE IF EXISTS {schema_name}.{final_table_name} RENAME TO {old_table_name};"))
+
+                print(f"Renaming staging table {schema_name}.{staging_table_name} to {schema_name}.{final_table_name}...")
+                conn.execute(text(f"ALTER TABLE {schema_name}.{staging_table_name} RENAME TO {final_table_name};"))
+            # Transaction commits here if no exceptions were raised inside the 'with conn.begin()' block
+        print("Atomic swap successful.")
+
+        # cleanup old table (outside the main transaction)
+        try:
+            with cloud_sql_engine.connect() as conn:
+                 conn.execute(text(f"DROP TABLE IF EXISTS {schema_name}.{old_table_name} CASCADE;"))
+                 print(f"Cleaned up table {schema_name}.{old_table_name}.")
+        except Exception as cleanup_e:
+            # Log warning - cleanup failure shouldn't fail the asset run
+            print(f"Could not drop old table {schema_name}.{old_table_name}: {cleanup_e}")
+
+        # Fetch Metadata from the FINAL table for MaterializeResult
+        print("Fetching metadata for Dagster result...")
+        with cloud_sql_engine.connect() as conn:
+            row_count_result = conn.execute(text(f"SELECT COUNT(*) FROM {schema_name}.{final_table_name}"))
+            # Use scalar_one() for single value, assumes table not empty after swap
+            row_count = row_count_result.scalar_one()
+
+            preview_result = conn.execute(text(f"SELECT * FROM {schema_name}.{final_table_name} LIMIT 10"))
+            # Fetch into dicts using .mappings().all() for easy DataFrame creation
+            result_df = pd.DataFrame(preview_result.mappings().all())
+
+        print(f"Asset materialization complete. Final row count: {row_count}")
+        return dg.MaterializeResult(
+            metadata={
+                "row_count": dg.MetadataValue.int(row_count),
+                "preview": dg.MetadataValue.md(result_df.to_markdown(index=False)) if not result_df.empty else "No rows found for preview.",
+                "message": "Data processed and table updated successfully."
+            }
+        )
+    # --- Exception Handling for the entire asset function ---
+    except ValueError as ve:
+        print(f"Validation error: {ve}", exc_info=True)
+        raise ve # Re-raise to fail the Dagster asset run clearly indicating validation failure
+
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}", exc_info=True)
+        raise e # Re-raise any other exception to fail the Dagster asset run
 ########################################################################################################################

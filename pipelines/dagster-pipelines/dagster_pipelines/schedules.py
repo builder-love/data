@@ -15,7 +15,8 @@ from dagster_pipelines.jobs import (
     project_repos_contributors_job,
     period_change_data_dbt_assets_job,
     project_repos_watcher_count_job,
-    project_repos_is_fork_job
+    project_repos_is_fork_job,
+    process_compressed_contributors_data_job
 )
 from dagster_pipelines.cleaning_assets import all_dbt_assets
 from dagster_pipelines.load_data_jobs import refresh_prod_schema
@@ -239,6 +240,26 @@ def project_repos_contributors_schedule(context):
     
     # Log the duration of the job
     context.log.info(f"project_repos_contributors_schedule job duration: {end_time - start_time}")
+
+    return {}
+
+# create a schedule to run process_compressed_contributors_data_job every 7 days at midnight
+@schedule(
+    job=process_compressed_contributors_data_job,
+    cron_schedule="0 0 20 * *", 
+    execution_timezone="America/New_York"
+)
+def process_compressed_contributors_data_schedule(context):
+    # Log the start time of the job
+    context.log.info(f"process_compressed_contributors_data_schedule job started at: {context.scheduled_execution_time}")
+    start_time = context.scheduled_execution_time
+
+    # Log the end time of the job
+    context.log.info(f"process_compressed_contributors_data_schedule job ended at: {context.scheduled_execution_time}")
+    end_time = context.scheduled_execution_time
+    
+    # Log the duration of the job
+    context.log.info(f"process_compressed_contributors_data_schedule job duration: {end_time - start_time}")
 
     return {}
 
