@@ -11,12 +11,13 @@ from dagster_pipelines.assets import (
     github_project_repos_fork_count, 
     github_project_repos_languages,
     github_project_repos_commits,
-    github_project_repos_contributors
+    github_project_repos_contributors,
+    github_project_repos_watcher_count,
+    github_project_repos_is_fork
 )
 from dagster_pipelines.cleaning_assets import (
     process_compressed_contributors_data
 )
-
 
 # create a job to run crypto_ecosystems_project_toml_files asset
 crypto_ecosystems_project_toml_files_job = dg.define_asset_job(
@@ -90,6 +91,21 @@ project_repos_commit_count_job = dg.define_asset_job(
     description="Gets the commit count for each repo from the github api and appends it to the raw.github_project_repos_commits table"
 )
 
+# create a job to run github_project_repos_watchers asset
+project_repos_watcher_count_job = dg.define_asset_job(
+    "project_repos_watcher_count_refresh", 
+    selection=["github_project_repos_watcher_count"],
+    tags={"github_api": "True"},
+    description="Gets the watcher count for each repo from the github api and appends it to the raw.project_repos_watcher_count table"
+)
+
+# create a job to run github_project_repos_is_fork asset
+project_repos_is_fork_job = dg.define_asset_job(
+    "project_repos_is_fork_refresh", 
+    selection=["github_project_repos_is_fork"],
+    tags={"github_api": "True"},
+    description="Gets the is_fork for each repo from the github api and appends it to the raw.project_repos_is_fork table"
+)
 # create a job to run github_project_repos_contributors asset
 project_repos_contributors_job = dg.define_asset_job(
     "project_repos_contributors_refresh", 
@@ -120,4 +136,12 @@ latest_dbt_assets_job = define_asset_job(
     name="latest_dbt_assets_job", 
     selection="tag:latest_clean_data",
     description="Runs the get latest data dbt models"
+)
+
+# Define a Dagster job that uses the dbt assets
+# run tag:period_change_data dbt assets
+period_change_data_dbt_assets_job = define_asset_job(
+    name="period_change_data_dbt_assets_job", 
+    selection="tag:period_change_data",
+    description="Runs the period change data dbt models to create views"
 )
