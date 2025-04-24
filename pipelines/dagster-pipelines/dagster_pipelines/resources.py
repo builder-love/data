@@ -43,3 +43,15 @@ dbt_resource = DbtCliResource(
     profiles_dir=os.fspath(DBT_PROJECT_PATH),
     executable=os.fspath(DBT_EXECUTABLE_PATH)
 )
+
+# define the crypto ecosystems repo resource
+@resource
+def electric_capital_ecosystems_repo():
+    return {
+        "git_repo_url": "https://github.com/electric-capital/crypto-ecosystems.git",
+        "clone_parent_dir": os.path.join(os.environ.get("DAGSTER_HOME"), "crypto-ecosystems"),
+        "repo_name": "crypto-ecosystems",
+        "primary_branch": "master",
+        "output_filename": "exports.jsonl",
+        "output_filepath": os.path.join(os.environ.get("DAGSTER_HOME"), "crypto-ecosystems", "crypto-ecosystems","exports.jsonl")
+    }

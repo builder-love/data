@@ -1,6 +1,8 @@
 packages:
+  - package: dbt-labs/dbt_utils
+    version: 1.1.1
   - package: metaplane/dbt_expectations
     version: 0.10.8
   - package: godatadriven/dbt_date
     version: 0.11.0
-sha1_hash: 4bc71acb28e82f2ae5f88533f40d3776fef290d6
+sha1_hash: c7ce0c14331c9902c466177364a9a6021e050b3c
