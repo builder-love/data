@@ -1,9 +1,7 @@
 from dagster import schedule, ScheduleDefinition, define_asset_job
 from dagster_dbt import build_schedule_from_dbt_selection
 from dagster_pipelines.jobs import (
-    crypto_ecosystems_project_toml_files_job, 
     github_project_orgs_job, 
-    github_project_sub_ecosystems_job, 
     github_project_repos_job, 
     latest_active_distinct_project_repos_job, 
     project_repos_stargaze_count_job, 
@@ -16,29 +14,71 @@ from dagster_pipelines.jobs import (
     period_change_data_dbt_assets_job,
     project_repos_watcher_count_job,
     project_repos_is_fork_job,
-    process_compressed_contributors_data_job
+    process_compressed_contributors_data_job,
+    update_crypto_ecosystems_repo_and_run_export_job,
+    crypto_ecosystems_project_json_job
 )
-from dagster_pipelines.cleaning_assets import all_dbt_assets
+from dagster_pipelines.cleaning_assets import all_dbt_assets, update_crypto_ecosystems_raw_file_job
 from dagster_pipelines.load_data_jobs import refresh_prod_schema
 from dagster_pipelines.api_data import refresh_api_schema
 
-# create a schedule to run crypto_ecosystems_project_toml_files_job every 15 days at midnight
+# create a schedule to run update_repo_and_run_export_job on wednesday at 7 pm est
 @schedule(
-    job=crypto_ecosystems_project_toml_files_job,
-    cron_schedule="0 0 15 * *", 
+    job=update_crypto_ecosystems_repo_and_run_export_job,
+    cron_schedule="0 19 * * 3", 
     execution_timezone="America/New_York"
 )
-def crypto_ecosystems_project_toml_files_schedule(context):
+def update_crypto_ecosystems_repo_and_run_export_schedule(context):
     # Log the start time of the job
-    context.log.info(f"crypto_ecosystems_project_toml_files_schedule job started at: {context.scheduled_execution_time}")
+    context.log.info(f"update_crypto_ecosystems_repo_and_run_export_schedule job started at: {context.scheduled_execution_time}")
     start_time = context.scheduled_execution_time
 
     # Log the end time of the job
-    context.log.info(f"crypto_ecosystems_project_toml_files_schedule job ended at: {context.scheduled_execution_time}")
+    context.log.info(f"update_crypto_ecosystems_repo_and_run_export_schedule job ended at: {context.scheduled_execution_time}")
     end_time = context.scheduled_execution_time
     
     # Log the duration of the job
-    context.log.info(f"crypto_ecosystems_project_toml_files_schedule job duration: {end_time - start_time}")
+    context.log.info(f"update_crypto_ecosystems_repo_and_run_export_schedule job duration: {end_time - start_time}")
+
+    return {}
+
+# create a schedule to run crypto_ecosystems_project_json_job every Wednesday at 8 PM est
+@schedule(
+    job=crypto_ecosystems_project_json_job,
+    cron_schedule="0 20 * * 3", 
+    execution_timezone="America/New_York"
+)
+def crypto_ecosystems_project_json_schedule(context):
+    # Log the start time of the job
+    context.log.info(f"crypto_ecosystems_project_json_schedule job started at: {context.scheduled_execution_time}")
+    start_time = context.scheduled_execution_time
+
+    # Log the end time of the job
+    context.log.info(f"crypto_ecosystems_project_json_schedule job ended at: {context.scheduled_execution_time}")
+    end_time = context.scheduled_execution_time
+    
+    # Log the duration of the job
+    context.log.info(f"crypto_ecosystems_project_json_schedule job duration: {end_time - start_time}")
+
+    return {}
+
+# create a schedule to run update_crypto_ecosystems_raw_file_job every wednesday at 9 pm est
+@schedule(
+    job=update_crypto_ecosystems_raw_file_job,
+    cron_schedule="0 21 * * 3",
+    execution_timezone="America/New_York"
+)
+def update_crypto_ecosystems_raw_file_schedule(context):
+    # Log the start time of the job
+    context.log.info(f"update_crypto_ecosystems_raw_file_schedule job started at: {context.scheduled_execution_time}")
+    start_time = context.scheduled_execution_time
+
+    # Log the end time of the job
+    context.log.info(f"update_crypto_ecosystems_raw_file_schedule job ended at: {context.scheduled_execution_time}")
+    end_time = context.scheduled_execution_time
+    
+    # Log the duration of the job
+    context.log.info(f"update_crypto_ecosystems_raw_file_schedule job duration: {end_time - start_time}")
 
     return {}
 
@@ -60,26 +100,6 @@ def github_project_orgs_schedule(context):
     
     # Log the duration of the job
     context.log.info(f"github_project_orgs_schedule job duration: {end_time - start_time}")
-
-    return {}
-
-# create a schedule to run github_project_sub_ecosystems_job every 15 days at midnight
-@schedule(
-    job=github_project_sub_ecosystems_job,
-    cron_schedule="20 0 15 * *", 
-    execution_timezone="America/New_York"
-)
-def github_project_sub_ecosystems_schedule(context):
-    # Log the start time of the job
-    context.log.info(f"github_project_sub_ecosystems_schedule job started at: {context.scheduled_execution_time}")
-    start_time = context.scheduled_execution_time
-
-    # Log the end time of the job
-    context.log.info(f"github_project_sub_ecosystems_schedule job ended at: {context.scheduled_execution_time}")
-    end_time = context.scheduled_execution_time
-    
-    # Log the duration of the job
-    context.log.info(f"github_project_sub_ecosystems_schedule job duration: {end_time - start_time}")
 
     return {}
 
@@ -246,7 +266,7 @@ def project_repos_contributors_schedule(context):
 # create a schedule to run process_compressed_contributors_data_job every 7 days at midnight
 @schedule(
     job=process_compressed_contributors_data_job,
-    cron_schedule="0 0 20 * *", 
+    cron_schedule="0 3 * * *", 
     execution_timezone="America/New_York"
 )
 def process_compressed_contributors_data_schedule(context):

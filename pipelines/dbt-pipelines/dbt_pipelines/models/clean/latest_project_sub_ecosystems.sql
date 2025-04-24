@@ -1,17 +1,26 @@
 -- models/clean/latest_project_sub_ecosystems.sql
 {{ config(
     materialized='table',
-    unique_key='project_title || sub_ecosystem || data_timestamp',
+    unique_key='project_title || sub_ecosystems || data_timestamp',
     tags=['latest_clean_data']
 ) }}
 
-WITH latest_timestamp AS (
-    SELECT MAX(data_timestamp) as max_ts
-    FROM {{ ref('normalized_project_sub_ecosystems') }}  -- Refers to the *normalized* table
+with projects as (
+  select 
+    project_title, 
+    sub_ecosystems
+
+  from {{ source('raw', 'crypto_ecosystems_raw_file') }}
+  where sub_ecosystems <> '{}'
+),
+
+distinct_project_ecosystems as (
+  select distinct
+    project_title, 
+    sub_ecosystems,
+    NOW() AT TIME ZONE 'utc' as data_timestamp
+
+  from projects
 )
-SELECT
-    project_title,
-    sub_ecosystem,
-    data_timestamp
-FROM {{ ref('normalized_project_sub_ecosystems') }}  -- Refers to the *normalized* table
-WHERE data_timestamp = (SELECT max_ts FROM latest_timestamp)
+
+select * from distinct_project_ecosystems

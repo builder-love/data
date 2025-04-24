@@ -2,9 +2,7 @@ from dagster import job
 import dagster as dg
 from dagster import define_asset_job
 from dagster_pipelines.assets import (
-    crypto_ecosystems_project_toml_files, 
     github_project_orgs, 
-    github_project_sub_ecosystems, 
     github_project_repos, 
     latest_active_distinct_github_project_repos,
     github_project_repos_stargaze_count, 
@@ -13,18 +11,29 @@ from dagster_pipelines.assets import (
     github_project_repos_commits,
     github_project_repos_contributors,
     github_project_repos_watcher_count,
-    github_project_repos_is_fork
+    github_project_repos_is_fork,
+    crypto_ecosystems_project_json
 )
 from dagster_pipelines.cleaning_assets import (
     process_compressed_contributors_data
 )
+from dagster_pipelines.load_data_jobs import (
+    update_crypto_ecosystems_repo_and_run_export
+)
 
-# create a job to run crypto_ecosystems_project_toml_files asset
-crypto_ecosystems_project_toml_files_job = dg.define_asset_job(
-    "project_toml_files_refresh", 
-    selection=["crypto_ecosystems_project_toml_files"],
-    tags={"github_api": "True"},
-    description="Appends toml files from the crypto_ecosystems repo to the raw.project_toml_files table"
+# create a job to run update_repo_and_run_export asset
+update_crypto_ecosystems_repo_and_run_export_job = dg.define_asset_job(
+    "update_crypto_ecosystems_repo_and_run_export_refresh", 
+    selection=["update_crypto_ecosystems_repo_and_run_export"],
+    tags={"create_local_data_file": "True"},
+    description="Updates the crypto-ecosystems repo and runs the export script to create the local exports.jsonl file"
+)
+
+# create a job to run crypto_ecosystems_project_json asset
+crypto_ecosystems_project_json_job = dg.define_asset_job(
+    "crypto_ecosystems_project_json_refresh", 
+    selection=["crypto_ecosystems_project_json"],
+    description="Reads the local exports.jsonl file and creates a staging table in the raw schema"
 )
 
 # create a job to run github_project_orgs asset
@@ -33,14 +42,6 @@ github_project_orgs_job = dg.define_asset_job(
     selection=["github_project_orgs"],
     tags={"github_api": "True"},
     description="Gets the listed orgs from the project's toml file in the crypto_ecosystems repo and appends them to the raw.github_project_organizations table"
-)
-
-# create a job to run github_project_sub_ecosystems asset
-github_project_sub_ecosystems_job = dg.define_asset_job(
-    "github_project_sub_ecosystems_refresh", 
-    selection=["github_project_sub_ecosystems"],
-    tags={"github_api": "True"},
-    description="Gets the listed sub ecosystems from the project's toml file in the crypto_ecosystems repo and appends them to the raw.github_project_sub_ecosystems table"
 )
 
 # create a job to run github_project_repos asset

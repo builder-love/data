@@ -1,19 +1,6 @@
 version: 2
 
 models:
-  - name: normalized_project_toml_files
-    columns:
-      - name: toml_file_data_url
-        tests:
-          - not_null
-      - name: data_timestamp
-        tests:
-          - not_null
-          - dbt_expectations.expect_column_values_to_be_of_type:
-              column_type: timestamp without time zone
-    tests:
-      - unique_combination_of_columns:
-          column_names: [toml_file_data_url, data_timestamp]
   - name: normalized_project_organizations
     columns:
       - name: data_timestamp
@@ -30,22 +17,6 @@ models:
     tests:
       - unique_combination_of_columns:
           column_names: [project_organization_url, project_title, data_timestamp]
-  - name: normalized_project_sub_ecosystems
-    columns:
-      - name: data_timestamp
-        tests:
-          - not_null
-          - dbt_expectations.expect_column_values_to_be_of_type:
-              column_type: timestamp without time zone
-      - name: project_title
-        tests:
-          - not_null
-      - name: sub_ecosystem
-        tests:
-          - not_null
-    tests:
-      - unique_combination_of_columns:
-          column_names: [project_title, sub_ecosystem, data_timestamp]
   - name: normalized_project_repos
     columns:
       - name: data_timestamp
@@ -81,6 +52,20 @@ models:
     tests:
       - unique_combination_of_columns:
           column_names: [repo, data_timestamp]
+  - name: normalized_project_repos_is_fork
+    columns:
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+      - name: is_fork
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: boolean
+    tests:
+      - unique_combination_of_columns:
+          column_names: [repo, data_timestamp]
   - name: normalized_project_fork_count
     columns:
       - name: data_timestamp
@@ -89,6 +74,47 @@ models:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: timestamp without time zone
       - name: fork_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: project_title
+        tests:
+          - not_null
+    tests:
+      - unique_combination_of_columns:
+          column_names: [project_title, data_timestamp]
+  - name: normalized_project_is_fork
+    columns:
+      - name: project_title
+        tests:
+          - not_null
+      - name: repo_count
+      - name: is_fork_count
+      - name: is_not_fork_count
+      - name: is_fork_ratio
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: is_not_fork_ratio
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+    tests:
+      - unique_combination_of_columns:
+          column_names: [project_title, data_timestamp]
+  - name: normalized_project_watcher_count
+    columns:
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+      - name: watcher_count
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: bigint
@@ -241,14 +267,14 @@ models:
           - not_null
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: timestamp without time zone
-      - name: project_title
-        tests:
-          - not_null
-      - name: row_data_timestamp
+      - name: report_date
         tests:
           - not_null
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: timestamp without time zone
+      - name: project_title
+        tests:
+          - not_null
       - name: fork_count
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
@@ -265,6 +291,14 @@ models:
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: bigint
+      - name: watcher_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: is_not_fork_ratio
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
       - name: commit_count_pct_change_over_4_weeks
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
@@ -278,6 +312,14 @@ models:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: numeric
       - name: stargaze_count_pct_change_over_4_weeks
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: watcher_count_pct_change_over_4_weeks
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: is_not_fork_ratio_pct_change_over_4_weeks
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: numeric
@@ -298,20 +340,24 @@ models:
           - not_null
     tests:
       - unique_combination_of_columns:
-          column_names: [project_title, data_timestamp]
-  - name: latest_project_toml_files
+          column_names: [project_title, report_date]
+  - name: normalized_project_repos_watcher_count
     columns:
-      - name: toml_file_data_url
-        tests:
-          - not_null
       - name: data_timestamp
         tests:
           - not_null
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: timestamp without time zone
+      - name: watcher_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: repo
+        tests:
+          - not_null
     tests:
       - unique_combination_of_columns:
-          column_names: [toml_file_data_url, data_timestamp]
+          column_names: [repo, data_timestamp]
   - name: latest_project_organizations
     columns:
       - name: project_title
@@ -333,7 +379,7 @@ models:
       - name: project_title
         tests:
           - not_null
-      - name: sub_ecosystem
+      - name: sub_ecosystems
         tests:
           - not_null
       - name: data_timestamp
@@ -343,7 +389,7 @@ models:
               column_type: timestamp without time zone
     tests:
       - unique_combination_of_columns:
-          column_names: [project_title, sub_ecosystem, data_timestamp]
+          column_names: [project_title, sub_ecosystems, data_timestamp]
   - name: latest_project_repos
     columns:
       - name: project_title
@@ -416,6 +462,40 @@ models:
     tests:
       - unique_combination_of_columns:
           column_names: [repo, data_timestamp]
+  - name: latest_project_repos_watcher_count
+    columns:
+      - name: repo
+        tests:
+          - not_null
+      - name: watcher_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+    tests:
+      - unique_combination_of_columns:
+          column_names: [repo, data_timestamp]
+  - name: latest_project_repos_is_fork
+    columns:
+      - name: repo
+        tests:
+          - not_null
+      - name: is_fork
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: boolean
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+    tests:
+      - unique_combination_of_columns:
+          column_names: [repo, data_timestamp]
   - name: latest_project_repos_fork_count
     columns:
       - name: repo
@@ -459,6 +539,30 @@ models:
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: bigint
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+    tests:
+      - unique_combination_of_columns:
+          column_names: [project_title, data_timestamp]
+  - name: latest_project_is_fork
+    columns:
+      - name: project_title
+        tests:
+          - not_null
+      - name: repo_count
+      - name: is_fork_count
+      - name: is_not_fork_count
+      - name: is_fork_ratio
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: is_not_fork_ratio
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
       - name: data_timestamp
         tests:
           - not_null
@@ -540,6 +644,23 @@ models:
     tests:
       - unique_combination_of_columns:
           column_names: [project_title, data_timestamp]
+  - name: latest_project_watcher_count
+    columns:
+      - name: project_title
+        tests:
+          - not_null
+      - name: watcher_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+    tests:
+      - unique_combination_of_columns:
+          column_names: [project_title, data_timestamp]
   - name: latest_project_repos_contributor_count
     columns:
       - name: repo
@@ -580,7 +701,7 @@ models:
           - not_null
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: timestamp without time zone
-      - name: row_data_timestamp
+      - name: report_date
         tests:
           - not_null
           - dbt_expectations.expect_column_values_to_be_of_type:
@@ -601,6 +722,14 @@ models:
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: bigint
+      - name: watcher_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: is_not_fork_ratio
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
       - name: commit_count_pct_change_over_4_weeks
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
@@ -614,6 +743,14 @@ models:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: numeric
       - name: stargaze_count_pct_change_over_4_weeks
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: watcher_count_pct_change_over_4_weeks
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: is_not_fork_ratio_pct_change_over_4_weeks
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: numeric
@@ -634,7 +771,7 @@ models:
           - not_null
     tests:
       - unique_combination_of_columns:
-          column_names: [project_title, data_timestamp]
+          column_names: [project_title, report_date]
   - name: four_week_change_project_contributor_count
     columns:
       - name: project_title
@@ -713,6 +850,48 @@ models:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: numeric
       - name: commit_count_change_over_4_weeks
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+    tests:
+      - unique_combination_of_columns:
+          column_names: [project_title, data_timestamp]
+  - name: four_week_change_project_is_fork
+    columns:
+      - name: project_title
+        tests:
+          - not_null
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+      - name: is_not_fork_ratio_pct_change_over_4_weeks
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: is_not_fork_ratio_change_over_4_weeks
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+    tests:
+      - unique_combination_of_columns:
+          column_names: [project_title, data_timestamp]
+  - name: four_week_change_project_watcher_count
+    columns:
+      - name: project_title
+        tests:
+          - not_null
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+      - name: watcher_count_pct_change_over_4_weeks
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: watcher_count_change_over_4_weeks
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: bigint

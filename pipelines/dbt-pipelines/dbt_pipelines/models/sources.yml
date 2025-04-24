@@ -5,15 +5,19 @@ sources:
     database: postgres
     schema: raw
     tables:
-      - name: project_toml_files
+      - name: crypto_ecosystems_raw_file
         loaded_at_field: data_timestamp
         freshness: 
-          warn_after: {count: 32, period: day}
+          warn_after: {count: 30, period: day}
+      - name: crypto_ecosystems_raw_file_staging
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 30, period: day}
+      - name: crypto_ecosystems_raw_file_archive
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 30, period: day}
       - name: project_organizations
-        loaded_at_field: data_timestamp
-        freshness: 
-          warn_after: {count: 32, period: day}
-      - name: project_sub_ecosystems
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
@@ -45,18 +49,18 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 45, period: day}
+      - name: project_repos_watcher_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
+      - name: project_repos_is_fork
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
   - name: clean
     database: postgres
     schema: clean
     tables:
-      - name: normalized_project_toml_files
-        loaded_at_field: data_timestamp
-        freshness: 
-          warn_after: {count: 32, period: day}
-      - name: normalized_project_sub_ecosystems
-        loaded_at_field: data_timestamp
-        freshness: 
-          warn_after: {count: 32, period: day}
       - name: normalized_project_organizations
         loaded_at_field: data_timestamp
         freshness: 
@@ -70,6 +74,10 @@ sources:
         freshness: 
           warn_after: {count: 8, period: day}
       - name: normalized_project_fork_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
+      - name: normalized_project_repos_is_fork
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 8, period: day}
@@ -89,10 +97,22 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
+      - name: normalized_project_watcher_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
+      - name: normalized_project_is_fork
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
       - name: normalized_project_repos_contributor_count
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
+      - name: normalized_project_repos_watcher_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
       - name: normalized_active_distinct_project_repos
         loaded_at_field: data_timestamp
         freshness: 
@@ -129,10 +149,6 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
-      - name: latest_project_toml_files
-        loaded_at_field: data_timestamp
-        freshness: 
-          warn_after: {count: 32, period: day}
       - name: latest_project_repos_commit_count
         loaded_at_field: data_timestamp
         freshness: 
@@ -141,11 +157,19 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 8, period: day}
+      - name: latest_project_watcher_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
       - name: latest_project_repos_fork_count
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 8, period: day}
       - name: latest_project_fork_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
+      - name: latest_project_is_fork
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 8, period: day}
@@ -169,6 +193,14 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
+      - name: latest_project_repos_is_fork
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
+      - name: latest_project_repos_watcher_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
       - name: latest_distinct_projects
         loaded_at_field: data_timestamp
         freshness: 
@@ -177,6 +209,46 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 8, period: day}
+      - name: latest_project_repos_contributors
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+        columns:
+          - name: repo
+            tests:
+              - not_null
+          - name: contributor_login
+          - name: contributor_id
+          - name: contributor_node_id
+          - name: contributor_avatar_url
+          - name: contributor_gravatar_id
+          - name: contributor_url
+          - name: contributor_html_url
+          - name: contributor_followers_url
+          - name: contributor_following_url
+          - name: contributor_gists_url
+          - name: contributor_starred_url
+          - name: contributor_subscriptions_url
+          - name: contributor_organizations_url
+          - name: contributor_repos_url
+          - name: contributor_events_url
+          - name: contributor_received_events_url
+          - name: contributor_type
+          - name: contributor_user_view_type
+          - name: contributor_site_admin
+          - name: contributor_contributions
+          - name: contributor_email
+          - name: data_timestamp
+            tests:
+              - not_null
+              - dbt_expectations.expect_column_values_to_be_of_type:
+                  column_type: timestamp without time zone
+        tests:
+          - dbt_utils.unique_combination_of_columns:
+              combination_of_columns:
+                - repo
+                - contributor_login
+                - data_timestamp
       - name: four_week_change_project_contributor_count
         loaded_at_field: data_timestamp
         freshness: 
@@ -193,7 +265,11 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
-      - name: latest_project_repos_contributors
+      - name: four_week_change_project_is_fork
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: four_week_change_project_watcher_count
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
@@ -205,6 +281,10 @@ sources:
       - name: normalized_project_contributor_count
       - name: normalized_project_fork_count
       - name: normalized_project_stargaze_count
+      - name: normalized_project_watcher_count
+      - name: normalized_project_is_fork
       - name: latest_top_projects
       - name: latest_project_fork_count
       - name: latest_project_stargaze_count
+      - name: latest_project_watcher_count
+      - name: latest_project_is_fork

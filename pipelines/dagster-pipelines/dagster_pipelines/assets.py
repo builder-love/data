@@ -14,107 +14,101 @@ import json
 import psycopg2
 from urllib.parse import urlparse
 
-# define the asset that gets the list of project toml data files from the crypto ecosystems repo
-@dg.asset(
-    required_resource_keys={"cloud_sql_postgres_resource"},
-    group_name="ingestion",
-    tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
-)
-def crypto_ecosystems_project_toml_files(context) -> dg.MaterializeResult:
+# function to get the most recently retrieved local copy of crypto ecosystems export.jsonl
+def get_crypto_ecosystems_project_json(context):
 
-    # get the github personal access token
-    gh_pat = os.environ.get("go_blockchain_ecosystem")
+    # use the dagster context variable from the calling function to get the local path to the cloned repo
+    output_filepath = context.resources.electric_capital_ecosystems_repo['output_filepath']
+
+    if not output_filepath:
+        raise ValueError("output_filepath is empty")
+    if not os.path.exists(output_filepath):
+        raise ValueError("output_filepath does not exist")
+
+    # read the exports.jsonl file
+    try:
+        df = pd.read_json(output_filepath, lines=True)
+
+        # check if the dataframe is empty
+        if df.empty:
+            raise ValueError("DataFrame is empty")
+
+        # rename the columns
+        df.rename(columns={
+            "eco_name": "project_title",
+            "branch": "sub_ecosystems",
+            "repo_url": "repo",
+            "tags": "tags"
+        }, inplace=True)
+
+        # confirm the dataframe only has the columns we want
+        expected_cols = [
+            'project_title',
+            'sub_ecosystems',
+            'repo',
+            'tags'
+        ]
+
+        # Get the actual columns from the DataFrame
+        actual_cols = df.columns
+
+        # Convert both to sets for easy comparison (ignores order)
+        if set(expected_cols) != set(actual_cols):
+            context.log.info(f"DataFrame columns: {df.columns}")
+            context.log.info(f"Expected columns: {expected_cols}")
+            raise ValueError("DataFrame columns are not as expected")
+
+    except Exception as e:
+        raise ValueError(f"Error reading exports.jsonl file: {e}")
+
+    return df
+
+# define the asset that gets the list of projects and associated repos from the local crypto ecosystems data file, exports.jsonl
+@dg.asset(
+    required_resource_keys={"electric_capital_ecosystems_repo", "cloud_sql_postgres_resource"},
+    group_name="ingestion",
+)
+def crypto_ecosystems_project_json(context) -> dg.MaterializeResult:
 
     # get the cloud sql postgres resource
     cloud_sql_engine = context.resources.cloud_sql_postgres_resource
 
-    # get the list of folder names in crypto ecosystems repo
-    def get_github_folders(url):
-        """
-        Retrieves a list of folder names from a GitHub repository URL.
+    # get the local path to the cloned repo
+    output_filepath = context.resources.electric_capital_ecosystems_repo['output_filepath']
 
-        Args:
-            url: The URL of the GitHub repository.
+    if not output_filepath:
+        raise ValueError("output_filepath is empty")
+    if not os.path.exists(output_filepath):
+        raise ValueError("output_filepath does not exist")
 
-        Returns:
-            A list of folder names.
-        """
-        # wrap in try except
-        try:
-            response = requests.get(url, headers={"Authorization": f"Bearer {gh_pat}"})
-            response.raise_for_status()  # Raise an exception for bad status codes
+    # read the exports.jsonl file
+    try:
+        df = get_crypto_ecosystems_project_json(context)
 
-            folders = []
-            for item in response.json():
-                if item['type'] == 'dir':
-                    folders.append(f"{url}/{item['name']}")
-            return folders
-        except Exception as e:
-            print(f"Error getting github folders from {url}: {e}")
-            return []
+        # add unix datetime column
+        df['data_timestamp'] = pd.Timestamp.now()
 
-    def get_toml_files(url):
-        """
-        Retrieves a list of .toml files from a GitHub repository URL.
+        # here we truncate the existing table and append the new data
+        # we do this to preserve the index 
+        with cloud_sql_engine.connect() as conn:
+            context.log.info("Truncating raw.crypto_ecosystems_raw_file_staging table")
+            conn.execute(sqlalchemy.text("TRUNCATE TABLE raw.crypto_ecosystems_raw_file_staging;")) 
+            conn.commit()
 
-        Args:
-            url: The URL of the GitHub repository.
+        context.log.info("Appending new data to raw.crypto_ecosystems_raw_file_staging table")
+        df.to_sql('crypto_ecosystems_raw_file_staging', cloud_sql_engine, if_exists='append', index=False, schema='raw')
 
-        Returns:
-            A list of .toml file names.
-        """
-
-        # first get current folder for prepending to toml file name
-        folder_name = url.split("/")[-1]
-        try:
-            response = requests.get(url, headers={"Authorization": f"Bearer {gh_pat}"})
-            response.raise_for_status()
-
-            toml_files = []
-            for item in response.json():
-                if item['type'] == 'file' and item['name'].endswith('.toml'):
-                        toml_files.append(f"{folder_name}/{item['name']}")
-            return toml_files
-        except Exception as e:
-            print(f"Error getting github toml files from {url}: {e}")
-            return []
-
-    # crypto ecosystems folder list by alphanumeric
-    crypto_ecosystems_project_folders_url = "https://api.github.com/repos/electric-capital/crypto-ecosystems/contents/data/ecosystems"
-    # build crypto ecosystems .toml file raw data link and stor in database
-    crypto_ecosystems_project_folders_data_url = "https://raw.githubusercontent.com/electric-capital/crypto-ecosystems/master/data/ecosystems"
-
-    # get crypto ecosystems folder list
-    folders = get_github_folders(crypto_ecosystems_project_folders_url)
-
-    # get the list of .toml files from each folder
-    if folders:
-        toml_files_list = []
-        for folder in folders:
-            toml_files_list.append(get_toml_files(folder))
-
-    # build single list of toml data files
-    toml_files_list = [item for sublist in toml_files_list for item in sublist]
-
-    # Concatenate each element with the base toml data URL
-    toml_files_list = [f"{crypto_ecosystems_project_folders_data_url}/{item}" for item in toml_files_list]
-
-    # write the list of folder urls to a table
-    df = pd.DataFrame(toml_files_list, columns=["toml_file_data_url"])
-
-    # add unix datetime column
-    df['data_timestamp'] = pd.Timestamp.now()
-
-    df.to_sql('project_toml_files', cloud_sql_engine, if_exists='append', index=False, schema='raw')
+    except Exception as e:
+        raise ValueError(f"Error reading exports.jsonl file: {e}")
 
     # capture asset metadata
     with cloud_sql_engine.connect() as conn:
-        preview_query = text("select count(*) from raw.project_toml_files")
+        preview_query = text("select count(*) from raw.crypto_ecosystems_raw_file_staging")
         result = conn.execute(preview_query)
         # Fetch all rows into a list of tuples
         row_count = result.fetchone()[0]
 
-        preview_query = text("select * from raw.project_toml_files limit 10")
+        preview_query = text("select * from raw.crypto_ecosystems_raw_file_staging limit 10")
         result = conn.execute(preview_query)
         result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
 
@@ -122,335 +116,136 @@ def crypto_ecosystems_project_toml_files(context) -> dg.MaterializeResult:
         metadata={
             "row_count": dg.MetadataValue.int(row_count),
             "preview": dg.MetadataValue.md(result_df.to_markdown(index=False)),
-            "processed_folder_count": dg.MetadataValue.int(len(folders)),
-            "processed_file_count": dg.MetadataValue.int(len(toml_files_list)),
+            "unique_project_count": dg.MetadataValue.int(df['project_title'].nunique()),
+            "unique_repo_count": dg.MetadataValue.int(df['repo'].nunique()),
         }
     )
 
 
-# define the asset that gets all the list of github orgs for a project. Use latest project toml files from the project_toml_files table
+# define the asset that gets the list of github orgs for a project
 @dg.asset(
     required_resource_keys={"cloud_sql_postgres_resource"},
     group_name="ingestion",
-    tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
 )
 def github_project_orgs(context) -> dg.MaterializeResult:
     # Get the cloud sql postgres resource
     cloud_sql_engine = context.resources.cloud_sql_postgres_resource
 
-    # get the github personal access token
-    gh_pat = os.environ.get("go_blockchain_ecosystem")
+    query_text = """
+        -- Specify the target table and the columns you want to insert into
+        INSERT INTO raw.project_organizations (project_title, project_organization_url, data_timestamp)
 
-    def get_toml_data(url):
-        """
-        Retrieves and parses data from a .toml file at a given URL.
+        -- data to be inserted
+        WITH projects AS (
+        SELECT
+            project_title,
+            'https://github.com/' || split_part(repo, '/', 4) AS project_organization_url
 
-        Args:
-            url: The URL of the .toml file.
+        FROM raw.crypto_ecosystems_raw_file
+        WHERE sub_ecosystems = '{}'
+            AND split_part(repo, '/', 4) <> ''
+        )
 
-        Returns:
-            A dictionary containing the extracted text data.
-        """
-        print(f"getting toml data from {url}\n")
+        SELECT DISTINCT ON (project_title) 
+            project_title,             
+            project_organization_url,  
+            CURRENT_TIMESTAMP
 
-        # wrap in try except
-        try:
-            response = requests.get(url, headers={"Authorization": f"Bearer {gh_pat}"})
+        FROM projects
+    """
 
-            # raise an exception if the response is not successful
-            # if the response is not successful, the toml data will be None
-            response.raise_for_status()
+    # send the insert into query to postgres 
+    try: 
+        with cloud_sql_engine.connect() as conn:
+            conn.execute(text(query_text))
+            conn.commit()
 
-            # return the toml data
-            return toml.loads(response.text)
-        except Exception as e:
-            print(f"Error getting toml data from {url}: {e}")
-            return None
+            # capture asset metadata
+            preview_query = text("select count(*) from raw.project_organizations")
+            result = conn.execute(preview_query)
+            # Fetch all rows into a list of tuples
+            row_count = result.fetchone()[0]
 
-    # connect to cloud sql postgres
-    with cloud_sql_engine.connect() as conn:
-        query = text("select toml_file_data_url from clean.latest_project_toml_files")
-        result = conn.execute(query)
-        df = pd.DataFrame(result.fetchall(), columns=result.keys())
+            preview_query = text("select * from raw.project_organizations limit 10")
+            result = conn.execute(preview_query)
+            result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
 
-        # get data from each toml file listed in the df
-        all_orgs = []
-        def parse_toml_data(row):
-            toml_data = get_toml_data(row)
-
-            # if the toml data is None, skip the row
-            if toml_data is None:
-                return row
-
-            project_title = toml_data['title']
-            for org in toml_data['github_organizations']:
-                if 'missing' not in org:
-                    all_orgs.append(
-                        {
-                        "project_title": project_title,
-                        "project_organization_url": org,
-                        }
-                    )
-            return row
-
-        df['toml_file_data_url'].apply(parse_toml_data)
-
-        # create org dataframe
-        df_org = pd.DataFrame(all_orgs)
-
-        # add unix datetime column
-        df_org['data_timestamp'] = pd.Timestamp.now()
-
-        df_org.to_sql('project_organizations', cloud_sql_engine, if_exists='append', index=False, schema='raw')
-
-        # capture asset metadata
-        preview_query = text("select count(*) from raw.project_organizations")
-        result = conn.execute(preview_query)
-        # Fetch all rows into a list of tuples
-        row_count = result.fetchone()[0]
-
-        preview_query = text("select * from raw.project_organizations limit 10")
-        result = conn.execute(preview_query)
-        result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
-
-    return dg.MaterializeResult(
-        metadata={
-            "row_count": dg.MetadataValue.int(row_count),
-            "preview": dg.MetadataValue.md(result_df.to_markdown(index=False)),
-            "processed_file_count": dg.MetadataValue.int(len(all_orgs)),
-        }
-    )
-
-
-# define the asset that gets all the list of sub ecosystems for a project. Use latest project toml files from the project_toml_files table
-@dg.asset(
-    required_resource_keys={"cloud_sql_postgres_resource"},
-    group_name="ingestion",
-    tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
-)
-def github_project_sub_ecosystems(context) -> dg.MaterializeResult:
-    # Get the cloud sql postgres resource
-    cloud_sql_engine = context.resources.cloud_sql_postgres_resource
-
-    # get the github personal access token
-    gh_pat = os.environ.get("go_blockchain_ecosystem")
-
-    def get_toml_data(url):
-        """
-        Retrieves and parses data from a .toml file at a given URL.
-
-        Args:
-            url: The URL of the .toml file.
-
-        Returns:
-            A dictionary containing the extracted text data.
-        """
-        print(f"getting toml data from {url}\n")
-
-        # wrap in try except
-        try:
-            response = requests.get(url, headers={"Authorization": f"Bearer {gh_pat}"})
-
-            # raise an exception if the response is not successful
-            response.raise_for_status()
-
-            # return the toml data
-            return toml.loads(response.text)
-        except Exception as e:
-            print(f"Error getting toml data from {url}: {e}")
-            return None
-
-    # connect to cloud sql postgres
-    with cloud_sql_engine.connect() as conn:
-        query = text("select toml_file_data_url from clean.latest_project_toml_files")
-        result = conn.execute(query)
-        df = pd.DataFrame(result.fetchall(), columns=result.keys())
-
-        # get data from each toml file listed in the df
-        all_subecosystems = []
-        def parse_toml_data(row):
-            toml_data = get_toml_data(row)
-
-            # if the toml data is None, skip the row
-            if toml_data is None:
-                return row
-
-            project_title = toml_data['title']
-            # Check if 'sub_ecosystems' key exists
-            if 'sub_ecosystems' in toml_data:
-                # check if the project listed sub ecosystems
-                if toml_data['sub_ecosystems']:
-                    for eco in toml_data['sub_ecosystems']:
-                        # check if a missing tag exists (indicating a 404 from the url)
-                        if 'missing' not in eco:
-                            all_subecosystems.append(
-                                {
-                                "project_title": project_title,
-                                "sub_ecosystem": eco,
-                                }
-                            )
-            return row
-
-        df['toml_file_data_url'].apply(parse_toml_data)
-
-        # create org dataframe
-        df_subecosystems = pd.DataFrame(all_subecosystems)
-
-        # add unix datetime column
-        df_subecosystems['data_timestamp'] = pd.Timestamp.now()
-
-        df_subecosystems.to_sql('project_sub_ecosystems', cloud_sql_engine, if_exists='append', index=False, schema='raw')
-
-        # capture asset metadata
-        preview_query = text("select count(*) from raw.project_sub_ecosystems")
-        result = conn.execute(preview_query)
-        # Fetch all rows into a list of tuples
-        row_count = result.fetchone()[0]
-
-        preview_query = text("select * from raw.project_sub_ecosystems limit 10")
-        result = conn.execute(preview_query)
-        result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
-
-    return dg.MaterializeResult(
-        metadata={
-            "row_count": dg.MetadataValue.int(row_count),
-            "preview": dg.MetadataValue.md(result_df.to_markdown(index=False)),
-            "processed_file_count": dg.MetadataValue.int(len(all_subecosystems)),
-        }
-    )
+            return dg.MaterializeResult(
+                metadata={
+                    "raw_table_row_count": dg.MetadataValue.int(row_count),
+                    "raw_table_preview": dg.MetadataValue.md(result_df.to_markdown(index=False))
+                }
+            )
+    except Exception as e:
+        raise ValueError(f"Error inserting into raw.project_organizations: {e}")
 
 
 # define the asset that gets the list of repositories for a project. Use latest project toml files from the project_toml_files table
 @dg.asset(
     required_resource_keys={"cloud_sql_postgres_resource"},
     group_name="ingestion",
-    tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
 )
 def github_project_repos(context) -> dg.MaterializeResult:
     # Get the cloud sql postgres resource
     cloud_sql_engine = context.resources.cloud_sql_postgres_resource
 
-    # get the github personal access token
-    gh_pat = os.environ.get("go_blockchain_ecosystem")
+    query_text = """
+        -- Specify the target table and the columns you want to insert into
+        INSERT INTO raw.project_repos (project_title, repo, repo_source, data_timestamp)
 
-    def get_toml_data(url):
-        """
-        Retrieves and parses data from a .toml file at a given URL.
+        -- data to be inserted
+        with projects as (
+        select 
+            project_title,
+            repo,
+            SPLIT_PART( -- Second split: Split 'github.com' by '.' and take the 1st part
+                SPLIT_PART(repo, '/', 3), -- First split: Split by '/' and take the 3rd part ('github.com')
+                '.',
+                1
+            ) AS repo_source
 
-        Args:
-            url: The URL of the .toml file.
+        from raw.crypto_ecosystems_raw_file
 
-        Returns:
-            A dictionary containing the extracted text data.
-        """
-        print(f"getting toml data from {url}\n")
+        where sub_ecosystems = '{}'
+        ),
 
-        # wrap in try except
-        try:
-            response = requests.get(url, headers={"Authorization": f"Bearer {gh_pat}"})
+        distinct_project_repo as (
+        select distinct
+            project_title,
+            repo,
+            repo_source,
+            CURRENT_TIMESTAMP as data_timestamp
 
-            # raise an exception if the response is not successful
-            response.raise_for_status()
+        from projects
+        )
 
-            # return the toml data
-            return toml.loads(response.text)
-        except Exception as e:
-            print(f"Error getting toml data from {url}: {e}")
-            return None
+        select * from distinct_project_repo
+    """
 
-    def get_repo_source(repo_url):
-        """
-        Determines the source (e.g., GitHub, Bitbucket, GitLab) of a repository
-        from its URL.
+    # send the insert into query to postgres 
+    try: 
+        with cloud_sql_engine.connect() as conn:
+            conn.execute(text(query_text))
+            conn.commit()
 
-        Args:
-            repo_url: The URL of the repository.
+            # capture asset metadata
+            preview_query = text("select count(*) from raw.project_repos")
+            result = conn.execute(preview_query)
+            # Fetch all rows into a list of tuples
+            row_count = result.fetchone()[0]
 
-        Returns:
-            A string representing the source (e.g., "github", "bitbucket", "gitlab"),
-            or "unknown" if the source cannot be determined.
-        """
-        if not isinstance(repo_url, str):  # Handle potential non-string input
-            return "unknown"
+            preview_query = text("select * from raw.project_repos limit 10")
+            result = conn.execute(preview_query)
+            result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
 
-        # Lowercase the URL for case-insensitive matching
-        repo_url = repo_url.lower()
-
-        # Use regular expressions for more robust matching
-        if re.search(r"github\.com", repo_url):
-            return "github"
-        elif re.search(r"bitbucket\.org", repo_url):
-            return "bitbucket"
-        elif re.search(r"gitlab\.com", repo_url):
-            return "gitlab"
-        elif re.search(r"sourceforge\.net", repo_url): #Example of adding another source.
-            return "sourceforge"
-        else:
-            return "unknown"
-
-    # connect to cloud sql postgres
-    with cloud_sql_engine.connect() as conn:
-        query = text("select toml_file_data_url from clean.latest_project_toml_files")
-        result = conn.execute(query)
-        df = pd.DataFrame(result.fetchall(), columns=result.keys())
-
-        # get data from each toml file listed in the df
-        all_repos = []
-        def parse_toml_data(row):
-            toml_data = get_toml_data(row)
-
-            # if the toml data is None, skip the row
-            if toml_data is None:
-                return row
-
-            project_title = toml_data['title']
-            # Check if 'repo' key exists
-            if 'repo' in toml_data:
-                # check if the project listed repos
-                if toml_data['repo']:
-                    for repo in toml_data['repo']:
-                        if 'missing' not in repo:
-                            all_repos.append(
-                                {
-                                    "project_title": project_title,
-                                    "repo": repo['url'],
-                                    "repo_source": get_repo_source(repo['url'])
-                                }
-                            )
-                else:
-                    {
-                        "project_title": project_title,
-                        "repo": 'NA',
-                    }
-            return row
-
-        df['toml_file_data_url'].apply(parse_toml_data)
-
-        # create org dataframe
-        df_repos = pd.DataFrame(all_repos)
-
-        # add unix datetime column
-        df_repos['data_timestamp'] = pd.Timestamp.now()
-
-        df_repos.to_sql('project_repos', cloud_sql_engine, if_exists='append', index=False, schema='raw')
-
-        # capture asset metadata
-        preview_query = text("select count(*) from raw.project_repos")
-        result = conn.execute(preview_query)
-        # Fetch all rows into a list of tuples
-        row_count = result.fetchone()[0]
-
-        preview_query = text("select * from raw.project_repos limit 10")
-        result = conn.execute(preview_query)
-        result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
-
-    return dg.MaterializeResult(
-        metadata={
-            "row_count": dg.MetadataValue.int(row_count),
-            "preview": dg.MetadataValue.md(result_df.to_markdown(index=False)),
-            "processed_file_count": dg.MetadataValue.int(len(all_repos)),
-        }
-    )
+            return dg.MaterializeResult(
+                metadata={
+                    "raw_table_row_count": dg.MetadataValue.int(row_count),
+                    "raw_table_preview": dg.MetadataValue.md(result_df.to_markdown(index=False))
+                }
+            )
+    except Exception as e:
+        raise ValueError(f"Error inserting into raw.project_repos: {e}")
 
 
 # define the asset that gets the active, distinct repo list from the latest_distinct_project_repos table

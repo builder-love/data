@@ -1,12 +1,10 @@
 import os
 
 from dagster import Definitions
-from dagster_pipelines.resources import cloud_sql_postgres_resource, dbt_resource
+from dagster_pipelines.resources import cloud_sql_postgres_resource, dbt_resource, electric_capital_ecosystems_repo
 
 from dagster_pipelines.assets import (
-    crypto_ecosystems_project_toml_files, 
     github_project_orgs, 
-    github_project_sub_ecosystems, 
     github_project_repos, 
     latest_active_distinct_github_project_repos,
     github_project_repos_stargaze_count, 
@@ -15,16 +13,16 @@ from dagster_pipelines.assets import (
     github_project_repos_languages,
     github_project_repos_commits,
     github_project_repos_watcher_count,
-    github_project_repos_is_fork
+    github_project_repos_is_fork,
+    crypto_ecosystems_project_json
 )
 from dagster_pipelines.cleaning_assets import ( 
     all_dbt_assets, 
-    process_compressed_contributors_data
+    process_compressed_contributors_data,
+    update_crypto_ecosystems_raw_file_job
 )
 from dagster_pipelines.jobs import (
-    crypto_ecosystems_project_toml_files_job, 
     github_project_orgs_job, 
-    github_project_sub_ecosystems_job, 
     github_project_repos_job, 
     latest_active_distinct_project_repos_job, 
     project_repos_stargaze_count_job, 
@@ -38,12 +36,12 @@ from dagster_pipelines.jobs import (
     period_change_data_dbt_assets_job,
     project_repos_watcher_count_job,
     project_repos_is_fork_job,
-    process_compressed_contributors_data_job
+    process_compressed_contributors_data_job,
+    update_crypto_ecosystems_repo_and_run_export_job,
+    crypto_ecosystems_project_json_job
 )
 from dagster_pipelines.schedules import (
-    crypto_ecosystems_project_toml_files_schedule, 
     github_project_orgs_schedule, 
-    github_project_sub_ecosystems_schedule, 
     github_project_repos_schedule, 
     latest_active_distinct_project_repos_schedule, 
     project_repos_stargaze_count_schedule, 
@@ -58,9 +56,15 @@ from dagster_pipelines.schedules import (
     period_change_data_dbt_assets_schedule,
     project_repos_watcher_count_schedule,
     project_repos_is_fork_schedule,
-    process_compressed_contributors_data_schedule
+    process_compressed_contributors_data_schedule,
+    update_crypto_ecosystems_repo_and_run_export_schedule,
+    crypto_ecosystems_project_json_schedule,
+    update_crypto_ecosystems_raw_file_schedule
 )
-from dagster_pipelines.load_data_jobs import refresh_prod_schema
+from dagster_pipelines.load_data_jobs import (
+    refresh_prod_schema, 
+    update_crypto_ecosystems_repo_and_run_export
+)
 from dagster_pipelines.api_data import refresh_api_schema
 
 # Include the resource and assets and define a job
@@ -74,12 +78,11 @@ defs = Definitions(
                 "database": os.getenv("cloud_sql_postgres_db"),
             }
         ),
-        "dbt_resource": dbt_resource
+        "dbt_resource": dbt_resource,
+        "electric_capital_ecosystems_repo": electric_capital_ecosystems_repo
     },
     assets=[
-        crypto_ecosystems_project_toml_files, 
         github_project_orgs, 
-        github_project_sub_ecosystems, 
         github_project_repos, 
         latest_active_distinct_github_project_repos, 
         github_project_repos_stargaze_count, 
@@ -90,12 +93,12 @@ defs = Definitions(
         github_project_repos_languages,
         github_project_repos_commits,
         github_project_repos_watcher_count,
-        github_project_repos_is_fork
+        github_project_repos_is_fork,
+        update_crypto_ecosystems_repo_and_run_export,
+        crypto_ecosystems_project_json
         ],
     jobs=[
-        crypto_ecosystems_project_toml_files_job, 
         github_project_orgs_job, 
-        github_project_sub_ecosystems_job, 
         github_project_repos_job,
         latest_active_distinct_project_repos_job, 
         project_repos_stargaze_count_job, 
@@ -110,12 +113,13 @@ defs = Definitions(
         period_change_data_dbt_assets_job,
         project_repos_watcher_count_job,
         project_repos_is_fork_job,
-        process_compressed_contributors_data_job
+        process_compressed_contributors_data_job,
+        update_crypto_ecosystems_repo_and_run_export_job,
+        crypto_ecosystems_project_json_job,
+        update_crypto_ecosystems_raw_file_job
         ],
     schedules=[
-        crypto_ecosystems_project_toml_files_schedule, 
         github_project_orgs_schedule, 
-        github_project_sub_ecosystems_schedule, 
         github_project_repos_schedule, 
         latest_active_distinct_project_repos_schedule, 
         project_repos_stargaze_count_schedule, 
@@ -130,6 +134,9 @@ defs = Definitions(
         period_change_data_dbt_assets_schedule,
         project_repos_watcher_count_schedule,
         project_repos_is_fork_schedule,
-        process_compressed_contributors_data_schedule
+        process_compressed_contributors_data_schedule,
+        update_crypto_ecosystems_repo_and_run_export_schedule,
+        crypto_ecosystems_project_json_schedule,
+        update_crypto_ecosystems_raw_file_schedule
         ],
 )
