@@ -1,9 +1,13 @@
 import dagster as dg
 from dagster_dbt import DbtCliResource, DbtCliInvocation  # Import DbtCliInvocation
 import os
+import shutil
+import subprocess
+from pathlib import Path
 import pandas as pd
 from sqlalchemy import text
-from dagster import Output, op, job, Out
+from dagster import Output, op, job, Out, Failure, asset
+from dagster_pipelines.api_data import create_dbt_api_views
 
 @op(required_resource_keys={"cloud_sql_postgres_resource"})
 def create_temp_prod_schema(context, _):
@@ -85,4 +89,108 @@ def refresh_prod_schema():
         temp_schema = create_temp_prod_schema(dbt_results)
         copy_data = copy_clean_to_temp_prod(temp_schema)
         schemas_swapped = swap_schemas(copy_data)
-        cleanup_old_schema(schemas_swapped)
+
+        # Build API models AFTER swap, targeting the 'api' schema
+        # this is necessary because we use 'cascade' in cleanup_old_schema function
+        # which deletes the api schema views since they are dependent on the prod schema tables
+        print("Running dbt to create/update views in 'api' schema from refresh_prod_schema job.")
+        api_build_invocation = create_dbt_api_views(schemas_swapped) # Op targets API schema
+
+        # now we can safely delete the old prod schema
+        cleanup_old_schema(api_build_invocation)
+
+
+# define the asset that clones/updates the crypto-ecosystems repo and runs the export script
+@asset(
+    description="Clones/updates the crypto-ecosystems repo and runs the export script.", 
+    required_resource_keys={"electric_capital_ecosystems_repo"}
+)
+def update_crypto_ecosystems_repo_and_run_export(context):
+    """
+    Clones the repo if it doesn't exist, pulls updates if it does,
+    then runs './run.sh export exports.jsonl' inside the repo directory.
+    Outputs the full path to the generated exports.jsonl file.
+    """
+    # define the variables
+    try:
+        # define the clone repo url
+        git_repo_url = context.resources.electric_capital_ecosystems_repo['git_repo_url']
+        # define the local path to the cloned repo
+        clone_dir = os.path.join(context.resources.electric_capital_ecosystems_repo["clone_parent_dir"], context.resources.electric_capital_ecosystems_repo["repo_name"])
+        # define output filename
+        output_filename = context.resources.electric_capital_ecosystems_repo['output_filename']
+        # define the local path to the output file
+        output_filepath = context.resources.electric_capital_ecosystems_repo['output_filepath']
+        # clone parent directory
+        clone_parent_dir = context.resources.electric_capital_ecosystems_repo['clone_parent_dir']
+        # repo name
+        repo_name = context.resources.electric_capital_ecosystems_repo['repo_name']
+        # primary branch
+        primary_branch = context.resources.electric_capital_ecosystems_repo['primary_branch']
+    except Exception as e:
+        context.log.error(f"Error defining variables: {e}")
+        raise Failure(f"Error defining variables: {e}") from e
+
+    # check if the directory exists
+    repo_exists = os.path.isdir(clone_dir)
+
+    try:
+        if repo_exists:
+            context.log.info(f"Repository found at {clone_dir}. Fetching and resetting to origin/{primary_branch}...")
+               # Fetch latest changes from remote ('origin' is the default remote name)
+            subprocess.run(
+                ["git", "fetch", "origin"],
+                cwd=clone_dir, check=True, capture_output=True, text=True
+            )
+            # Reset local branch hard to match the fetched remote primary branch state
+            # This discards ALL local changes (committed or uncommitted)
+            subprocess.run(
+                ["git", "reset", "--hard", f"origin/{primary_branch}"],
+                cwd=clone_dir, check=True, capture_output=True, text=True
+            )
+            context.log.info(f"Repository reset to origin/{primary_branch}.")
+        else:
+            context.log.info(f"Cloning repository {git_repo_url} to {clone_dir}...")
+            # Ensure parent directory exists
+            os.makedirs(clone_parent_dir, exist_ok=True)
+            subprocess.run(["git", "clone", git_repo_url, clone_dir], check=True, capture_output=True, text=True)
+            context.log.info("Repository cloned.")
+
+        # Define paths
+        script_path = os.path.join(clone_dir, "run.sh")
+        # Assume output file is created in the root of the cloned repo
+        output_file_path = os.path.join(clone_dir, output_filename)
+        export_command = [script_path, "export", output_filename]
+
+        context.log.info(f"Running export script: {' '.join(export_command)} in {clone_dir}")
+
+        # Execute ./run.sh export exports.jsonl inside the cloned directory
+        script_result = subprocess.run(
+            export_command,
+            cwd=clone_dir,        # <<< Run from the repository's root
+            check=True,           # Raise exception on non-zero exit code
+            capture_output=True,  # Capture stdout/stderr
+            text=True             # Decode output as text
+        )
+        context.log.info(f"Export script completed successfully.")
+        context.log.debug(f"Script stdout:\n{script_result.stdout}")
+        if script_result.stderr:
+             context.log.warning(f"Script stderr:\n{script_result.stderr}")
+
+        # Verify output file exists
+        if not os.path.exists(output_file_path):
+            raise Failure(f"Export script ran successfully but output file not found at: {output_file_path}")
+
+        context.log.info(f"Generated export file: {output_file_path}")
+        context.log.info(f"Confirming resource output_filepath matches generated file path: {output_filepath}")
+        yield Output(output_file_path) # Output the full path
+
+    except subprocess.CalledProcessError as e:
+        context.log.error(f"Git or script command failed with exit code {e.returncode}")
+        context.log.error(f"Command: '{' '.join(e.cmd)}'")
+        context.log.error(f"Stderr: {e.stderr}")
+        context.log.error(f"Stdout: {e.stdout}")
+        raise Failure(f"Git or script command failed. See logs.") from e
+    except Exception as e:
+        context.log.error(f"An unexpected error occurred: {e}")
+        raise Failure(f"An unexpected error occurred: {e}") from e

@@ -1,7 +1,8 @@
 import dagster as dg
 from dagster_dbt import DbtCliResource, DbtCliInvocation
-from dagster import Output, op, job, Out
+from dagster import Output, op, job, Out, OpExecutionContext
 import os
+import json
 
 # dbt test op 
 @op(required_resource_keys={"dbt_resource"}, out={"dbt_test_results": Out()})
@@ -25,13 +26,36 @@ def test_dbt_api_views(context, _) -> DbtCliInvocation:
 
 # Op to manage view creations in `api` schema
 @op(required_resource_keys={"dbt_resource"}, out={"dbt_run_results": Out()})
-def create_dbt_api_views(context) -> DbtCliInvocation:
+def create_dbt_api_views(context, start_after=None) -> DbtCliInvocation:
     """Runs dbt to create/update views in the 'api' schema."""
     context.log.info("Running dbt to create/update views in 'api' schema.")
     try:
         invocation: DbtCliInvocation = context.resources.dbt_resource.cli(
             ["run", "--select", "path:models/api/"], context=context # select the api models
         ).wait()
+
+        # print the models found in the path and their exection status
+        executed_model_names = []
+        try:
+            # Access the structured results from the run
+            run_results = invocation.get_artifact("run_results.json")
+            context.log.debug(f"dbt run results: {run_results}") 
+
+            for result in run_results.get("results", []):
+                # Check if the node is a model and if it completed successfully (or just ran)
+                node_type = result.get("node", {}).get("resource_type")
+                node_status = result.get("status")
+                unique_id = result.get("unique_id", "unknown.id")
+
+                if node_type == "model":
+                    model_name = unique_id.split('.')[-1] # Get model name from unique_id
+                    executed_model_names.append(model_name)
+                    context.log.info(f"Model processed: {model_name} (Status: {node_status})")
+
+        except Exception as e:
+            context.log.warning(f"Could not parse run_results.json to log executed models: {e}. Raw logs might contain info.")
+            context.log.warning(f"Raw dbt logs:\n{invocation.get_all_logs()}")
+
         if invocation.process.returncode == 0:
             context.log.info("dbt run for 'api' schema successful.")
             yield Output(True, output_name="dbt_run_results")
