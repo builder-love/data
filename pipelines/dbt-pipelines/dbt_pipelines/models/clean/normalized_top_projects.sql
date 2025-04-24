@@ -1,93 +1,384 @@
--- normalized_top_projects.sql
--- create an incremental table in clean with data_timestamp intervals >6 days apart
--- latest_top_projects raw table
--- 
+-- models/clean/normalized_top_projects.sql
+-- calculate top_project score
+-- metrics and weights include: 
+--   - total all-time commit count (.15), total all-time fork count (.15), total all-time stargaze count (.15), total all-time contributor count (.15), total all-time watcher count (.025), total all-time is_not_fork_ratio (.025)
+--   - one month change commit count (.10), one month change fork count (.10), one month change stargaze count (.10), one month change contributor count (.10), one month change watcher count (.025), one month change is_not_fork_ratio (.025)
+
 {{ config(
-    materialized='incremental',
-    unique_key='project_title || data_timestamp',
+    materialized='table',
+    unique_key='project_title || report_date',
     tags=['timestamp_normalized']
 ) }}
 
-{% set initial_load_timestamp = '2025-03-31T13:55:41.132697Z' %}
-
-{% if is_incremental() %}
-
-    {% set max_clean_timestamp_query %}
-        SELECT MAX(data_timestamp) FROM {{ this }}
-    {% endset %}
-
-    {% set max_clean_timestamp_results = run_query(max_clean_timestamp_query) %}
-
-    {% if execute %}
-        {% set max_clean_timestamp = max_clean_timestamp_results.columns[0].values()[0] %}
-        {% if max_clean_timestamp == none %}
-            {% set max_clean_timestamp = (modules.datetime.datetime.fromisoformat(initial_load_timestamp.replace('Z', '+00:00'))).isoformat() %}
-        {% endif %} 
-    {% else %}
-        {% set max_clean_timestamp = (modules.datetime.datetime.fromisoformat(initial_load_timestamp.replace('Z', '+00:00'))).isoformat() %}
-    {% endif %}
-
-    -- get stats for outlier exclusion
-    {% set stats_query %}
-        -- Calculate the count of records for each data_timestamp in the clean table
-        with record_counts AS (
-            SELECT 
-                data_timestamp, 
-                COUNT(*) AS record_count
-            FROM {{ this }} -- Use {{ this }} to refer to the current model (clean table)
-            GROUP BY data_timestamp
-        )
-
-        -- Calculate the mean and standard deviation of the record counts from the clean table
-        SELECT 
-            AVG(record_count) AS mean_count, 
-            coalesce(STDDEV(record_count), 0) AS stddev_count
-        FROM record_counts
-    {% endset %}
-
-    {% set stats_results = run_query(stats_query) %}
-
-    {% if execute %}
-        {% set mean_count = stats_results.columns[0].values()[0] %}
-        {% set stddev_count = stats_results.columns[1].values()[0] %}
-    {% else %}
-        {% set mean_count = 0 %}
-        {% set stddev_count = 0 %}
-    {% endif %}
-    
-
-    WITH 
-
-    raw_data_timestamps as (
-        select data_timestamp, count(*) as record_count
-        from {{ ref('latest_top_projects') }}
-        group by 1
-    ),
-
-    -- Identify the latest data_timestamp in the raw table
-    load_timestamps AS (
-        SELECT data_timestamp AS load_timestamps
-        FROM raw_data_timestamps
-        where data_timestamp >= '{{ max_clean_timestamp }}'::timestamp + INTERVAL '6 days'
-        AND record_count <= ({{ mean_count }} * 1.5)
-        AND record_count >= ({{ mean_count }} * 0.5)
-    )
-
-    -- Select all records from the raw table
+WITH project_date_range AS (
+    -- Determine the overall start and end dates for tables
     SELECT
-        po.*
-    FROM
-        {{ ref('latest_top_projects') }} po
+       '2025-01-01'::date AS min_start_date,
+       CURRENT_DATE AS max_end_date
+),
+-- Generate all dates within the calculated range
+all_dates_in_range AS (
+    SELECT generate_series(
+        (SELECT min_start_date FROM project_date_range),
+        (SELECT max_end_date FROM project_date_range),
+        '1 day'::interval
+    )::date AS dt
+),
+-- Filter the generated dates to keep only Sundays
+date_series AS (
+    SELECT dt AS report_date
+    FROM all_dates_in_range
+    WHERE EXTRACT(ISODOW FROM dt) = 7
+),
 
-    WHERE po.data_timestamp in (select load_timestamps from load_timestamps)
+-- create the scaffold
+project_date_series_scaffold as (
+  SELECT
+    project_title,
+    report_date
 
-{% else %}
+  FROM {{ ref('latest_distinct_projects') }} cross join date_series -- get the full cartesian product
+),
 
-    -- Select all records from the raw table
-    SELECT
-        po.*
-    FROM
-        {{ ref('latest_top_projects') }} po 
-    WHERE po.data_timestamp = '{{ initial_load_timestamp }}'::timestamp
+-- add the sunday report_date to each source table
+normalized_project_fork_count as (
+select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
+from {{ ref('normalized_project_fork_count') }} f
+), 
+normalized_project_stargaze_count as (
+  select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
+  from {{ ref('normalized_project_stargaze_count') }} f
+), 
+normalized_project_commit_count as (
+  select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
+  from {{ ref('normalized_project_commit_count') }} f
+), 
+normalized_project_contributor_count as (
+  select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
+  from {{ ref('normalized_project_contributor_count') }} f
+), 
+normalized_project_watcher_count as (
+  select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
+  from {{ ref('normalized_project_watcher_count') }} f
+), 
+normalized_project_is_fork as (
+  select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
+  from {{ ref('normalized_project_is_fork') }} f
+), 
+four_week_change_project_commit_count as (
+  select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
+  from {{ ref('four_week_change_project_commit_count') }} f
+), 
+four_week_change_project_contributor_count as (
+  select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
+  from {{ ref('four_week_change_project_contributor_count') }} f
+), 
+four_week_change_project_fork_count as (
+  select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
+  from {{ ref('four_week_change_project_fork_count') }} f
+), 
+four_week_change_project_stargaze_count as (
+  select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
+  from {{ ref('four_week_change_project_stargaze_count') }} f
+), 
+four_week_change_project_watcher_count as (
+  select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
+  from {{ ref('four_week_change_project_watcher_count') }} f
+), 
+four_week_change_project_is_fork as (
+  select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
+  from {{ ref('four_week_change_project_is_fork') }} f
+),
+
+all_metrics as (
+  select 
+    p.project_title,
+    p.report_date,
+    f.data_timestamp as fork_data_timestamp, 
+    s.data_timestamp as stargaze_data_timestamp, 
+    cc.data_timestamp as commit_data_timestamp, 
+    c.data_timestamp as contributor_data_timestamp, 
+    w.data_timestamp as watcher_data_timestamp, 
+    is_fork.data_timestamp as is_fork_data_timestamp, 
+    commit_change.data_timestamp as commit_change_data_timestamp, 
+    contributor_change.data_timestamp as contributor_change_data_timestamp, 
+    fork_change.data_timestamp as fork_change_data_timestamp, 
+    stargaze_change.data_timestamp as stargaze_change_data_timestamp,
+    watcher_change.data_timestamp as watcher_change_data_timestamp,
+    is_fork_change.data_timestamp as is_fork_change_data_timestamp,
+    GREATEST(f.data_timestamp, s.data_timestamp, cc.data_timestamp, c.data_timestamp, w.data_timestamp, is_fork.data_timestamp, commit_change.data_timestamp, contributor_change.data_timestamp, fork_change.data_timestamp, stargaze_change.data_timestamp, watcher_change.data_timestamp,
+    is_fork_change.data_timestamp) row_data_timestamp,
+    f.fork_count,
+    s.stargaze_count,
+    cc.commit_count,
+    c.contributor_count,
+    w.watcher_count,
+    is_fork.is_not_fork_ratio,
+    commit_change.commit_count_pct_change_over_4_weeks,
+    contributor_change.contributor_count_pct_change_over_4_weeks,
+    fork_change.fork_count_pct_change_over_4_weeks,
+    stargaze_change.stargaze_count_pct_change_over_4_weeks,
+    watcher_change.watcher_count_pct_change_over_4_weeks,
+    is_fork_change.is_not_fork_ratio_pct_change_over_4_weeks
     
-{% endif %}
+  from project_date_series_scaffold p left join normalized_project_fork_count f 
+    on p.project_title = f.project_title and p.report_date = f.report_date left join normalized_project_stargaze_count s
+    on p.project_title = s.project_title and p.report_date = s.report_date left join normalized_project_commit_count cc
+    on p.project_title = cc.project_title and p.report_date = cc.report_date left join normalized_project_contributor_count c
+    on p.project_title = c.project_title and p.report_date = c.report_date left join normalized_project_watcher_count w
+    on p.project_title = w.project_title and p.report_date = w.report_date left join normalized_project_is_fork is_fork
+    on p.project_title = is_fork.project_title and p.report_date = is_fork.report_date left join four_week_change_project_commit_count commit_change
+    on p.project_title = commit_change.project_title and p.report_date = commit_change.report_date left join four_week_change_project_contributor_count contributor_change
+    on p.project_title = contributor_change.project_title and p.report_date = contributor_change.report_date left join four_week_change_project_fork_count fork_change
+    on p.project_title = fork_change.project_title and p.report_date = fork_change.report_date left join four_week_change_project_stargaze_count stargaze_change
+    on p.project_title = stargaze_change.project_title and p.report_date = stargaze_change.report_date left join four_week_change_project_watcher_count watcher_change
+    on p.project_title = watcher_change.project_title and p.report_date = watcher_change.report_date left join four_week_change_project_is_fork is_fork_change
+    on p.project_title = is_fork_change.project_title and p.report_date = is_fork_change.report_date
+),
+
+metrics_with_overall_max_ts AS (
+    SELECT
+        am.*,
+        MAX(row_data_timestamp) OVER () AS data_timestamp 
+    FROM all_metrics am
+),
+
+-- create grouping identifiers for each column needing LOCF
+grouped_metrics AS (
+    SELECT
+        *,
+        -- Create grouping keys - these increment only when a non-null value appears for THAT column
+        -- dates
+        -- COUNT(fork_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as fork_date_grp,
+        -- COUNT(stargaze_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as stargaze_date_grp,
+        -- COUNT(commit_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as commit_date_grp,
+        -- COUNT(contributor_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as contributor_date_grp,
+        -- COUNT(watcher_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as watcher_date_grp,
+        -- COUNT(is_fork_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as is_fork_date_grp,
+        -- COUNT(commit_change_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as commit_change_date_grp,
+        -- COUNT(contributor_change_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as contributor_change_date_grp,
+        -- COUNT(fork_change_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as fork_change_date_grp,
+        -- COUNT(stargaze_change_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as stargaze_change_date_grp,
+        -- COUNT(watcher_change_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as watcher_change_date_grp,
+        -- COUNT(is_fork_change_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as is_fork_change_date_grp,
+        -- metrics
+        COUNT(fork_count) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as fork_grp,
+        COUNT(stargaze_count) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as stargaze_grp,
+        COUNT(commit_count) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as commit_grp,
+        COUNT(contributor_count) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as contributor_grp,
+        COUNT(watcher_count) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as watcher_grp,
+        COUNT(is_not_fork_ratio) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as is_not_fork_ratio_grp,
+        COUNT(commit_count_pct_change_over_4_weeks) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as commit_change_grp,
+        COUNT(contributor_count_pct_change_over_4_weeks) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as contributor_change_grp,
+        COUNT(fork_count_pct_change_over_4_weeks) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as fork_change_grp,
+        COUNT(stargaze_count_pct_change_over_4_weeks) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as stargaze_change_grp,
+        COUNT(watcher_count_pct_change_over_4_weeks) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as watcher_change_grp,
+        COUNT(is_not_fork_ratio_pct_change_over_4_weeks) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as is_fork_ratio_change_grp
+    FROM
+        metrics_with_overall_max_ts -- Use the joined data before trying LOCF
+),
+
+-- propagate the last known value within each group
+metrics_locf AS (
+    SELECT
+        project_title,
+        report_date,
+        data_timestamp,
+        -- fork_data_timestamp, stargaze_data_timestamp, commit_data_timestamp, contributor_data_timestamp, watcher_data_timestamp, is_fork_data_timestamp, commit_change_data_timestamp, contributor_change_data_timestamp, fork_change_data_timestamp, stargaze_change_data_timestamp, watcher_change_data_timestamp, is_fork_change_data_timestamp,
+
+        -- Apply MAX() partitioned by the group ID to carry the value forward
+        -- dates
+        -- MAX(fork_data_timestamp) OVER (PARTITION BY project_title, fork_date_grp) AS fork_data_timestamp,
+        -- MAX(stargaze_data_timestamp) OVER (PARTITION BY project_title, stargaze_date_grp) AS stargaze_data_timestamp,
+        -- MAX(commit_data_timestamp) OVER (PARTITION BY project_title, commit_date_grp) AS commit_data_timestamp,
+        -- MAX(contributor_data_timestamp) OVER (PARTITION BY project_title, contributor_date_grp) AS contributor_data_timestamp,
+        -- MAX(watcher_data_timestamp) OVER (PARTITION BY project_title, watcher_date_grp) AS watcher_data_timestamp,
+        -- MAX(is_fork_data_timestamp) OVER (PARTITION BY project_title, is_fork_date_grp) AS is_fork_data_timestamp,
+        -- MAX(commit_change_data_timestamp) OVER (PARTITION BY project_title, commit_change_date_grp) AS commit_change_data_timestamp,
+        -- MAX(contributor_change_data_timestamp) OVER (PARTITION BY project_title, contributor_change_date_grp) AS contributor_change_data_timestamp,
+        -- MAX(fork_change_data_timestamp) OVER (PARTITION BY project_title, fork_change_date_grp) AS fork_change_data_timestamp,
+        -- MAX(stargaze_change_data_timestamp) OVER (PARTITION BY project_title, stargaze_change_date_grp) AS stargaze_change_data_timestamp,
+        -- MAX(watcher_change_data_timestamp) OVER (PARTITION BY project_title, watcher_change_date_grp) AS watcher_change_data_timestamp,
+        -- MAX(is_fork_change_data_timestamp) OVER (PARTITION BY project_title, is_fork_change_date_grp) AS is_fork_change_data_timestamp,
+
+        -- metrics
+        MAX(fork_count) OVER (PARTITION BY project_title, fork_grp) AS fork_count,
+        MAX(stargaze_count) OVER (PARTITION BY project_title, stargaze_grp) AS stargaze_count,
+        MAX(commit_count) OVER (PARTITION BY project_title, commit_grp) AS commit_count,
+        MAX(contributor_count) OVER (PARTITION BY project_title, contributor_grp) AS contributor_count,
+        MAX(watcher_count) OVER (PARTITION BY project_title, watcher_grp) AS watcher_count,
+        MAX(is_not_fork_ratio) OVER (PARTITION BY project_title, is_not_fork_ratio_grp) AS is_not_fork_ratio,
+        MAX(commit_count_pct_change_over_4_weeks) OVER (PARTITION BY project_title, commit_change_grp) AS commit_count_pct_change_over_4_weeks,
+        MAX(contributor_count_pct_change_over_4_weeks) OVER (PARTITION BY project_title, contributor_change_grp) AS contributor_count_pct_change_over_4_weeks,
+        MAX(fork_count_pct_change_over_4_weeks) OVER (PARTITION BY project_title, fork_change_grp) AS fork_count_pct_change_over_4_weeks,
+        MAX(stargaze_count_pct_change_over_4_weeks) OVER (PARTITION BY project_title, stargaze_change_grp) AS stargaze_count_pct_change_over_4_weeks,
+        MAX(watcher_count_pct_change_over_4_weeks) OVER (PARTITION BY project_title, watcher_change_grp) AS watcher_count_pct_change_over_4_weeks,
+        MAX(is_not_fork_ratio_pct_change_over_4_weeks) OVER (PARTITION BY project_title, is_fork_ratio_change_grp) AS is_not_fork_ratio_pct_change_over_4_weeks
+    FROM
+        grouped_metrics
+),
+
+normalized_metrics AS (
+     SELECT
+         project_title,
+         report_date,
+         data_timestamp,
+         fork_count,
+         stargaze_count,
+         commit_count,
+         contributor_count,
+         watcher_count,
+         is_not_fork_ratio,
+         commit_count_pct_change_over_4_weeks,
+         contributor_count_pct_change_over_4_weeks,
+         fork_count_pct_change_over_4_weeks,
+         stargaze_count_pct_change_over_4_weeks,
+         watcher_count_pct_change_over_4_weeks,
+         is_not_fork_ratio_pct_change_over_4_weeks,
+         (fork_count - MIN(fork_count) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(fork_count) OVER (PARTITION BY report_date) - MIN(fork_count) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_fork_count,
+         (stargaze_count - MIN(stargaze_count) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(stargaze_count) OVER (PARTITION BY report_date) - MIN(stargaze_count) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_stargaze_count,
+         (commit_count - MIN(commit_count) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(commit_count) OVER (PARTITION BY report_date) - MIN(commit_count) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_commit_count,
+         (contributor_count - MIN(contributor_count) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(contributor_count) OVER (PARTITION BY report_date) - MIN(contributor_count) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_contributor_count,
+         (watcher_count - MIN(watcher_count) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(watcher_count) OVER (PARTITION BY report_date) - MIN(watcher_count) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_watcher_count,
+         (MAX(is_not_fork_ratio) OVER (PARTITION BY report_date) - is_not_fork_ratio)::NUMERIC / NULLIF((MAX(is_not_fork_ratio) OVER (PARTITION BY report_date) - MIN(is_not_fork_ratio) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_is_not_fork_ratio, -- adjust the scaling function here to account for the inverse relationship between is_not_fork_ratio and project score
+         (commit_count_pct_change_over_4_weeks - MIN(commit_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(commit_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date) - MIN(commit_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_commit_count_pct_change_over_4_weeks,
+         (contributor_count_pct_change_over_4_weeks - MIN(contributor_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(contributor_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date) - MIN(contributor_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_contributor_count_pct_change_over_4_weeks,
+         (fork_count_pct_change_over_4_weeks - MIN(fork_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(fork_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date) - MIN(fork_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_fork_count_pct_change_over_4_weeks,
+         (stargaze_count_pct_change_over_4_weeks - MIN(stargaze_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(stargaze_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date) - MIN(stargaze_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_stargaze_count_pct_change_over_4_weeks,
+         (watcher_count_pct_change_over_4_weeks - MIN(watcher_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(watcher_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date) - MIN(watcher_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_watcher_count_pct_change_over_4_weeks,
+         (MAX(is_not_fork_ratio_pct_change_over_4_weeks) OVER (PARTITION BY report_date) - is_not_fork_ratio_pct_change_over_4_weeks)::NUMERIC / NULLIF((MAX(is_not_fork_ratio_pct_change_over_4_weeks) OVER (PARTITION BY report_date) - MIN(is_not_fork_ratio_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_is_not_fork_ratio_pct_change_over_4_weeks -- adjust the scaling function here to account for the inverse relationship between is_not_fork_ratio and project score
+     FROM metrics_locf
+     WHERE project_title IS NOT NULL and report_date > '3/1/2025' -- there is one contributor count record prior to march 2025
+),
+
+ranked_projects AS (
+  SELECT
+      project_title,
+      report_date,
+      data_timestamp,
+      fork_count,
+      stargaze_count,
+      commit_count,
+      contributor_count,
+      watcher_count,
+      is_not_fork_ratio,
+      commit_count_pct_change_over_4_weeks,
+      contributor_count_pct_change_over_4_weeks,
+      fork_count_pct_change_over_4_weeks,
+      stargaze_count_pct_change_over_4_weeks,
+      watcher_count_pct_change_over_4_weeks,
+      is_not_fork_ratio_pct_change_over_4_weeks,
+      normalized_fork_count,
+      normalized_stargaze_count,
+      normalized_commit_count,
+      normalized_contributor_count,
+      normalized_watcher_count,
+      normalized_is_not_fork_ratio,
+      normalized_commit_count_pct_change_over_4_weeks,
+      normalized_contributor_count_pct_change_over_4_weeks,
+      normalized_fork_count_pct_change_over_4_weeks,
+      normalized_stargaze_count_pct_change_over_4_weeks,
+      normalized_watcher_count_pct_change_over_4_weeks,
+      normalized_is_not_fork_ratio_pct_change_over_4_weeks,
+    (
+      (coalesce(normalized_fork_count,0) * 0.125) + 
+      (coalesce(normalized_stargaze_count,0) * 0.125) + 
+      (coalesce(normalized_commit_count,0) * 0.125) + 
+      (coalesce(normalized_contributor_count,0) * 0.125) + 
+      (coalesce(normalized_watcher_count,0) * 0.025) + 
+      (coalesce(normalized_is_not_fork_ratio,0) * 0.025) + 
+      (coalesce(normalized_commit_count_pct_change_over_4_weeks,0) * 0.10) + 
+      (coalesce(normalized_contributor_count_pct_change_over_4_weeks,0) * 0.10) + 
+      (coalesce(normalized_fork_count_pct_change_over_4_weeks,0) * 0.10) + 
+      (coalesce(normalized_stargaze_count_pct_change_over_4_weeks,0) * 0.10) +
+      (coalesce(normalized_watcher_count_pct_change_over_4_weeks,0) * 0.025) +
+      (coalesce(normalized_is_not_fork_ratio_pct_change_over_4_weeks,0) * 0.025)
+    ) AS weighted_score
+
+  FROM normalized_metrics
+), 
+
+final_ranking AS (
+  SELECT
+    project_title,
+    report_date,
+    data_timestamp,
+    fork_count,
+    stargaze_count,
+    commit_count,
+    contributor_count,
+    watcher_count,
+    is_not_fork_ratio,
+    commit_count_pct_change_over_4_weeks,
+    contributor_count_pct_change_over_4_weeks,
+    fork_count_pct_change_over_4_weeks,
+    stargaze_count_pct_change_over_4_weeks,
+    watcher_count_pct_change_over_4_weeks,
+    is_not_fork_ratio_pct_change_over_4_weeks,
+    normalized_fork_count,
+    normalized_stargaze_count,
+    normalized_commit_count,
+    normalized_contributor_count,
+    normalized_watcher_count,
+    normalized_is_not_fork_ratio,
+    normalized_commit_count_pct_change_over_4_weeks,
+    normalized_contributor_count_pct_change_over_4_weeks,
+    normalized_fork_count_pct_change_over_4_weeks,
+    normalized_stargaze_count_pct_change_over_4_weeks,
+    normalized_watcher_count_pct_change_over_4_weeks,
+    normalized_is_not_fork_ratio_pct_change_over_4_weeks,
+    weighted_score,
+    RANK() OVER (
+      PARTITION BY report_date
+      ORDER BY weighted_score DESC
+    ) AS project_rank,
+    NTILE(4) OVER (
+      PARTITION BY report_date
+      ORDER BY weighted_score DESC
+    ) AS quartile_bucket
+
+  FROM ranked_projects
+)
+
+SELECT
+  project_title,
+  report_date::timestamp AS report_date,
+  data_timestamp,
+  fork_count,
+  stargaze_count,
+  commit_count,
+  contributor_count,
+  watcher_count,
+  is_not_fork_ratio,
+  commit_count_pct_change_over_4_weeks,
+  contributor_count_pct_change_over_4_weeks,
+  fork_count_pct_change_over_4_weeks,
+  stargaze_count_pct_change_over_4_weeks,
+  watcher_count_pct_change_over_4_weeks,
+  is_not_fork_ratio_pct_change_over_4_weeks,
+  normalized_fork_count,
+  normalized_stargaze_count,
+  normalized_commit_count,
+  normalized_contributor_count,
+  normalized_watcher_count,
+  normalized_is_not_fork_ratio,
+  normalized_commit_count_pct_change_over_4_weeks,
+  normalized_contributor_count_pct_change_over_4_weeks,
+  normalized_fork_count_pct_change_over_4_weeks,
+  normalized_stargaze_count_pct_change_over_4_weeks,
+  normalized_watcher_count_pct_change_over_4_weeks,
+  normalized_is_not_fork_ratio_pct_change_over_4_weeks,
+  weighted_score,
+  project_rank,
+  quartile_bucket,
+  CASE
+      WHEN quartile_bucket = 1 THEN 'Top Project'
+      WHEN quartile_bucket = 2 THEN 'Leader'
+      WHEN quartile_bucket = 3 THEN 'In-The-Mix'
+      WHEN quartile_bucket = 4 THEN 'Laggard'
+      ELSE 'Unknown'
+  END AS project_rank_category
+
+FROM final_ranking
+
+ORDER BY report_date desc, weighted_score DESC
