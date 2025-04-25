@@ -5,14 +5,30 @@
     tags=['latest_clean_data']
 ) }}
 
-WITH latest_timestamp AS (
-    SELECT MAX(data_timestamp) as max_ts
-    FROM {{ ref('normalized_project_repos') }}  -- Refers to the *normalized* table
-)
-SELECT
+with projects as (
+select 
+    project_title,
+    repo,
+    SPLIT_PART( -- Second split: Split 'github.com' by '.' and take the 1st part
+        SPLIT_PART(repo, '/', 3), -- First split: Split by '/' and take the 3rd part ('github.com')
+        '.',
+        1
+    ) AS repo_source,
+    sub_ecosystems
+
+from {{ source('raw', 'crypto_ecosystems_raw_file') }}
+
+),
+
+distinct_project_repo as (
+select distinct on (project_title,repo)
     project_title,
     repo,
     repo_source,
-    data_timestamp
-FROM {{ ref('normalized_project_repos') }}  -- Refers to the *normalized* table
-WHERE data_timestamp = (SELECT max_ts FROM latest_timestamp)
+    sub_ecosystems,
+    NOW() AT TIME ZONE 'utc' as data_timestamp
+
+from projects
+)
+
+select * from distinct_project_repo

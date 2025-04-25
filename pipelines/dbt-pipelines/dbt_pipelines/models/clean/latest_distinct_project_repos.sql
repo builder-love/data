@@ -7,11 +7,11 @@
 
 WITH latest_timestamp AS (
     SELECT MAX(data_timestamp) as max_ts
-    FROM {{ ref('normalized_project_repos') }}  -- Refers to the *normalized* table
+    FROM {{ ref('latest_project_repos') }} 
 )
 SELECT DISTINCT
     repo,
     repo_source,
     data_timestamp
-FROM {{ ref('normalized_project_repos') }}  -- Refers to the *normalized* table
+FROM {{ ref('latest_project_repos') }} 
 WHERE data_timestamp = (SELECT max_ts FROM latest_timestamp)

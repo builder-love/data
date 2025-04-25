@@ -29,10 +29,6 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 8, period: day}
-      - name: project_repos
-        loaded_at_field: data_timestamp
-        freshness: 
-          warn_after: {count: 32, period: day}
       - name: project_repos_languages
         loaded_at_field: data_timestamp
         freshness: 
@@ -62,10 +58,6 @@ sources:
     schema: clean
     tables:
       - name: normalized_project_organizations
-        loaded_at_field: data_timestamp
-        freshness: 
-          warn_after: {count: 32, period: day}
-      - name: normalized_project_repos
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}

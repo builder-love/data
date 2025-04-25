@@ -17,22 +17,6 @@ models:
     tests:
       - unique_combination_of_columns:
           column_names: [project_organization_url, project_title, data_timestamp]
-  - name: normalized_project_repos
-    columns:
-      - name: data_timestamp
-        tests:
-          - not_null
-          - dbt_expectations.expect_column_values_to_be_of_type:
-              column_type: timestamp without time zone
-      - name: project_title
-        tests:
-          - not_null
-      - name: repo
-        tests:
-          - not_null
-    tests:
-      - unique_combination_of_columns:
-          column_names: [project_title, repo, data_timestamp]
   - name: normalized_project_repos_fork_count
     columns:
       - name: data_timestamp
@@ -406,6 +390,7 @@ models:
           - not_null
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: timestamp without time zone
+      - name: sub_ecosystems
     tests:
       - unique_combination_of_columns:
           column_names: [project_title, repo, data_timestamp]

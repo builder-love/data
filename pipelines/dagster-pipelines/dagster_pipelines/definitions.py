@@ -5,7 +5,6 @@ from dagster_pipelines.resources import cloud_sql_postgres_resource, dbt_resourc
 
 from dagster_pipelines.assets import (
     github_project_orgs, 
-    github_project_repos, 
     latest_active_distinct_github_project_repos,
     github_project_repos_stargaze_count, 
     github_project_repos_fork_count, 
@@ -23,7 +22,6 @@ from dagster_pipelines.cleaning_assets import (
 )
 from dagster_pipelines.jobs import (
     github_project_orgs_job, 
-    github_project_repos_job, 
     latest_active_distinct_project_repos_job, 
     project_repos_stargaze_count_job, 
     project_repos_fork_count_job, 
@@ -42,7 +40,6 @@ from dagster_pipelines.jobs import (
 )
 from dagster_pipelines.schedules import (
     github_project_orgs_schedule, 
-    github_project_repos_schedule, 
     latest_active_distinct_project_repos_schedule, 
     project_repos_stargaze_count_schedule, 
     project_repos_fork_count_schedule, 
@@ -83,7 +80,6 @@ defs = Definitions(
     },
     assets=[
         github_project_orgs, 
-        github_project_repos, 
         latest_active_distinct_github_project_repos, 
         github_project_repos_stargaze_count, 
         github_project_repos_fork_count,
@@ -99,7 +95,6 @@ defs = Definitions(
         ],
     jobs=[
         github_project_orgs_job, 
-        github_project_repos_job,
         latest_active_distinct_project_repos_job, 
         project_repos_stargaze_count_job, 
         project_repos_fork_count_job, 
@@ -120,7 +115,6 @@ defs = Definitions(
         ],
     schedules=[
         github_project_orgs_schedule, 
-        github_project_repos_schedule, 
         latest_active_distinct_project_repos_schedule, 
         project_repos_stargaze_count_schedule, 
         project_repos_fork_count_schedule,
