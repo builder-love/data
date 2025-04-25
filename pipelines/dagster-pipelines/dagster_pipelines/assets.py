@@ -180,74 +180,6 @@ def github_project_orgs(context) -> dg.MaterializeResult:
         raise ValueError(f"Error inserting into raw.project_organizations: {e}")
 
 
-# define the asset that gets the list of repositories for a project. Use latest project toml files from the project_toml_files table
-@dg.asset(
-    required_resource_keys={"cloud_sql_postgres_resource"},
-    group_name="ingestion",
-)
-def github_project_repos(context) -> dg.MaterializeResult:
-    # Get the cloud sql postgres resource
-    cloud_sql_engine = context.resources.cloud_sql_postgres_resource
-
-    query_text = """
-        -- Specify the target table and the columns you want to insert into
-        INSERT INTO raw.project_repos (project_title, repo, repo_source, data_timestamp)
-
-        -- data to be inserted
-        with projects as (
-        select 
-            project_title,
-            repo,
-            SPLIT_PART( -- Second split: Split 'github.com' by '.' and take the 1st part
-                SPLIT_PART(repo, '/', 3), -- First split: Split by '/' and take the 3rd part ('github.com')
-                '.',
-                1
-            ) AS repo_source
-
-        from raw.crypto_ecosystems_raw_file
-
-        where sub_ecosystems = '{}'
-        ),
-
-        distinct_project_repo as (
-        select distinct
-            project_title,
-            repo,
-            repo_source,
-            CURRENT_TIMESTAMP as data_timestamp
-
-        from projects
-        )
-
-        select * from distinct_project_repo
-    """
-
-    # send the insert into query to postgres 
-    try: 
-        with cloud_sql_engine.connect() as conn:
-            conn.execute(text(query_text))
-            conn.commit()
-
-            # capture asset metadata
-            preview_query = text("select count(*) from raw.project_repos")
-            result = conn.execute(preview_query)
-            # Fetch all rows into a list of tuples
-            row_count = result.fetchone()[0]
-
-            preview_query = text("select * from raw.project_repos limit 10")
-            result = conn.execute(preview_query)
-            result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
-
-            return dg.MaterializeResult(
-                metadata={
-                    "raw_table_row_count": dg.MetadataValue.int(row_count),
-                    "raw_table_preview": dg.MetadataValue.md(result_df.to_markdown(index=False))
-                }
-            )
-    except Exception as e:
-        raise ValueError(f"Error inserting into raw.project_repos: {e}")
-
-
 # define the asset that gets the active, distinct repo list from the latest_distinct_project_repos table
 @dg.asset(
     required_resource_keys={"cloud_sql_postgres_resource"},
@@ -535,9 +467,7 @@ def latest_active_distinct_github_project_repos(context) -> dg.MaterializeResult
 
         # query the latest_distinct_project_repos table to get the distinct repo list
         result = conn.execute(
-            text("""select repo, repo_source 
-                    from clean.latest_distinct_project_repos"""
-                )
+            text("""select repo, repo_source from clean.latest_distinct_project_repos""")
             )
         distinct_repo_df = pd.DataFrame(result.fetchall(), columns=result.keys())
 

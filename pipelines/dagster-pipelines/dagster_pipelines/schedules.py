@@ -2,7 +2,6 @@ from dagster import schedule, ScheduleDefinition, define_asset_job
 from dagster_dbt import build_schedule_from_dbt_selection
 from dagster_pipelines.jobs import (
     github_project_orgs_job, 
-    github_project_repos_job, 
     latest_active_distinct_project_repos_job, 
     project_repos_stargaze_count_job, 
     project_repos_fork_count_job, 
@@ -100,26 +99,6 @@ def github_project_orgs_schedule(context):
     
     # Log the duration of the job
     context.log.info(f"github_project_orgs_schedule job duration: {end_time - start_time}")
-
-    return {}
-
-# create a schedule to run github_project_repos_job every 15 days at midnight
-@schedule(
-    job=github_project_repos_job,
-    cron_schedule="30 0 15 * *", 
-    execution_timezone="America/New_York"
-)
-def github_project_repos_schedule(context):
-    # Log the start time of the job
-    context.log.info(f"github_project_repos_schedule job started at: {context.scheduled_execution_time}")
-    start_time = context.scheduled_execution_time
-
-    # Log the end time of the job
-    context.log.info(f"github_project_repos_schedule job ended at: {context.scheduled_execution_time}")
-    end_time = context.scheduled_execution_time
-    
-    # Log the duration of the job
-    context.log.info(f"github_project_repos_schedule job duration: {end_time - start_time}")
 
     return {}
 
