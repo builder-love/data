@@ -15,4 +15,6 @@ select
 
 from {{ ref('latest_project_stargaze_count') }}
 
+where project_title is not null
+
 limit 100
