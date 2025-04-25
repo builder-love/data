@@ -3072,6 +3072,45 @@ def github_project_repos_is_fork(context) -> dg.MaterializeResult:
 
     # check if results_df is not empty
     if not results_df.empty:
+        print("Starting cleanup for 'is_fork' column...")
+        # Ensure the column exists before proceeding
+        if 'is_fork' in results_df.columns:
+            # Define allowed boolean values (True and False)
+            allowed_bools = [True, False]
+
+            # Create a mask to identify rows where 'is_fork' is:
+            # 1. NOT True
+            # 2. NOT False
+            # 3. NOT Null (isna() handles None and np.nan)
+            mask_invalid = ~results_df['is_fork'].isin(allowed_bools) & ~results_df['is_fork'].isna()
+
+            # Check if any invalid values were found
+            if mask_invalid.any():
+                num_invalid = mask_invalid.sum()
+                print(f"Found {num_invalid} non-boolean/non-null values in 'is_fork' column. Converting to Null.")
+                # Log the actual invalid values found for debugging
+                invalid_values_found = results_df.loc[mask_invalid, 'is_fork'].unique()
+                print(f"First 25 invalid values found: {invalid_values_found[:25]}")
+
+                # Set invalid values to np.nan (which pandas handles as Null)
+                results_df.loc[mask_invalid, 'is_fork'] = np.nan
+
+            # Explicitly convert the column to pandas nullable boolean dtype
+            # This helps ensure consistency and correct handling of NA/NaN by to_sql.
+            try:
+                # Before converting, fill NaN with None if the target SQL type doesn't handle NaN well directly
+                # Although SQLAlchemy usually handles np.nan -> NULL correctly for boolean
+                results_df['is_fork'] = results_df['is_fork'].where(pd.notna(results_df['is_fork']), None)
+                results_df['is_fork'] = results_df['is_fork'].astype('boolean') # Use 'boolean' (Pandas NA) not 'bool'
+                print("Successfully converted 'is_fork' column to pandas nullable boolean type.")
+            except Exception as e:
+                # Log error if conversion fails, but might proceed if np.nan handling is okay
+                print(f"Warning: Could not convert 'is_fork' to pandas nullable boolean type: {e}. Proceeding...")
+
+        else:
+            print("Warning: 'is_fork' column not found in results_df. Exiting.")
+            raise Exception("'is_fork' column not found in results_df. Exiting.")
+
         # add unix datetime column
         results_df['data_timestamp'] = pd.Timestamp.now()
 
