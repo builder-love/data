@@ -15,7 +15,8 @@ select
 from {{ ref('latest_project_repos_watcher_count') }} f left join {{ ref('latest_project_repos') }} o
   on f.repo = o.repo
 
-where f.watcher_count is not null
+where o.project_title is not null 
+and f.watcher_count is not null
 
 group by 1
 order by 2 desc
