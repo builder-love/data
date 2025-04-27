@@ -323,7 +323,7 @@ def refresh_api_schema_schedule(context):
 
     return {}
 
-# create a schedule to run timestamp_normalized_project_toml_files_job every day at 1130 est
+# create a schedule to run timestamp_normalized job every day at 1130 est
 # Create the schedule
 normalized_dbt_assets_schedule = ScheduleDefinition(
     job=normalized_dbt_assets_job,  # The job to run

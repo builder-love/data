@@ -17,7 +17,7 @@ def create_temp_prod_schema(context, _):
         conn.execute(text("CREATE SCHEMA temp_prod;"))
         conn.commit()
     context.log.info("Created temp_prod schema.")
-    yield Output(None) # Use yield
+    # yield Output(None) # Use yield
 
 @op(required_resource_keys={"cloud_sql_postgres_resource"})
 def copy_clean_to_temp_prod(context, _):
@@ -32,31 +32,76 @@ def copy_clean_to_temp_prod(context, _):
                 SELECT * FROM clean.{table_name};
             """))
         conn.commit()
-    yield Output(None) # Use yield
+    #yield Output(None) # Use yield
 
-@op(required_resource_keys={"dbt_resource"}, out={"dbt_test_results": Out()})
+@op(
+    required_resource_keys={"dbt_resource"}
+)
 def run_dbt_tests_on_clean(context) -> DbtCliInvocation: #Correct return type
-    """Runs dbt tests against the clean schema."""
-    context.log.info("Running dbt tests on clean schema for refresh_prod_schema job.")
+    """
+    Runs dbt tests against the clean schema.
+    Raises dagster.Failure if any tests fail or if an error occurs.
+    """
+    context.log.info("Attempting to run dbt tests on clean schema (path:models/clean/).")
+    invocation = None # Initialize invocation to None
     try:
+        # Define the dbt command
+        dbt_command = ["test", "--select", "path:models/clean/"]
+        context.log.info(f"Executing dbt command: {' '.join(dbt_command)}")
+
+        # Execute dbt test command and wait for completion
+        # The context=context argument ensures logs from the dbt process are captured by Dagster
         invocation: DbtCliInvocation = context.resources.dbt_resource.cli(
-            ["test", "--select", "path:models/clean/"], context=context
-        ).wait()
-        print(f"dbt test invocation stdout: {type(invocation)}")
-        print(f"dbt test invocation stdout: {invocation}")
-        print(f"the returncode is {invocation.process.returncode}")
-        if invocation.process.returncode == 0:  # Correct way to check for success
-            context.log.info("dbt tests on clean schema passed.")
-            yield Output(True, output_name="dbt_test_results")
+            dbt_command,
+            context=context
+            # Note: raise_on_error defaults to True. If dbt exits non-zero,
+            # DbtCliResource may raise an exception here *before* .wait() returns.
+            # This is usually desired behavior.
+        ).wait() # Wait for the command to complete
+
+        # *** If execution reaches here, .wait() has returned ***
+        context.log.info(f"dbt process completed. Return code: {invocation.process.returncode}. Checking results...")
+
+        # Check the success status using the recommended method
+        if invocation.is_successful():
+            context.log.info("dbt tests on clean schema passed successfully.")
+            # No explicit output needed if just controlling flow
+            return # Success, proceed with the job
         else:
-            context.log.info(f"dbt test invocation stdout: {invocation._stdout}")
-            context.log.error(f"dbt test invocation stdout: {invocation._error_messages}") #Correct way to get output
-            yield Output(False, output_name="dbt_test_results") # Still return a value
-
+            # Tests failed, extract details and raise Failure
+            context.log.error("dbt tests on clean schema failed!")
+            # Try to get stdout/stderr for better debugging
+            stdout = invocation.get_stdout() or "No stdout captured."
+            stderr = invocation.get_stderr() or "No stderr captured."
+            error_message = (
+                f"dbt test command failed with return code {invocation.process.returncode}.\n"
+                f"--- stdout ---\n{stdout}\n"
+                f"--- stderr ---\n{stderr}"
+            )
+            # Raise Failure to halt job execution and report the error clearly in Dagster UI
+            raise Failure(description=error_message)
+    # Catching a broad Exception to handle unexpected issues during CLI execution or result processing
     except Exception as e:
-        context.log.error(f"Error running dbt tests: {e}")
-        yield Output(False, output_name="dbt_test_results")  # Consistent return type
+        context.log.error(f"An unexpected error occurred during or immediately after dbt test execution: {e}", exc_info=True)
 
+        # Try to construct a helpful error message, including dbt output if available
+        error_description = f"Error during/after dbt tests: {e}"
+        if invocation:
+             # If invocation object exists, dbt process likely finished but something else went wrong
+             stdout = invocation.get_stdout() or "No stdout captured."
+             stderr = invocation.get_stderr() or "No stderr captured."
+             error_description = (
+                 f"Exception during/after dbt test execution: {e}\n"
+                 f"dbt process return code (if available): {getattr(invocation.process, 'returncode', 'N/A')}\n"
+                 f"--- stdout ---\n{stdout}\n"
+                 f"--- stderr ---\n{stderr}"
+             )
+        else:
+            # If invocation is None, the error likely happened during the .cli() call itself
+             error_description = f"Error occurred before dbt process completion could be confirmed: {e}"
+
+        # Raise Failure to ensure the job stops and the error is surfaced
+        raise Failure(description=error_description)
 
 @op(required_resource_keys={"cloud_sql_postgres_resource"})
 def swap_schemas(context, _):
@@ -66,7 +111,7 @@ def swap_schemas(context, _):
         conn.execute(text("ALTER SCHEMA temp_prod RENAME TO prod;"))
         conn.commit()
     context.log.info("Schemas swapped successfully.")
-    yield Output(None) # Use yield
+    # yield Output(None) # Use yield
 
 @op(required_resource_keys={"cloud_sql_postgres_resource"})
 def cleanup_old_schema(context, _):
@@ -75,7 +120,7 @@ def cleanup_old_schema(context, _):
         conn.execute(text("DROP SCHEMA IF EXISTS prod_old CASCADE;"))
         conn.commit()
     context.log.info("Cleaned up prod_old schema.")
-    yield Output(None) # Use yield
+    # yield Output(None) # Use yield
 
 @job(
     tags={"github_api": "True"},
@@ -85,19 +130,17 @@ def refresh_prod_schema():
     Refreshes the 'prod' schema from the 'clean' schema with error handling.
     """
     dbt_results = run_dbt_tests_on_clean()
-    if dbt_results:
-        temp_schema = create_temp_prod_schema(dbt_results)
-        copy_data = copy_clean_to_temp_prod(temp_schema)
-        schemas_swapped = swap_schemas(copy_data)
+    temp_schema = create_temp_prod_schema(dbt_results)
+    copy_data = copy_clean_to_temp_prod(temp_schema)
+    schemas_swapped = swap_schemas(copy_data)
 
-        # Build API models AFTER swap, targeting the 'api' schema
-        # this is necessary because we use 'cascade' in cleanup_old_schema function
-        # which deletes the api schema views since they are dependent on the prod schema tables
-        print("Running dbt to create/update views in 'api' schema from refresh_prod_schema job.")
-        api_build_invocation = create_dbt_api_views(schemas_swapped) # Op targets API schema
+    # Build API models AFTER swap, targeting the 'api' schema
+    # this is necessary because we use 'cascade' in cleanup_old_schema function
+    # which deletes the api schema views since they are dependent on the prod schema tables
+    api_build_invocation = create_dbt_api_views(schemas_swapped) # Op targets API schema
 
-        # now we can safely delete the old prod schema
-        cleanup_old_schema(api_build_invocation)
+    # now we can safely delete the old prod schema
+    cleanup_old_schema(api_build_invocation)
 
 
 # define the asset that clones/updates the crypto-ecosystems repo and runs the export script
