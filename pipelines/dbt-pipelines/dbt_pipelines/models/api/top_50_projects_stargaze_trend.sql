@@ -13,7 +13,7 @@ select
   stargaze_count,
   TO_CHAR(data_timestamp, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS latest_data_timestamp
 
-from {{ ref('normalized_project_stargaze_count') }}
+from {{ source('prod', 'normalized_project_stargaze_count') }}
 
 where project_title in (select project_title from {{ ref('top_50_projects') }})
 
