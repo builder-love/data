@@ -1,5 +1,5 @@
 -- models/clean/four_week_change_project_watcher_count.sql
--- this table updates weekly, so we take a shortcut and lag 4 records to get the 4 week change
+-- this table updates weekly, so we take a shortcut and lag 3 records to get the 4 week change
 
 {{ 
     config(
@@ -10,16 +10,16 @@
 }} 
 
 WITH LaggedWeeklyCounts AS (
-    -- Use LAG(..., 4) to get the value from 4 weeks prior
+    -- Use LAG(..., 3) to get the value from 4 weeks prior
     SELECT
         project_title,
         data_timestamp,
         watcher_count,
-        LAG(watcher_count, 4) OVER (
+        LAG(watcher_count, 3) OVER (
             PARTITION BY project_title 
             ORDER BY data_timestamp
         ) AS prior_4_weeks_watcher_count,
-        LAG(data_timestamp, 4) OVER (
+        LAG(data_timestamp, 3) OVER (
             PARTITION BY project_title 
             ORDER BY data_timestamp
         ) AS prior_4_weeks_timestamp -- The timestamp for the prior count

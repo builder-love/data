@@ -13,7 +13,7 @@ select
   TO_CHAR(data_timestamp, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS latest_data_timestamp,
   fork_count
 
-from {{ ref('latest_project_fork_count') }}
+from {{ source('prod', 'latest_project_fork_count') }}
 
 where project_title is not null
 

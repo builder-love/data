@@ -30,7 +30,7 @@ with sorted_base as (
         quartile_bucket,
         project_rank_category
 
-    from {{ ref('normalized_top_projects') }}
+    from {{ source('prod', 'normalized_top_projects') }}
     where project_title in(select distinct project_title from {{ ref('top_50_projects') }} )
     order by report_date desc, weighted_score desc
 )
