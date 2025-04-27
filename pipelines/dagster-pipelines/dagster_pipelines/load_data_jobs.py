@@ -37,7 +37,7 @@ def copy_clean_to_temp_prod(context, _):
 @op(
     required_resource_keys={"dbt_resource"}
 )
-def run_dbt_tests_on_clean(context) -> DbtCliInvocation: #Correct return type
+def run_dbt_tests_on_clean(context): #Correct return type
     """
     Runs dbt tests against the clean schema.
     Raises dagster.Failure if any tests fail or if an error occurs.
