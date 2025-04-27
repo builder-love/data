@@ -265,6 +265,8 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
+  # note: the prod tables listed in this sources file are used in source() functions in the models/api folder
+  # we use source() instead of ref() because the prod tables are not transformed by dbt--prod schema is a nightly replication of clean
   - name: prod
     database: postgres
     schema: prod
@@ -275,6 +277,7 @@ sources:
       - name: normalized_project_stargaze_count
       - name: normalized_project_watcher_count
       - name: normalized_project_is_fork
+      - name: normalized_top_projects
       - name: latest_top_projects
       - name: latest_project_fork_count
       - name: latest_project_stargaze_count
