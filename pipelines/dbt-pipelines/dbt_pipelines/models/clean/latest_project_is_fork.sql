@@ -19,7 +19,8 @@ select
 from {{ ref('latest_project_repos_is_fork') }} f left join {{ ref('latest_project_repos') }} o
   on f.repo = o.repo
 
-where f.is_fork is not null
+where o.project_title is not null 
+and f.is_fork is not null
 
 group by 1
 order by 4
