@@ -4,6 +4,19 @@
 --   - total all-time commit count (.15), total all-time fork count (.15), total all-time stargaze count (.15), total all-time contributor count (.15), total all-time watcher count (.025), total all-time is_not_fork_ratio (.025)
 --   - one month change commit count (.10), one month change fork count (.10), one month change stargaze count (.10), one month change contributor count (.10), one month change watcher count (.025), one month change is_not_fork_ratio (.025)
 
+-- rm from project list:
+-- General
+-- Ethereum L2s
+-- Ethereum Virtual Machine Stack
+-- EVM Compatible L1 and L2
+-- EVM Compatible Layer 1s
+-- EVM Compatible Layer 1s, 2s, and Dapps
+-- EVM Compatible Layer 2s
+-- Solana Virtual Machine Stack
+-- SVM Layer 1 and Layer 2s
+-- SVM Layer 1s
+-- Open Source Cryptography
+
 {{ config(
     materialized='table',
     unique_key='project_title || report_date',
@@ -38,6 +51,20 @@ project_date_series_scaffold as (
     report_date
 
   FROM {{ ref('latest_distinct_projects') }} cross join date_series -- get the full cartesian product
+
+WHERE LOWER(project_title) NOT IN (
+    'general',
+    'ethereum l2s',
+    'ethereum virtual machine stack',
+    'evm compatible l1 and l2',
+    'evm compatible layer 1s',
+    'evm compatible layer 1s, 2s, and dapps',
+    'evm compatible layer 2s',
+    'solana virtual machine stack',
+    'svm layer 1 and layer 2s',
+    'svm layer 1s',
+    'open source cryptography'
+    )
 ),
 
 -- add the sunday report_date to each source table
