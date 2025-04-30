@@ -3078,11 +3078,17 @@ def github_project_repos_is_fork(context) -> dg.MaterializeResult:
     tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
 )
 def github_project_repos_contributors(context) -> dg.MaterializeResult:
+    
+    logger = context.log # Use Dagster logger
+
     # Get the cloud sql postgres resource
     cloud_sql_engine = context.resources.cloud_sql_postgres_resource
 
     # get the github personal access token
     gh_pat = os.environ.get("go_blockchain_ecosystem")
+
+    # capture the timestamp at start for writing to batch to the database
+    batch_timestamp = pd.Timestamp.now()
 
     def get_next_page(response):
         next_page = response.headers.get('Link')
@@ -3092,12 +3098,12 @@ def github_project_repos_contributors(context) -> dg.MaterializeResult:
                 if 'rel="next"' in link:
                     next_page_url = urlparse(link.split(';')[0].strip('<>')).geturl()
                     next_page_url = next_page_url.replace('<', '').replace('>', '')
-                    print(f"Next page found: {next_page_url}")
+                    # print(f"Next page found: {next_page_url}")
                     return next_page_url
-            print("No next page found")
+            # print("No next page found")
         else:
-            print("Link header not found in response. No next page found.")
-        return None
+            # print("Link header not found in response. No next page found.")
+            return None
 
     def get_contributors_list(owner, repo_name, gh_pat):
         """
@@ -3124,7 +3130,7 @@ def github_project_repos_contributors(context) -> dg.MaterializeResult:
             return_204_no_contributors = False
 
             while api_url is not None:
-                print(f"Fetching page {page_num} of contributors from {api_url}")
+                # print(f"Fetching page {page_num} of contributors from {api_url}")
 
                 try:
                     # Prepare the request headers with your GitHub PAT
@@ -3149,7 +3155,7 @@ def github_project_repos_contributors(context) -> dg.MaterializeResult:
                     # get next page url
                     if response is not None:
                         if response.status_code == 204:
-                            print("No contributors found.")
+                            print(f"204 No Content. No contributors found for {owner}/{repo_name}")
                             api_url = None
                             return_204_no_contributors = True
                             break
@@ -3165,30 +3171,31 @@ def github_project_repos_contributors(context) -> dg.MaterializeResult:
                     # Only extend if contributors is not None and is a list
                     if isinstance(contributors, list):
                         contributors_list.extend(contributors)
-                        print(f"Fetched {len(contributors_list)} contributors so far")
+                        # print(f"Fetched {len(contributors_list)} contributors so far")
                     else:
-                        print(f"Warning: Expected a list of contributors, got {type(contributors)}. Response: {contributors}")
+                        logger.warning(f"[{repo_full_name_for_log}] Expected list, got {type(contributors)}. Response: {str(contributors)[:200]}...") # Log truncated response
                         # Decide how to handle this - stop? continue? For now, stop pagination.
                         api_url = None
                         pagination_successful_this_attempt = False # Mark as potentially incomplete
+                        print(f"Expected list, got {type(contributors)}. Response: {str(contributors)[:200]}...")
                         continue
                     page_num += 1
                     api_url = next_page_url
 
                 except requests.exceptions.RequestException as e:
-                    # Log the error and attempt number
-                    print(f"\nError during request for {api_url} on attempt {attempt + 1}/{max_retries}: {e}\n")
+                    # Log the error
+                    logger.warning(f"[{repo_full_name_for_log}] RequestException on attempt {attempt + 1}/{max_retries} for URL {current_api_url}: {e}")
                     pagination_successful_this_attempt = False
 
                     # Safely get status_code and headers for logging and decisions
                     status_code = getattr(getattr(e, 'response', None), 'status_code', None)
                     headers = getattr(getattr(e, 'response', None), 'headers', {})
-                    print(f"Status Code (if available): {status_code}")
+                    # print(f"Status Code (if available): {status_code}")
                     # (You can add back the rate limit info logging here if desired)
 
                     # ===== CHECK FOR MAX RETRIES =====
                     if attempt == max_retries - 1:
-                        print(f"Max retries ({max_retries}) reached for {api_url}. Giving up on this repository.")
+                        logger.error(f"[{repo_full_name_for_log}] Max retries ({max_retries}) reached. Giving up on this repository. Last URL attempted: {current_api_url}")
                         api_url = None # Set api_url to None to stop pagination loop AFTER this failed attempt
                         # Break from the inner while loop. Since this was the last attempt,
                         # the outer for loop will also terminate naturally.
@@ -3222,12 +3229,12 @@ def github_project_repos_contributors(context) -> dg.MaterializeResult:
 
                 # Make sure they also set api_url = None and break if they should cause the function to give up on the repo.
                 except KeyError as e:
-                    print(f"KeyError processing response: {e}") # Avoid printing potentially large 'response' object
+                    logger.error(f"[{repo_full_name_for_log}] KeyError processing response from {current_api_url}: {e}")
                     pagination_successful_this_attempt = False
                     api_url = None # Give up
                     break
                 except Exception as e:
-                    print(f"An unexpected error occurred processing response: {e}")
+                    logger.error(f"[{repo_full_name_for_log}] Unexpected error processing response from {current_api_url}: {e}", exc_info=True)
                     pagination_successful_this_attempt = False
                     api_url = None # Give up
                     break
@@ -3304,27 +3311,61 @@ def github_project_repos_contributors(context) -> dg.MaterializeResult:
     project_contributors_df = pd.DataFrame(project_contributors)
     
     # add unix datetime column
-    project_contributors_df['data_timestamp'] = pd.Timestamp.now()
+    project_contributors_df['data_timestamp'] = batch_timestamp
 
-    # write results to database
-    project_contributors_df.to_sql('project_repos_contributors', cloud_sql_engine, if_exists='append', index=False, schema='raw')
+    try:
+        logger.info(f"Attempting to write {len(project_contributors_df)} rows to raw.project_repos_contributors...")
+        # Use chunksize and explicit transaction
+        with cloud_sql_engine.begin() as connection: # Starts transaction, handles commit/rollback
+             project_contributors_df.to_sql(
+                 'project_repos_contributors',
+                 connection, # Use the connection from the transaction context
+                 if_exists='append',
+                 index=False,
+                 schema='raw',
+                 chunksize=10000,  # Adjust chunksize as needed (e.g., 500, 1000)
+                 method='multi'   # Often more efficient for PostgreSQL with chunksize
+             )
+        logger.info("Successfully wrote data to database.")
 
-    with cloud_sql_engine.connect() as conn:
-        # capture asset metadata
-        preview_query = text("select count(*) from raw.project_repos_contributors")
-        result = conn.execute(preview_query)
-        # Fetch all rows into a list of tuples
-        row_count = result.fetchone()[0]
+    # Catch specific SQLAlchemy errors first if possible
+    except SQLAlchemyError as e:
+         logger.error(f"Database error during to_sql operation: {e}", exc_info=True)
+         # The 'with engine.begin()' context manager automatically rolls back here
+         # Re-raise the error to fail the Dagster asset run
+         raise e
+    except Exception as e:
+         logger.error(f"Unexpected error during to_sql: {e}", exc_info=True)
+         # The context manager should still attempt rollback
+         raise e
 
-        preview_query = text("select * from raw.project_repos_contributors limit 10")
-        result = conn.execute(preview_query)
-        result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
 
-        return dg.MaterializeResult(
-            metadata={
-                "row_count": dg.MetadataValue.int(row_count),
-                "preview": dg.MetadataValue.md(result_df.to_markdown(index=False)),
-                "count_403_errors": dg.MetadataValue.int(count_403_errors_sum),
-                "count_502_errors": dg.MetadataValue.int(count_502_errors_sum),
-            }
-        )
+    # --- Metadata Capture (keep as is, but ensure connection is fresh if needed) ---
+    final_row_count = 0
+    preview_df = pd.DataFrame()
+    try:
+        with cloud_sql_engine.connect() as conn:
+            # Get final count
+            count_query = text("SELECT COUNT(*) FROM raw.project_repos_contributors")
+            final_row_count = conn.execute(count_query).scalar_one_or_none() or 0
+
+            # Get preview
+            preview_query = text("SELECT repo, data_timestamp FROM raw.project_repos_contributors ORDER BY data_timestamp DESC LIMIT 10")
+            preview_result = conn.execute(preview_query)
+            preview_df = pd.DataFrame(preview_result.fetchall(), columns=preview_result.keys())
+
+        logger.info(f"Final row count: {final_row_count}")
+
+    except SQLAlchemyError as e:
+        logger.error(f"Database error fetching metadata: {e}", exc_info=True)
+        # Don't fail the whole asset if metadata fails, just log it.
+
+    return dg.MaterializeResult(
+        metadata={
+            "row_count": dg.MetadataValue.int(final_row_count),
+            "inserted_rows": dg.MetadataValue.int(len(project_contributors_df)), # Rows attempted in this run
+            "preview": dg.MetadataValue.md(preview_df.to_markdown(index=False) if not preview_df.empty else "No preview available."),
+            "count_403_errors": dg.MetadataValue.int(count_403_errors_sum),
+            "count_502_errors": dg.MetadataValue.int(count_502_errors_sum),
+        }
+    )
