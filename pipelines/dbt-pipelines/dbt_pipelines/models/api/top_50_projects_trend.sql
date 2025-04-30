@@ -13,7 +13,7 @@ with sorted_base as (
         project_title,
         report_date,
         data_timestamp,
-        weighted_score,
+        weighted_score_index,
         fork_count,
         stargaze_count,
         commit_count,
@@ -32,14 +32,14 @@ with sorted_base as (
 
     from {{ source('prod', 'normalized_top_projects') }}
     where project_title in(select distinct project_title from {{ ref('top_50_projects') }} )
-    order by report_date desc, weighted_score desc
+    order by report_date desc, weighted_score_index desc
 )
 
 select 
     project_title,
     TO_CHAR(report_date, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS report_date,
     TO_CHAR(data_timestamp, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS data_timestamp,
-    weighted_score,
+    weighted_score_index,
     fork_count,
     stargaze_count,
     commit_count,

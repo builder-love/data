@@ -396,6 +396,7 @@ SELECT
   normalized_watcher_count_pct_change_over_4_weeks,
   normalized_is_not_fork_ratio_pct_change_over_4_weeks,
   weighted_score,
+  round(weighted_score * 100, 1) AS weighted_score_index,
   project_rank,
   quartile_bucket,
   CASE
