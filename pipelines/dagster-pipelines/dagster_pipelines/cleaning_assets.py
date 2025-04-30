@@ -74,9 +74,85 @@ else:
 
 ################################################ process compressed data #######################################################
 
+# validation function for the compressed data
+def run_validations(context, df: pd.DataFrame, engine):
+    """Runs validation checks on the DataFrame against the existing final table. Raises ValueError if checks fail."""
+    context.log.info("Running validations...")
+
+    context.log.info("Checking if DataFrame is empty...")
+    if df.empty:
+        raise ValueError("Validation failed: Input DataFrame is empty.")
+    context.log.info("DataFrame is not empty.")
+
+    context.log.info("Checking if 'repo' column contains NULL values...")
+    if df['repo'].isnull().any():
+        raise ValueError("Validation failed: 'repo' column contains NULL values.")
+    context.log.info("'repo' column does not contain NULL values.")
+
+    existing_record_count_val = None
+    existing_data_timestamp_val = None
+
+    try:
+        context.log.info(f"Checking existing data in {schema_name}.{final_table_name}...")
+        with engine.connect() as conn:
+            # Check if final table exists first
+            table_exists_result = conn.execute(text(
+                f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = '{schema_name}' AND table_name = '{final_table_name}');"
+            ))
+            final_table_exists = table_exists_result.scalar_one() # Use scalar_one for single boolean result
+
+            if final_table_exists:
+                result_count = conn.execute(text(f"SELECT COUNT(*) FROM {schema_name}.{final_table_name}"))
+                existing_record_count_val = result_count.scalar()
+
+                result_ts = conn.execute(text(f"SELECT MAX(data_timestamp) FROM {schema_name}.{final_table_name}"))
+                existing_data_timestamp_val = result_ts.scalar() # Can be None/NaT if table empty/no timestamp
+            else:
+                context.log.warning(f"Final table {schema_name}.{final_table_name} does not exist. Skipping comparison checks.")
+                # Allow first run where the table doesn't exist yet
+
+    except Exception as e:
+        context.log.error(f"Error accessing existing data in {schema_name}.{final_table_name}: {e}", exc_info=True)
+        # If comparison is essential, raise. If optional on first run, just warn. Let's raise.
+        raise ValueError(f"Validation failed: Error accessing existing data in {schema_name}.{final_table_name}.")
+
+    # --- Comparison Validations (only if existing data was found) ---
+    if existing_record_count_val is not None:
+        context.log.info(f"Checking record count deviation (New: {df.shape[0]}, Existing: {existing_record_count_val})...")
+        if existing_record_count_val > 0:
+            deviation = abs(df.shape[0] - existing_record_count_val) / existing_record_count_val
+            if deviation > 0.5:
+                raise ValueError(f"Validation failed: Record count deviation ({deviation:.1%}) exceeds 50%.")
+            context.log.info(f"Record count deviation ({deviation:.1%}) within 50% threshold.")
+        elif df.shape[0] > 0:
+            context.log.warning("Existing table had 0 records, new data has records.")
+        else: # Both 0
+            context.log.info("Both existing and new data appear empty.")
+            raise ValueError("Validation failed: Both existing and new data appear empty.")
+
+
+    if existing_data_timestamp_val is not None and not pd.isna(existing_data_timestamp_val):
+        # Timestamps need to be timezone-aware for proper comparison
+        now_ts = pd.Timestamp.now(tz='UTC') # Assuming UTC, adjust if necessary
+        existing_data_timestamp_val_aware = pd.Timestamp(existing_data_timestamp_val).tz_localize('UTC') # Assuming stored as naive UTC
+
+        context.log.info(f"Checking data timestamp (Existing: {existing_data_timestamp_val_aware}, Threshold: 25 days)...")
+        # Check if existing data timestamp is EARLIER than 25 days ago (i.e., older than 25 days)
+        if existing_data_timestamp_val_aware > (now_ts - pd.Timedelta(days=25)):
+            # Raise error only if data is NEWER than 25 days
+            raise ValueError(f"Validation failed: Existing data timestamp ({existing_data_timestamp_val_aware}) is not older than 25 days.")
+        context.log.info("Existing data timestamp is more than 25 days old.")
+    elif final_table_exists: # Only warn if table existed but timestamp was null/missing
+        context.log.warning("Could not retrieve a valid existing data timestamp for comparison.")
+
+    context.log.info("Validations passed.")
+    return True
+
 @dg.asset(
     required_resource_keys={"cloud_sql_postgres_resource"},
     group_name="clean_data",
+    deps=[github_project_repos_contributors],
+    automation_condition=dg.AutomationCondition.eager(),
 )
 def process_compressed_contributors_data(context) -> dg.MaterializeResult:
     # Get the cloud sql postgres resource
@@ -88,139 +164,15 @@ def process_compressed_contributors_data(context) -> dg.MaterializeResult:
     old_table_name = "latest_project_repos_contributors_old"
     schema_name = "clean"
 
-    def run_pre_validations(context, engine):
-        """Runs validation checks on the DataFrame against the existing final table. Raises ValueError if checks fail."""
-        context.log.info("Running pre-validations...")
-
-        context.log.info("Checking if existing table has more than one data_timestamp...")
-        with engine.connect() as conn:
-            result = conn.execute(text(
-                f"SELECT COUNT(DISTINCT data_timestamp) FROM {schema_name}.{final_table_name}"
-            ))
-            distinct_timestamp_count = result.scalar()
-            
-            # check if result is not None
-            if distinct_timestamp_count is None:
-                raise ValueError("Validation failed: Existing table has no data_timestamp.")
-
-            # check if result is greater than 1
-            if distinct_timestamp_count > 1:
-                raise ValueError("Validation failed: Existing table has more than one data_timestamp.")
-            context.log.info("Existing table has only one data_timestamp.")
-
-            # check if the data_timestamp is older than 25 days
-            context.log.info("Checking if the data_timestamp is older than 25 days...")
-            result_ts = conn.execute(text(f"SELECT MAX(data_timestamp) FROM {schema_name}.{final_table_name}"))
-            existing_data_timestamp_val = result_ts.scalar() # Can be None/NaT if table empty/no timestamp
-
-            # check if result is not None
-            if existing_data_timestamp_val is None:
-                raise ValueError("Validation failed: Existing table has no data_timestamp.")
-
-            # check if the data_timestamp is older than 25 days
-            if existing_data_timestamp_val is not None and not pd.isna(existing_data_timestamp_val):
-                # Timestamps need to be timezone-aware for proper comparison
-                now_ts = pd.Timestamp.now(tz='UTC') # Assuming UTC, adjust if necessary
-                existing_data_timestamp_val_aware = pd.Timestamp(existing_data_timestamp_val).tz_localize('UTC') # Assuming stored as naive UTC
-
-                context.log.info(f"pre-validation check: max data timestamp (Existing: {existing_data_timestamp_val_aware}, Threshold: 25 days)...")
-                # Check if existing data timestamp is EARLIER than 25 days ago (i.e., older than 25 days)
-                if existing_data_timestamp_val_aware > (now_ts - pd.Timedelta(days=25)):
-                    # return false if data is NEWER than 25 days
-                    return False
-                context.log.info("Existing data timestamp is more than 25 days old. We can proceed with the asset run.")
-        return True
-
-    def run_validations(context, df: pd.DataFrame, engine):
-        """Runs validation checks on the DataFrame against the existing final table. Raises ValueError if checks fail."""
-        context.log.info("Running validations...")
-
-        context.log.info("Checking if DataFrame is empty...")
-        if df.empty:
-            raise ValueError("Validation failed: Input DataFrame is empty.")
-        context.log.info("DataFrame is not empty.")
-
-        context.log.info("Checking if 'repo' column contains NULL values...")
-        if df['repo'].isnull().any():
-            raise ValueError("Validation failed: 'repo' column contains NULL values.")
-        context.log.info("'repo' column does not contain NULL values.")
-
-        existing_record_count_val = None
-        existing_data_timestamp_val = None
-
-        try:
-            context.log.info(f"Checking existing data in {schema_name}.{final_table_name}...")
-            with engine.connect() as conn:
-                # Check if final table exists first
-                table_exists_result = conn.execute(text(
-                    f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = '{schema_name}' AND table_name = '{final_table_name}');"
-                ))
-                final_table_exists = table_exists_result.scalar_one() # Use scalar_one for single boolean result
-
-                if final_table_exists:
-                    result_count = conn.execute(text(f"SELECT COUNT(*) FROM {schema_name}.{final_table_name}"))
-                    existing_record_count_val = result_count.scalar()
-
-                    result_ts = conn.execute(text(f"SELECT MAX(data_timestamp) FROM {schema_name}.{final_table_name}"))
-                    existing_data_timestamp_val = result_ts.scalar() # Can be None/NaT if table empty/no timestamp
-                else:
-                    context.log.warning(f"Final table {schema_name}.{final_table_name} does not exist. Skipping comparison checks.")
-                    # Allow first run where the table doesn't exist yet
-
-        except Exception as e:
-            context.log.error(f"Error accessing existing data in {schema_name}.{final_table_name}: {e}", exc_info=True)
-            # If comparison is essential, raise. If optional on first run, just warn. Let's raise.
-            raise ValueError(f"Validation failed: Error accessing existing data in {schema_name}.{final_table_name}.")
-
-        # --- Comparison Validations (only if existing data was found) ---
-        if existing_record_count_val is not None:
-            context.log.info(f"Checking record count deviation (New: {df.shape[0]}, Existing: {existing_record_count_val})...")
-            if existing_record_count_val > 0:
-                deviation = abs(df.shape[0] - existing_record_count_val) / existing_record_count_val
-                if deviation > 0.5:
-                    raise ValueError(f"Validation failed: Record count deviation ({deviation:.1%}) exceeds 50%.")
-                context.log.info(f"Record count deviation ({deviation:.1%}) within 50% threshold.")
-            elif df.shape[0] > 0:
-                context.log.warning("Existing table had 0 records, new data has records.")
-            else: # Both 0
-                context.log.info("Both existing and new data appear empty.")
-                raise ValueError("Validation failed: Both existing and new data appear empty.")
-
-
-        if existing_data_timestamp_val is not None and not pd.isna(existing_data_timestamp_val):
-            # Timestamps need to be timezone-aware for proper comparison
-            now_ts = pd.Timestamp.now(tz='UTC') # Assuming UTC, adjust if necessary
-            existing_data_timestamp_val_aware = pd.Timestamp(existing_data_timestamp_val).tz_localize('UTC') # Assuming stored as naive UTC
-
-            context.log.info(f"Checking data timestamp (Existing: {existing_data_timestamp_val_aware}, Threshold: 25 days)...")
-            # Check if existing data timestamp is EARLIER than 25 days ago (i.e., older than 25 days)
-            if existing_data_timestamp_val_aware > (now_ts - pd.Timedelta(days=25)):
-                # Raise error only if data is NEWER than 25 days
-                raise ValueError(f"Validation failed: Existing data timestamp ({existing_data_timestamp_val_aware}) is not older than 25 days.")
-            context.log.info("Existing data timestamp is more than 25 days old. We can proceed with the asset run.")
-        elif final_table_exists: # Only warn if table existed but timestamp was null/missing
-            context.log.warning("Could not retrieve a valid existing data timestamp for comparison.")
-
-        context.log.info("Validations passed.")
-        return True
-
     # Execute the query
     # Extracts, decompresses, and inserts data into the clean table.
     try:
-        pre_validations_result = run_pre_validations(context, cloud_sql_engine)
-
-        if not pre_validations_result:
-            context.log.error("Pre-validation checks failed: Pre-validations failed.")
-            return dg.MaterializeResult(metadata={"row_count": 0, "message": "Pre-validation checks failed."})
-
-        context.log.info("Pre-validation checks passed. Proceeding with asset run...")
-        context.log.info("Fetching raw data from raw.project_repos_contributors...")
         with cloud_sql_engine.connect() as conn:
             result = conn.execute(text(
                 """
-                SELECT repo, contributor_list
+                SELECT repo, contributor_list -- select the bytea column data
                 FROM raw.project_repos_contributors
-                WHERE data_timestamp = (SELECT MAX(data_timestamp) FROM raw.project_repos_contributors);
+                WHERE data_timestamp = (SELECT MAX(data_timestamp) FROM raw.project_repos_contributors)
                 """
             ))
             rows = pd.DataFrame(result.fetchall(), columns=result.keys())
@@ -232,18 +184,28 @@ def process_compressed_contributors_data(context) -> dg.MaterializeResult:
             # capture the data in a list
             print(f"Fetched {len(rows)} repos with compressed data. Decompressing...")
             data = []
-            for repo, compressed_data in rows.itertuples(index=False):
+            for repo, compressed_byte_data in rows.itertuples(index=False):
 
-                # hex to bytes and then decompress bytes
-                # Remove the '\x' prefixes and convert to bytes
-                hex_string_no_prefix = compressed_data.replace("\\x", "")
-                byte_data = bytes.fromhex(hex_string_no_prefix)
+                if compressed_byte_data is None:
+                    print(f"Warning: Skipping repo {repo} due to NULL compressed data.")
+                    continue # Skip this row if data is NUL
 
                 # Decompress the data - returns json byte string
-                contributors_json_string = gzip.decompress(byte_data)
+                try:
+                    contributors_json_string = gzip.decompress(compressed_byte_data)
+                except gzip.BadGzipFile as e:
+                    print(f"Error decompressing data for repo {repo}: {e}. Skipping.")
+                    continue # Skip this repo if decompression fails
+                except Exception as e:
+                    print(f"Unexpected error during decompression for repo {repo}: {e}. Skipping.")
+                    continue # Skip on other unexpected errors
 
                 # Parse the JSON string into a list of dictionaries
-                contributors_list = json.loads(contributors_json_string)
+                try:
+                    contributors_list = json.loads(contributors_json_string)
+                except json.JSONDecodeError as e:
+                    print(f"Error decoding JSON for repo {repo}: {e}. Skipping.")
+                    continue # Skip if JSON is invalid
 
                 for contributor in contributors_list:
                     if contributor['type'] != 'Anonymous':
@@ -269,12 +231,13 @@ def process_compressed_contributors_data(context) -> dg.MaterializeResult:
                             "contributor_user_view_type": contributor.get('user_view_type'),
                             "contributor_site_admin": contributor.get('site_admin'),
                             "contributor_contributions": contributor.get('contributions'),
-                            "contributor_email": '',
+                            "contributor_name": None, # contributor.get('name') is not always present
+                            "contributor_email": None # contributor.get('email') is not always present,
                         })
                     else:
                         data.append({
                             "repo": repo,
-                            "contributor_login": contributor['name'],
+                            "contributor_login": f"{contributor['name']}|{contributor['email']}",
                             "contributor_id": '',
                             "contributor_node_id": '',
                             "contributor_avatar_url": '',
@@ -294,6 +257,7 @@ def process_compressed_contributors_data(context) -> dg.MaterializeResult:
                             "contributor_user_view_type": '',
                             "contributor_site_admin": '',
                             "contributor_contributions": contributor['contributions'],
+                            "contributor_name": contributor['name'],
                             "contributor_email": contributor['email'],
                         })
 
@@ -309,11 +273,7 @@ def process_compressed_contributors_data(context) -> dg.MaterializeResult:
         print(f"Created decompressed dataframe with {len(contributors_df)} rows.")
 
         # Run Validations (Comparing processed data against current FINAL table)
-        validations_result = run_validations(context, contributors_df, cloud_sql_engine)
-
-        if not validations_result:
-            raise ValueError("Validation checks failed: Validation checks failed.")
-        print("Validation checks passed. Proceeding with asset run...")
+        run_validations(context, contributors_df, cloud_sql_engine)
 
         # Write DataFrame to Staging Table first
         context.log.info(f"Writing data to staging table {schema_name}.{staging_table_name}...")
@@ -323,7 +283,7 @@ def process_compressed_contributors_data(context) -> dg.MaterializeResult:
             if_exists='replace', # Replace staging table safely
             index=False,
             schema=schema_name,
-            chunksize=25000 # Good for large dataframes
+            chunksize=10000 # Good for large dataframes
         )
         print("Successfully wrote to staging table.")
 
@@ -373,13 +333,14 @@ def process_compressed_contributors_data(context) -> dg.MaterializeResult:
         )
     # --- Exception Handling for the entire asset function ---
     except ValueError as ve:
-        context.log.error(f"Validation error: {ve}", exc_info=True)
+        print(f"Validation error: {ve}", exc_info=True)
         raise ve # Re-raise to fail the Dagster asset run clearly indicating validation failure
 
     except Exception as e:
-        context.log.error(f"An unexpected error occurred: {e}", exc_info=True)
+        print(f"An unexpected error occurred: {e}", exc_info=True)
         raise e # Re-raise any other exception to fail the Dagster asset run
 ########################################################################################################################
+
 
 ########################################################################################################################
 # crypto ecosystems raw file assets

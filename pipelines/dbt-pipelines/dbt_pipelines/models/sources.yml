@@ -229,6 +229,7 @@ sources:
           - name: contributor_user_view_type
           - name: contributor_site_admin
           - name: contributor_contributions
+          - name: contributor_name
           - name: contributor_email
           - name: data_timestamp
             tests:
