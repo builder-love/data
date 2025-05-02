@@ -75,7 +75,7 @@ else:
 ################################################ process compressed data #######################################################
 
 # validation function for the compressed data
-def run_validations(context, df: pd.DataFrame, engine):
+def run_validations(context, df: pd.DataFrame, engine, schema_name: str = "clean", final_table_name: str = "latest_project_repos_contributors") -> bool:
     """Runs validation checks on the DataFrame against the existing final table. Raises ValueError if checks fail."""
     context.log.info("Running validations...")
 
@@ -273,7 +273,9 @@ def process_compressed_contributors_data(context) -> dg.MaterializeResult:
         print(f"Created decompressed dataframe with {len(contributors_df)} rows.")
 
         # Run Validations (Comparing processed data against current FINAL table)
-        run_validations(context, contributors_df, cloud_sql_engine)
+        run_validations(context, contributors_df, cloud_sql_engine, schema_name, final_table_name)
+        print("All validations passed.")
+        # --- Validation Passed - Proceed with Atomic Swap ---
 
         # Write DataFrame to Staging Table first
         context.log.info(f"Writing data to staging table {schema_name}.{staging_table_name}...")
@@ -333,11 +335,11 @@ def process_compressed_contributors_data(context) -> dg.MaterializeResult:
         )
     # --- Exception Handling for the entire asset function ---
     except ValueError as ve:
-        print(f"Validation error: {ve}", exc_info=True)
+        context.log.error(f"Validation error: {ve}", exc_info=True)
         raise ve # Re-raise to fail the Dagster asset run clearly indicating validation failure
 
     except Exception as e:
-        print(f"An unexpected error occurred: {e}", exc_info=True)
+        context.log.error(f"An unexpected error occurred: {e}", exc_info=True)
         raise e # Re-raise any other exception to fail the Dagster asset run
 ########################################################################################################################
 

@@ -61,6 +61,10 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
+      - name: normalized_project_repo_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
       - name: normalized_project_repos_fork_count
         loaded_at_field: data_timestamp
         freshness: 
