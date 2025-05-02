@@ -17,6 +17,23 @@ models:
     tests:
       - unique_combination_of_columns:
           column_names: [project_organization_url, project_title, data_timestamp]
+  - name: normalized_project_repo_count
+    columns:
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+      - name: repo_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: project_title
+        tests:
+          - not_null
+    tests:
+      - unique_combination_of_columns:
+          column_names: [project_title, data_timestamp]
   - name: normalized_project_repos_fork_count
     columns:
       - name: data_timestamp

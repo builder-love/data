@@ -3090,6 +3090,9 @@ def github_project_repos_contributors(context) -> dg.MaterializeResult:
     # capture the timestamp at start for writing to batch to the database
     batch_timestamp = pd.Timestamp.now()
 
+    # Define a fallback filename (consider making it unique per run)
+    fallback_filename = f"/tmp/contributors_fallback_{batch_timestamp.strftime('%Y%m%d_%H%M%S')}.parquet"
+
     def get_next_page(response):
         next_page = response.headers.get('Link')
         if next_page:
@@ -3331,11 +3334,25 @@ def github_project_repos_contributors(context) -> dg.MaterializeResult:
     # Catch specific SQLAlchemy errors first if possible
     except SQLAlchemyError as e:
          logger.error(f"Database error during to_sql operation: {e}", exc_info=True)
+         logger.warning(f"Database write failed. Saving DataFrame to fallback file: {fallback_filename}")
+         try:
+             # Attempt to save as Parquet (often better for data types and compression)
+             project_contributors_df.to_parquet(fallback_filename, index=False)
+             logger.info(f"Successfully saved data to fallback file: {fallback_filename}")
+         except Exception as E:
+             logger.error(f"CRITICAL: Failed to save fallback data to {fallback_filename}: {E}", exc_info=True)
          # The 'with engine.begin()' context manager automatically rolls back here
          # Re-raise the error to fail the Dagster asset run
          raise e
     except Exception as e:
          logger.error(f"Unexpected error during to_sql: {e}", exc_info=True)
+         logger.warning(f"Unexpected error during write. Saving DataFrame to fallback file: {fallback_filename}")
+         try:
+             # Attempt to save as Parquet
+             project_contributors_df.to_parquet(fallback_filename, index=False)
+             logger.info(f"Successfully saved data to fallback file: {fallback_filename}")
+         except Exception as E:
+             logger.error(f"CRITICAL: Failed to save fallback data to {fallback_filename}: {E}", exc_info=True)
          # The context manager should still attempt rollback
          raise e
 
