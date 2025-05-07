@@ -11,12 +11,12 @@
 WITH project_sma AS (
   SELECT
     ntp.*,
-    -- Calculate the 4-week simple moving average (current week + 3 preceding weeks)
+    -- Calculate the 6-week simple moving average (current week + 5 preceding weeks)
     AVG(weighted_score) OVER (
         PARTITION BY project_title 
         ORDER BY report_date ASC   
-        ROWS BETWEEN 3 PRECEDING AND CURRENT ROW -- Window: current row + 3 previous rows
-    ) AS weighted_score_4wk_sma
+        ROWS BETWEEN 5 PRECEDING AND CURRENT ROW -- Window: current row + 5 previous rows
+    ) AS weighted_score_sma
   FROM
     {{ ref('normalized_top_projects') }} ntp
 )
@@ -50,7 +50,7 @@ select
   normalized_watcher_count_pct_change_over_4_weeks,
   normalized_is_not_fork_ratio_pct_change_over_4_weeks,
   weighted_score,
-  weighted_score_4wk_sma,
+  weighted_score_sma,
   project_rank,
   quartile_bucket,
   project_rank_category

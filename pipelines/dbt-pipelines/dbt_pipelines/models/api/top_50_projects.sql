@@ -13,5 +13,5 @@
     weighted_score,
     TO_CHAR(data_timestamp, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS latest_data_timestamp
   from {{ source('prod', 'latest_top_projects') }}
-  order by weighted_score_4wk_sma desc 
+  order by weighted_score_sma desc 
   limit 50

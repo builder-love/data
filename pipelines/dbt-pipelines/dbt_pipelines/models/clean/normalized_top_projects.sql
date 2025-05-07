@@ -65,56 +65,69 @@ WHERE LOWER(project_title) NOT IN (
     'svm layer 1s',
     'open source cryptography'
     )
+and report_date >= (CURRENT_DATE - INTERVAL '52 weeks')
 ),
 
 -- add the sunday report_date to each source table
 normalized_project_fork_count as (
 select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
 from {{ ref('normalized_project_fork_count') }} f
+where data_timestamp >= (CURRENT_DATE - INTERVAL '52 weeks')
 ), 
 normalized_project_stargaze_count as (
   select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
   from {{ ref('normalized_project_stargaze_count') }} f
+  where data_timestamp >= (CURRENT_DATE - INTERVAL '52 weeks')
 ), 
 normalized_project_commit_count as (
   select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
   from {{ ref('normalized_project_commit_count') }} f
+  where data_timestamp >= (CURRENT_DATE - INTERVAL '52 weeks')
 ), 
 normalized_project_contributor_count as (
   select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
   from {{ ref('normalized_project_contributor_count') }} f
+  where data_timestamp >= (CURRENT_DATE - INTERVAL '52 weeks')
 ), 
 normalized_project_watcher_count as (
   select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
   from {{ ref('normalized_project_watcher_count') }} f
+  where data_timestamp >= (CURRENT_DATE - INTERVAL '52 weeks')
 ), 
 normalized_project_is_fork as (
   select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
   from {{ ref('normalized_project_is_fork') }} f
+  where data_timestamp >= (CURRENT_DATE - INTERVAL '52 weeks')
 ), 
 four_week_change_project_commit_count as (
   select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
   from {{ ref('four_week_change_project_commit_count') }} f
+  where data_timestamp >= (CURRENT_DATE - INTERVAL '52 weeks')
 ), 
 four_week_change_project_contributor_count as (
   select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
   from {{ ref('four_week_change_project_contributor_count') }} f
+  where data_timestamp >= (CURRENT_DATE - INTERVAL '52 weeks')
 ), 
 four_week_change_project_fork_count as (
   select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
   from {{ ref('four_week_change_project_fork_count') }} f
+  where data_timestamp >= (CURRENT_DATE - INTERVAL '52 weeks')
 ), 
 four_week_change_project_stargaze_count as (
   select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
   from {{ ref('four_week_change_project_stargaze_count') }} f
+  where data_timestamp >= (CURRENT_DATE - INTERVAL '52 weeks')
 ), 
 four_week_change_project_watcher_count as (
   select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
   from {{ ref('four_week_change_project_watcher_count') }} f
+  where data_timestamp >= (CURRENT_DATE - INTERVAL '52 weeks')
 ), 
 four_week_change_project_is_fork as (
   select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
   from {{ ref('four_week_change_project_is_fork') }} f
+  where data_timestamp >= (CURRENT_DATE - INTERVAL '52 weeks')
 ),
 
 all_metrics as (
@@ -175,19 +188,6 @@ grouped_metrics AS (
     SELECT
         *,
         -- Create grouping keys - these increment only when a non-null value appears for THAT column
-        -- dates
-        -- COUNT(fork_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as fork_date_grp,
-        -- COUNT(stargaze_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as stargaze_date_grp,
-        -- COUNT(commit_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as commit_date_grp,
-        -- COUNT(contributor_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as contributor_date_grp,
-        -- COUNT(watcher_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as watcher_date_grp,
-        -- COUNT(is_fork_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as is_fork_date_grp,
-        -- COUNT(commit_change_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as commit_change_date_grp,
-        -- COUNT(contributor_change_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as contributor_change_date_grp,
-        -- COUNT(fork_change_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as fork_change_date_grp,
-        -- COUNT(stargaze_change_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as stargaze_change_date_grp,
-        -- COUNT(watcher_change_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as watcher_change_date_grp,
-        -- COUNT(is_fork_change_data_timestamp) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as is_fork_change_date_grp,
         -- metrics
         COUNT(fork_count) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as fork_grp,
         COUNT(stargaze_count) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as stargaze_grp,
@@ -211,23 +211,6 @@ metrics_locf AS (
         project_title,
         report_date,
         data_timestamp,
-        -- fork_data_timestamp, stargaze_data_timestamp, commit_data_timestamp, contributor_data_timestamp, watcher_data_timestamp, is_fork_data_timestamp, commit_change_data_timestamp, contributor_change_data_timestamp, fork_change_data_timestamp, stargaze_change_data_timestamp, watcher_change_data_timestamp, is_fork_change_data_timestamp,
-
-        -- Apply MAX() partitioned by the group ID to carry the value forward
-        -- dates
-        -- MAX(fork_data_timestamp) OVER (PARTITION BY project_title, fork_date_grp) AS fork_data_timestamp,
-        -- MAX(stargaze_data_timestamp) OVER (PARTITION BY project_title, stargaze_date_grp) AS stargaze_data_timestamp,
-        -- MAX(commit_data_timestamp) OVER (PARTITION BY project_title, commit_date_grp) AS commit_data_timestamp,
-        -- MAX(contributor_data_timestamp) OVER (PARTITION BY project_title, contributor_date_grp) AS contributor_data_timestamp,
-        -- MAX(watcher_data_timestamp) OVER (PARTITION BY project_title, watcher_date_grp) AS watcher_data_timestamp,
-        -- MAX(is_fork_data_timestamp) OVER (PARTITION BY project_title, is_fork_date_grp) AS is_fork_data_timestamp,
-        -- MAX(commit_change_data_timestamp) OVER (PARTITION BY project_title, commit_change_date_grp) AS commit_change_data_timestamp,
-        -- MAX(contributor_change_data_timestamp) OVER (PARTITION BY project_title, contributor_change_date_grp) AS contributor_change_data_timestamp,
-        -- MAX(fork_change_data_timestamp) OVER (PARTITION BY project_title, fork_change_date_grp) AS fork_change_data_timestamp,
-        -- MAX(stargaze_change_data_timestamp) OVER (PARTITION BY project_title, stargaze_change_date_grp) AS stargaze_change_data_timestamp,
-        -- MAX(watcher_change_data_timestamp) OVER (PARTITION BY project_title, watcher_change_date_grp) AS watcher_change_data_timestamp,
-        -- MAX(is_fork_change_data_timestamp) OVER (PARTITION BY project_title, is_fork_change_date_grp) AS is_fork_change_data_timestamp,
-
         -- metrics
         MAX(fork_count) OVER (PARTITION BY project_title, fork_grp) AS fork_count,
         MAX(stargaze_count) OVER (PARTITION BY project_title, stargaze_grp) AS stargaze_count,
