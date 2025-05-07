@@ -201,6 +201,10 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
+      - name: latest_top_repos
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
       - name: latest_top_projects
         loaded_at_field: data_timestamp
         freshness: 
@@ -211,6 +215,30 @@ sources:
           warn_after: {count: 32, period: day}
         columns:
           - name: repo
+            tests:
+              - not_null
+          - name: contributor_unique_id_builder_love
+            tests:
+              - not_null
+          - name: contributor_site_admin
+          - name: contributor_contributions
+          - name: data_timestamp
+            tests:
+              - not_null
+              - dbt_expectations.expect_column_values_to_be_of_type:
+                  column_type: timestamp without time zone
+        tests:
+          - dbt_utils.unique_combination_of_columns:
+              combination_of_columns:
+                - repo
+                - contributor_unique_id_builder_love
+                - data_timestamp
+      - name: latest_contributors
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+        columns:
+          - name: contributor_unique_id_builder_love
             tests:
               - not_null
           - name: contributor_login
@@ -231,8 +259,6 @@ sources:
           - name: contributor_received_events_url
           - name: contributor_type
           - name: contributor_user_view_type
-          - name: contributor_site_admin
-          - name: contributor_contributions
           - name: contributor_name
           - name: contributor_email
           - name: data_timestamp
@@ -243,9 +269,32 @@ sources:
         tests:
           - dbt_utils.unique_combination_of_columns:
               combination_of_columns:
-                - repo
-                - contributor_login
+                - contributor_unique_id_builder_love
                 - data_timestamp
+      - name: latest_top_contributors
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: four_week_change_project_repos_commit_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: four_week_change_project_repos_contributor_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
+      - name: four_week_change_project_repos_fork_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
+      - name: four_week_change_project_repos_stargaze_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
+      - name: four_week_change_project_repos_watcher_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
       - name: four_week_change_project_contributor_count
         loaded_at_field: data_timestamp
         freshness: 
@@ -253,23 +302,23 @@ sources:
       - name: four_week_change_project_fork_count
         loaded_at_field: data_timestamp
         freshness: 
-          warn_after: {count: 32, period: day}
+          warn_after: {count: 8, period: day}
       - name: four_week_change_project_stargaze_count
         loaded_at_field: data_timestamp
         freshness: 
-          warn_after: {count: 32, period: day}
+          warn_after: {count: 8, period: day}
       - name: four_week_change_project_commit_count
         loaded_at_field: data_timestamp
         freshness: 
-          warn_after: {count: 32, period: day}
+          warn_after: {count: 8, period: day}
       - name: four_week_change_project_is_fork
         loaded_at_field: data_timestamp
         freshness: 
-          warn_after: {count: 32, period: day}
+          warn_after: {count: 8, period: day}
       - name: four_week_change_project_watcher_count
         loaded_at_field: data_timestamp
         freshness: 
-          warn_after: {count: 32, period: day}
+          warn_after: {count: 8, period: day}
   # note: the prod tables listed in this sources file are used in source() functions in the models/api folder
   # we use source() instead of ref() because the prod tables are not transformed by dbt--prod schema is a nightly replication of clean
   - name: prod
