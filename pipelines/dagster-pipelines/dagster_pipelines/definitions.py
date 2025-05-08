@@ -14,7 +14,8 @@ from dagster_pipelines.assets import (
     github_project_repos_watcher_count,
     github_project_repos_is_fork,
     crypto_ecosystems_project_json,
-    latest_contributor_data
+    latest_contributor_data,
+    latest_contributor_followers
 )
 from dagster_pipelines.cleaning_assets import ( 
     all_dbt_assets, 
@@ -37,7 +38,8 @@ from dagster_pipelines.jobs import (
     project_repos_is_fork_job,
     update_crypto_ecosystems_repo_and_run_export_job,
     crypto_ecosystems_project_json_job,
-    latest_contributor_data_job
+    latest_contributor_data_job,
+    latest_contributor_followers_job
 )
 from dagster_pipelines.schedules import (
     github_project_orgs_schedule, 
@@ -58,7 +60,8 @@ from dagster_pipelines.schedules import (
     update_crypto_ecosystems_repo_and_run_export_schedule,
     crypto_ecosystems_project_json_schedule,
     update_crypto_ecosystems_raw_file_schedule,
-    latest_contributor_data_schedule
+    latest_contributor_data_schedule,
+    latest_contributor_followers_schedule
 )
 from dagster_pipelines.load_data_jobs import (
     refresh_prod_schema, 
@@ -94,7 +97,8 @@ defs = Definitions(
         github_project_repos_is_fork,
         update_crypto_ecosystems_repo_and_run_export,
         crypto_ecosystems_project_json,
-        latest_contributor_data
+        latest_contributor_data,
+        latest_contributor_followers
         ],
     jobs=[
         github_project_orgs_job, 
@@ -115,7 +119,8 @@ defs = Definitions(
         update_crypto_ecosystems_repo_and_run_export_job,
         crypto_ecosystems_project_json_job,
         update_crypto_ecosystems_raw_file_job,
-        latest_contributor_data_job
+        latest_contributor_data_job,
+        latest_contributor_followers_job
         ],
     schedules=[
         github_project_orgs_schedule, 
@@ -136,6 +141,7 @@ defs = Definitions(
         update_crypto_ecosystems_repo_and_run_export_schedule,
         crypto_ecosystems_project_json_schedule,
         update_crypto_ecosystems_raw_file_schedule,
-        latest_contributor_data_schedule
+        latest_contributor_data_schedule,
+        latest_contributor_followers_schedule
         ],
 )
