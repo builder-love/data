@@ -16,7 +16,8 @@ from dagster_pipelines.jobs import (
     process_compressed_contributors_data_job,
     update_crypto_ecosystems_repo_and_run_export_job,
     crypto_ecosystems_project_json_job,
-    latest_contributor_data_job
+    latest_contributor_data_job,
+    latest_contributor_followers_job
 )
 from dagster_pipelines.cleaning_assets import all_dbt_assets, update_crypto_ecosystems_raw_file_job
 from dagster_pipelines.load_data_jobs import refresh_prod_schema
@@ -281,6 +282,26 @@ def latest_contributor_data_schedule(context):
     
     # Log the duration of the job
     context.log.info(f"latest_contributor_data_schedule job duration: {end_time - start_time}")
+
+    return {}
+
+# create a schedule to run latest_contributor_followers_job on the 10th and 24th of each month at 10 minutes past midnight
+@schedule(
+    job=latest_contributor_followers_job,
+    cron_schedule="0 10 10,24 * *",
+    execution_timezone="America/New_York"
+)
+def latest_contributor_followers_schedule(context):
+    # Log the start time of the job
+    context.log.info(f"latest_contributor_followers_schedule job started at: {context.scheduled_execution_time}")
+    start_time = context.scheduled_execution_time
+
+    # Log the end time of the job
+    context.log.info(f"latest_contributor_followers_schedule job ended at: {context.scheduled_execution_time}")
+    end_time = context.scheduled_execution_time
+    
+    # Log the duration of the job
+    context.log.info(f"latest_contributor_followers_schedule job duration: {end_time - start_time}")
 
     return {}
 

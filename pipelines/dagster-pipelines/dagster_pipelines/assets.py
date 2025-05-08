@@ -3789,3 +3789,504 @@ def latest_contributor_data(context) -> dg.MaterializeResult:
             "count_http_502_errors": dg.MetadataValue.int(count_http_errors['count_502_errors']),
         }
     )
+
+
+###################################################################################
+### get github contributor followers
+###################################################################################
+
+# --- Helper function to fetch all paginated followers for a single user ---
+def _fetch_all_followers_for_user(context, user_node_id, start_cursor, gh_pat, api_url, headers_template, error_counts_ref, followers_per_page=100):
+    """
+    Fetches all pages of followers for a single user.
+
+    Args:
+        user_node_id (str): The Node ID of the user.
+        start_cursor (str): The endCursor from the previous follower page, or None to start from the beginning.
+        gh_pat (str): GitHub Personal Access Token.
+        api_url (str): The GitHub GraphQL API URL.
+        headers_template (dict): The base headers for API requests.
+        error_counts_ref (dict): A reference to the main error counts dictionary to update.
+        followers_per_page (int): Number of followers to fetch per page (max 100).
+
+    Returns:
+        tuple: (list_of_all_followers, final_has_next_page_status, final_end_cursor)
+    """
+    all_followers_for_this_user = []
+    current_cursor = start_cursor
+    has_next_page = True 
+    max_pagination_retries = 5 
+    max_pages_to_fetch = 1000 
+    pages_fetched = 0
+
+    print(f"    Paginating followers for user {user_node_id}, starting cursor: {current_cursor}")
+
+    while has_next_page and pages_fetched < max_pages_to_fetch:
+        paginated_query = f"""
+        query ($userId: ID!, $afterCursor: String) {{
+          node(id: $userId) {{
+            ... on User {{
+              followers(first: {followers_per_page}, after: $afterCursor) {{
+                totalCount # Still useful to know total, even if not all fetched due to limits
+                edges {{
+                  node {{
+                    id
+                    login # Retain login for follower nodes as it's key identifier
+                  }}
+                }}
+                pageInfo {{
+                  hasNextPage
+                  endCursor
+                }}
+              }}
+            }}
+          }}
+        }}
+        """
+        variables = {"userId": user_node_id, "afterCursor": current_cursor}
+        
+        request_successful_for_page = False
+        for attempt in range(max_pagination_retries):
+            try:
+                response = requests.post(api_url, json={'query': paginated_query, 'variables': variables}, headers=headers_template, timeout=30)
+                time.sleep(1) 
+                response.raise_for_status()
+                page_data = response.json()
+
+                if 'errors' in page_data and page_data['errors']:
+                    is_rate_limited_page = False
+                    for err in page_data['errors']:
+                        print(f"      GraphQL Error (Pagination for {user_node_id}): {err.get('message', str(err))}")
+                        if err.get('type') == 'RATE_LIMITED':
+                            is_rate_limited_page = True
+                            delay = (2 ** attempt) * 3 + random.uniform(0,1)
+                            delay = min(delay, 120)
+                            print(f"      Rate limited (GraphQL Pagination). Waiting {delay:.2f}s...")
+                            time.sleep(delay)
+                            break
+                    if is_rate_limited_page:
+                        continue 
+
+                if 'data' in page_data and page_data['data'].get('node') and page_data['data']['node'].get('followers'):
+                    followers_connection = page_data['data']['node']['followers']
+                    page_followers = [edge["node"] for edge in followers_connection.get("edges", []) if edge and edge.get("node")]
+                    all_followers_for_this_user.extend(page_followers)
+                    
+                    page_info = followers_connection.get("pageInfo", {})
+                    has_next_page = page_info.get("hasNextPage", False)
+                    current_cursor = page_info.get("endCursor")
+                    pages_fetched += 1
+                    request_successful_for_page = True
+                    break 
+                else:
+                    has_next_page = False 
+                    break
+
+            except requests.exceptions.HTTPError as e_page:
+                print(f"      HTTP error (Pagination for {user_node_id}, attempt {attempt + 1}): {e_page}")
+                if e_page.response is not None:
+                    if e_page.response.status_code in (502, 504):
+                        error_counts_ref["count_502_errors"] += 1
+                        delay = (2 ** attempt) * 2 + random.uniform(0,1)
+                        time.sleep(delay)
+                        continue
+                    elif e_page.response.status_code in (403, 429):
+                        error_counts_ref["count_403_errors"] += 1
+                        delay = (2 ** attempt) * 5 + random.uniform(0,1)
+                        time.sleep(min(delay,120))
+                        continue
+                if attempt == max_pagination_retries - 1:
+                    print(f"      Max retries for pagination HTTP error for user {user_node_id}.")
+                    has_next_page = False 
+                break 
+            except requests.exceptions.RequestException as e_req_page:
+                print(f"      RequestException (Pagination for {user_node_id}, attempt {attempt + 1}): {e_req_page}")
+                if attempt == max_pagination_retries - 1:
+                    has_next_page = False
+                time.sleep((2**attempt) * 2)
+            except Exception as e_unexpected_page:
+                print(f"      Unexpected error during pagination for {user_node_id}: {e_unexpected_page}")
+                print(traceback.format_exc())
+                has_next_page = False 
+                break 
+
+        if not request_successful_for_page and has_next_page: 
+            print(f"    Failed to fetch a follower page for {user_node_id} after multiple retries. Stopping pagination for this user.")
+            has_next_page = False 
+
+    if pages_fetched >= max_pages_to_fetch and has_next_page:
+        print(f"    Reached max_pages_to_fetch ({max_pages_to_fetch}) for user {user_node_id}. Some followers may not have been fetched.")
+
+    print(f"    Finished paginating followers for user {user_node_id}. Fetched {len(all_followers_for_this_user)} additional followers across {pages_fetched} pages.")
+    return all_followers_for_this_user, has_next_page, current_cursor
+
+def get_github_contributor_followers(context, node_ids, gh_pat):
+    """
+    Retrieves GitHub user ID and a list of ALL their followers (paginated),
+    using the GitHub GraphQL API.
+
+    Args:
+        node_ids: A list of GitHub contributor node IDs.
+        gh_pat: GitHub Personal Access Token with necessary scopes (e.g., read:user).
+
+    Returns:
+        A tuple containing:
+        - results (dict): A dictionary mapping each contributor node ID to another dictionary.
+        - error_counts (dict): A dictionary with counts of HTTP errors encountered.
+    """
+
+    if not node_ids:
+        return {}, {"count_403_errors": 0, "count_502_errors": 0}
+
+    api_url = "https://api.github.com/graphql"
+    headers = {"Authorization": f"bearer {gh_pat}"}
+    results = {}
+    batch_size = 50 
+    
+    cpu_time_used = 0 
+    real_time_used = 0
+    real_time_window = 60 
+    cpu_time_limit = 50   
+    error_counts = {"count_403_errors": 0, "count_502_errors": 0} 
+    batch_time_history = []
+    followers_to_fetch_per_user_page = 100
+
+    for i in range(0, len(node_ids), batch_size):
+        print(f"Processing batch: {i // batch_size + 1} ({i} - {min(i + batch_size, len(node_ids)) -1} of {len(node_ids)-1})")
+        batch_start_time = time.time()
+        current_batch_node_ids = node_ids[i:i + batch_size]
+        processed_in_batch = set()
+        query_definition_parts = []
+        query_body_parts = []
+        variables = {}
+
+        for j, node_id_value in enumerate(current_batch_node_ids):
+            variable_name = f"v{j}_nodeId"
+            node_alias = f"n{j}_node"
+            query_definition_parts.append(f"${variable_name}: ID!")
+            variables[variable_name] = node_id_value
+            # Followers will still have id and login.
+            query_body_parts.append(f"""
+                {node_alias}: node(id: ${variable_name}) {{
+                    __typename
+                    id # This is the primary ID of the user node being queried
+                    ... on User {{
+                        followers(first: {followers_to_fetch_per_user_page}) {{
+                            totalCount
+                            edges {{ node {{ id login }} }} # Followers retain id and login
+                            pageInfo {{ hasNextPage endCursor }}
+                        }}
+                    }}
+                }}""")
+
+        if not query_definition_parts:
+            continue
+
+        full_query_definition = "query (" + ", ".join(query_definition_parts) + ") {"
+        full_query_body = "".join(query_body_parts)
+        query = full_query_definition + full_query_body + "\n}"
+
+        max_retries_main_batch = 5 
+        request_successful_for_batch = False
+
+        for attempt in range(max_retries_main_batch):
+            print(f"  Batch {i // batch_size + 1}, Main Request Attempt: {attempt + 1}")
+            
+            if cpu_time_used >= cpu_time_limit and real_time_used < real_time_window:
+                delay = max(1, (cpu_time_used - cpu_time_limit) / 2)
+                print(f"  CPU time heuristic. Delaying main batch for {delay:.2f}s.")
+                time.sleep(delay)
+                cpu_time_used = real_time_used = 0
+            elif real_time_used >= real_time_window:
+                cpu_time_used = real_time_used = 0
+            
+            batch_req_start_time_inner = time.time()
+            try:
+                response = requests.post(api_url, json={'query': query, 'variables': variables}, headers=headers, timeout=60) 
+                response_time = time.time() - batch_req_start_time_inner
+                print(f"  Main batch API request time: {response_time:.2f} seconds")
+                time.sleep(2.0) 
+                
+                response.raise_for_status()
+                data = response.json()
+
+                if 'errors' in data and data['errors']:
+                    is_rate_limited = False
+                    for error in data['errors']:
+                        print(f"  GraphQL Error (Main Batch): {error.get('message', str(error))}")
+                        if error.get('type') == 'RATE_LIMITED':
+                            is_rate_limited = True
+                            retry_after_graphql = error.get('extensions', {}).get('retryAfter')
+                            if retry_after_graphql: 
+                                delay = int(retry_after_graphql) + 1
+                            elif response.headers.get('X-RateLimit-Reset'): 
+                                delay = max(1, int(response.headers.get('X-RateLimit-Reset')) - int(time.time()) + 1)
+                            else: 
+                                delay = (2 ** attempt) * 5 + random.uniform(0,1)
+                            delay = min(delay, 300)
+                            print(f"  Rate limited (GraphQL Main Batch). Waiting {delay:.2f}s...")
+                            time.sleep(delay)
+                            break 
+                    if is_rate_limited: continue
+
+                if 'data' in data:
+                    for j_node_idx, node_id in enumerate(current_batch_node_ids):
+                        if node_id in processed_in_batch: continue
+                        
+                        node_data_from_response = data['data'].get(f"n{j_node_idx}_node")
+                        if node_data_from_response:
+                            # MODIFIED: Simplified extracted_info for the main user
+                            extracted_info = {
+                                "__typename": node_data_from_response.get('__typename'),
+                                "id": node_data_from_response.get('id') # This is the main user's ID
+                            }
+                            if node_data_from_response.get('__typename') == 'User':
+                                # get followers data
+                                followers_data = node_data_from_response.get("followers")
+                                current_followers_list = []
+                                initial_total_followers = 0
+                                user_has_more_followers = False
+                                user_followers_end_cursor = None
+
+                                if followers_data:
+                                    initial_total_followers = followers_data.get("totalCount", 0)
+                                    current_followers_list = [edge["node"] for edge in followers_data.get("edges", []) if edge and edge.get("node")]
+                                    page_info = followers_data.get("pageInfo", {})
+                                    user_has_more_followers = page_info.get("hasNextPage", False)
+                                    user_followers_end_cursor = page_info.get("endCursor")
+                                
+                                extracted_info["followers_total_count"] = initial_total_followers
+                                extracted_info["followers_list"] = current_followers_list 
+                                extracted_info["followers_has_next_page"] = user_has_more_followers 
+                                extracted_info["followers_end_cursor"] = user_followers_end_cursor 
+
+                                if user_has_more_followers and initial_total_followers > len(current_followers_list): 
+                                    # Get the login of the user for the print statement, if available (it won't be unless we query it)
+                                    # For now, just use node_id in the print statement.
+                                    print(f"  User {node_id} has more followers ({initial_total_followers} total, {len(current_followers_list)} fetched). Starting pagination...")
+                                    additional_followers, final_has_next, final_cursor = _fetch_all_followers_for_user(
+                                        context, node_id, user_followers_end_cursor, gh_pat, api_url, headers, error_counts
+                                    )
+                                    extracted_info["followers_list"].extend(additional_followers)
+                                    extracted_info["followers_has_next_page"] = final_has_next 
+                                    extracted_info["followers_end_cursor"] = final_cursor 
+                                else:
+                                    extracted_info["followers_has_next_page"] = user_has_more_followers
+
+                            results[node_id] = {"data": extracted_info}
+                        else:
+                            results[node_id] = {"data": None}
+                        processed_in_batch.add(node_id)
+                    request_successful_for_batch = True 
+                    break 
+
+            except requests.exceptions.HTTPError as e:
+                print(f"  HTTP error (Main Batch {i // batch_size + 1}): {e}")
+                if e.response is not None:
+                    if e.response.status_code in (502, 504): 
+                        error_counts["count_502_errors"] +=1
+                        delay = (2 ** attempt) * 2 + random.uniform(0,1) 
+                        time.sleep(delay)
+                        continue
+                    elif e.response.status_code in (403, 429): 
+                        error_counts["count_403_errors"] += 1
+                        retry_after_header = e.response.headers.get('Retry-After')
+                        if retry_after_header: 
+                            delay = int(retry_after_header) + 1
+                        else: 
+                            delay = (2 ** attempt) * 5 + random.uniform(0,1)
+                        time.sleep(min(delay,300))
+                        continue
+                if attempt == max_retries_main_batch - 1: 
+                    break
+                else: 
+                    time.sleep((2 ** attempt) + random.uniform(0,1))
+            except requests.exceptions.RequestException as e:
+                print(f"  RequestException (Main Batch {i // batch_size + 1}): {e}")
+                if attempt == max_retries_main_batch - 1: 
+                    break
+                time.sleep((2 ** attempt) * 2 + random.uniform(0,1))
+            except Exception as e:
+                print(f"  Unexpected error (Main Batch {i // batch_size + 1}): {e}")
+                print(traceback.format_exc())
+                if attempt == max_retries_main_batch - 1: 
+                    break
+                time.sleep(5)
+
+        if not request_successful_for_batch: 
+            for node_id_in_batch in current_batch_node_ids:
+                if node_id_in_batch not in processed_in_batch:
+                    results[node_id_in_batch] = {"data": None}
+            
+        batch_processing_time = time.time() - batch_start_time
+        cpu_time_used += batch_processing_time 
+        real_time_used += batch_processing_time
+
+        batch_time_history.append(batch_processing_time)
+        if len(batch_time_history) > 1: 
+            print(f"  Average total batch processing time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
+        print(f"Batch {i // batch_size + 1} completed. Time: {batch_processing_time:.2f}s. CPU heuristic: {cpu_time_used:.2f}s. Real time: {real_time_used:.2f}s.")
+        print("-" * 40)
+    
+    return results, error_counts
+
+
+# Main function to retrieve the list of ALL contributor followers (paginated)
+# define the asset that gets followers for github contributors in the clean.latest_contributor_data table
+# use graphql api node id
+@dg.asset(
+    required_resource_keys={"cloud_sql_postgres_resource"},
+    group_name="ingestion",
+    automation_condition=dg.AutomationCondition.eager(),
+)
+def latest_contributor_followers(context) -> dg.MaterializeResult:
+
+    # Define a fallback filename (consider making it unique per run)
+    fallback_filename = f"/tmp/contributors_fallback_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.parquet"
+
+    # Get the cloud sql postgres resource
+    cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+
+    # define the github pat
+    gh_pat = os.getenv('go_blockchain_ecosystem')
+
+    # check if gh_pat is not None
+    if gh_pat is None:
+        context.log.warning("no github pat found")
+        return dg.MaterializeResult(
+            metadata={"row_count": dg.MetadataValue.int(0)}
+        )
+    
+    # Execute the query
+    with cloud_sql_engine.connect() as conn:
+
+        # query the latest_distinct_project_repos table to get the distinct repo list
+        result = conn.execute(
+            text(
+                """
+                    select distinct 
+                        lcd.contributor_node_id 
+                    from clean.latest_contributor_data lcd left join clean.latest_contributors lc
+                        on lcd.contributor_node_id = lc.contributor_node_id
+                    where lcd.is_active = true 
+                    and lower(lc.contributor_type) = 'user'
+                    and lcd.contributor_node_id is not null 
+                """
+                )
+            )
+        distinct_contributor_node_ids_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+
+    # check if df is a df and not empty
+    # if it is raise an error to the dagster context ui
+    if not isinstance(distinct_contributor_node_ids_df, pd.DataFrame) or distinct_contributor_node_ids_df.empty:
+        context.log.error("no contributor node ids found in builder love database")
+        return dg.MaterializeResult(
+            metadata={"row_count": dg.MetadataValue.int(0)}
+        )
+
+    # get the list of node_ids for sending to the function
+    node_ids = distinct_contributor_node_ids_df['contributor_node_id'].tolist()
+
+    results = get_github_contributor_followers(context, node_ids, gh_pat)
+
+    # check if results is empty
+    # if it is raise an error to the dagster context ui
+    if not results:
+        context.log.error("no results returned by get_github_contributor_followers function")
+        return dg.MaterializeResult(
+            metadata={"row_count": dg.MetadataValue.int(0)}
+        )
+
+    contributor_results = results[0]
+    count_http_errors = results[1]
+
+    # write results to pandas dataframe
+    processed_rows = []
+    for contributor_node_id, result_item in contributor_results.items():
+        # Check if the contributor node was processed successfully and has data
+        if result_item.get("data") and isinstance(result_item.get("data"), dict):
+            user_data = result_item["data"]
+
+            # Ensure it's a User type, as only Users have followers in this context
+            if user_data.get("__typename") == "User":
+                contributor_total_followers = user_data.get("followers_total_count", 0)
+                followers_list = user_data.get("followers_list", [])
+
+                if not followers_list:
+                    # If you want to record that a user has 0 followers, you could add a row here.
+                    # For an edge list (user-follower pairs), we typically only add rows for actual followers.
+                    # print(f"User {contributor_node_id} has no followers or follower list is empty.")
+                    pass
+                else:
+                    for follower in followers_list:
+                        # Each follower in the list is a dictionary, e.g., {"id": "follower_id", "login": "follower_login"}
+                        if isinstance(follower, dict): # Ensure follower item is a dictionary
+                            row_data = {
+                                "contributor_node_id": contributor_node_id,  # The user being followed
+                                "contributor_total_followers": contributor_total_followers, # Total followers of the contributor
+                                "follower_node_id": follower.get("id"),       # The ID of the follower
+                                "follower_login": follower.get("login")       # The login of the follower
+                            }
+                            processed_rows.append(row_data)
+                        else:
+                            print(f"Warning: Follower item for {contributor_node_id} is not a dictionary: {follower}")
+
+    # Create the DataFrame
+    contributor_followers_df = pd.DataFrame(processed_rows)
+    
+    # check if contributor_results_df is a df and not empty
+    # if it is raise an error to the dagster context ui
+    if not isinstance(contributor_followers_df, pd.DataFrame) or contributor_followers_df.empty:
+        context.log.error("no contributor results found")
+        return dg.MaterializeResult(
+            metadata={"row_count": dg.MetadataValue.int(0)}
+        )
+
+    # add unix datetime column
+    contributor_followers_df['data_timestamp'] = pd.Timestamp.now()
+
+    # print info about the contributor_results_df
+    print(f"contributor_followers_df:\n {contributor_followers_df.info()}")
+
+    # write the data to the latest_contributor_followers table
+    # use truncate and append to avoid removing indexes
+    try:
+        with cloud_sql_engine.connect() as conn:
+            with conn.begin():
+                # first truncate the table
+                conn.execute(text("truncate table raw.latest_contributor_followers"))
+                context.log.info("Table truncated successfully. Now attempting to load new data.")
+                # then append the data
+                contributor_followers_df.to_sql('latest_contributor_followers', conn, if_exists='append', chunksize=50000, index=False, schema='raw')
+                context.log.info("Table load successful.")
+    except Exception as e:
+        context.log.error(f"error writing to latest_contributor_followers table: {e}")
+        try:
+            # Attempt to save as Parquet
+            contributor_followers_df.to_parquet(fallback_filename, index=False)
+            context.log.info(f"Fallback Parquet file saved to: {fallback_filename}")
+        except Exception as e:
+            context.log.error(f"error writing to latest_contributor_followers table: {e}")
+        return dg.MaterializeResult(
+            metadata={"row_count": dg.MetadataValue.int(0)}
+        )
+
+    # # capture asset metadata
+    with cloud_sql_engine.connect() as conn:
+        preview_query = text("select count(*) from raw.latest_contributor_followers")
+        result = conn.execute(preview_query)
+        # Fetch all rows into a list of tuples
+        row_count = result.fetchone()[0]
+
+        preview_query = text("select * from raw.latest_contributor_followers")
+        result = conn.execute(preview_query)
+        result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+
+    return dg.MaterializeResult(
+        metadata={
+            "row_count": dg.MetadataValue.int(row_count),
+            "preview": dg.MetadataValue.md(result_df.to_markdown(index=False)),
+            "count_http_403_errors": dg.MetadataValue.int(count_http_errors['count_403_errors']),
+            "count_http_502_errors": dg.MetadataValue.int(count_http_errors['count_502_errors']),
+        }
+    )
