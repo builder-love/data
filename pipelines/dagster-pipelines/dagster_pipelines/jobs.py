@@ -11,7 +11,8 @@ from dagster_pipelines.assets import (
     github_project_repos_contributors,
     github_project_repos_watcher_count,
     github_project_repos_is_fork,
-    crypto_ecosystems_project_json
+    crypto_ecosystems_project_json,
+    latest_contributor_data
 )
 from dagster_pipelines.cleaning_assets import (
     process_compressed_contributors_data
@@ -112,6 +113,14 @@ process_compressed_contributors_data_job = dg.define_asset_job(
     selection=["process_compressed_contributors_data"],
     tags={"github_api": "True"},
     description="Extracts, decompresses, and inserts data into the clean table. Only for the latest data in the raw.project_repos_contributors table. Performs checks for outliers before refreshing clean table."
+)
+
+# create a job to run latest_contributor_data asset
+latest_contributor_data_job = dg.define_asset_job(
+    "latest_contributor_data_refresh", 
+    selection=["latest_contributor_data"],
+    tags={"github_api": "True"},
+    description="Queries the latest list of contributors to check if the contributor is still active. Overwrites the data in the raw.latest_contributor_data table"
 )
 
 # Define a Dagster job that uses the dbt assets

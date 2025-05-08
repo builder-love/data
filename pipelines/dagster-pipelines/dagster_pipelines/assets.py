@@ -531,6 +531,7 @@ def latest_active_distinct_github_project_repos(context) -> dg.MaterializeResult
         }
     )
 
+
 # define the asset that gets the stargaze count for a repo
 @dg.asset(
     required_resource_keys={"cloud_sql_postgres_resource"},
@@ -3384,5 +3385,407 @@ def github_project_repos_contributors(context) -> dg.MaterializeResult:
             "preview": dg.MetadataValue.md(preview_df.to_markdown(index=False) if not preview_df.empty else "No preview available."),
             "count_403_errors": dg.MetadataValue.int(count_403_errors_sum),
             "count_502_errors": dg.MetadataValue.int(count_502_errors_sum),
+        }
+    )
+
+
+# define the asset that gets basic information about the github contributors in the clean.latest_contributors table
+# supplemental data that was not part of the REST response when getting repo contributor data
+# use graphql api node id
+@dg.asset(
+    required_resource_keys={"cloud_sql_postgres_resource"},
+    group_name="ingestion",
+    automation_condition=dg.AutomationCondition.eager(),
+)
+def latest_contributor_data(context) -> dg.MaterializeResult:
+    # Get the cloud sql postgres resource
+    cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+
+    def get_github_contributor_data(node_ids, gh_pat):
+        """
+        Retrieves detailed GitHub contributor data using the GraphQL API.
+
+        Args:
+            node_ids: A list of GitHub contributor node IDs.
+            gh_pat: GitHub Personal Access Token with necessary scopes (e.g., read:user, user:email).
+
+        Returns:
+            A tuple containing:
+            - results (dict): A dictionary mapping each contributor node ID to another dictionary:
+                {
+                    "is_active": bool,  # True if the node was found and processed, False otherwise
+                    "data": dict or None  # Dictionary of user fields if node is a User and found,
+                                        # basic node info if found but not a User,
+                                        # or None if node not found or an error occurred.
+                }
+            - error_counts (dict): A dictionary with counts of HTTP errors encountered.
+                {
+                    "count_403_errors": int,
+                    "count_502_errors": int
+                }
+        """
+
+        if not node_ids:  # Handle empty input list
+            return {}, {"count_403_errors": 0, "count_502_errors": 0}
+
+        api_url = "https://api.github.com/graphql"
+        headers = {"Authorization": f"bearer {gh_pat}"}
+        results = {}  # Store results
+        batch_size = 100  # Reduced batch size slightly due to more complex query
+        cpu_time_used = 0
+        real_time_used = 0
+        real_time_window = 60 # seconds
+        cpu_time_limit = 50   # seconds within the real_time_window
+        count_403_errors = 0
+        count_502_errors = 0
+        batch_time_history = []
+
+        for i in range(0, len(node_ids), batch_size):
+            print(f"Processing batch: {i} - {min(i + batch_size, len(node_ids))}")
+            start_time = time.time() # Batch start time
+            current_batch_node_ids = node_ids[i:i + batch_size]
+            processed_in_batch = set() # Track success/failure per ID for the current batch
+            query_definition_parts = []
+            query_body_parts = []
+            variables = {}
+
+            # 1. Declare variables and construct the query body parts
+            for j, node_id_value in enumerate(current_batch_node_ids):
+                variable_name = f"v{j}_nodeId"
+                node_alias = f"n{j}_node"
+
+                query_definition_parts.append(f"${variable_name}: ID!")
+                variables[variable_name] = node_id_value
+
+                # Construct the part of the query body for this node
+                # Requesting specific fields for nodes of type User
+                query_body_parts.append(f"""
+                    {node_alias}: node(id: ${variable_name}) {{
+                        __typename
+                        id
+                        ... on User {{
+                            company
+                            email
+                            isBountyHunter
+                            isHireable
+                            location
+                            twitterUsername
+                            websiteUrl
+                        }}
+                    }}""")
+
+            # 2. Combine parts into the full query
+            if not query_definition_parts: # Skip if batch was empty (e.g. if node_ids was an empty list)
+                print(f"Skipping empty batch: {i} - {min(i + batch_size, len(node_ids))}")
+                continue
+
+            full_query_definition = "query (" + ", ".join(query_definition_parts) + ") {"
+            full_query_body = "".join(query_body_parts)
+            query = full_query_definition + full_query_body + "\n}"
+
+            # Rate limiting and retry logic
+            max_retries = 8
+            request_successful_for_batch = False
+
+            for attempt in range(max_retries):
+                print(f"Batch {i // batch_size + 1}, Attempt: {attempt + 1}")
+                
+                # Simple CPU/Real time throttling (can be made more sophisticated)
+                # This logic might need refinement based on actual GitHub API behavior and observed limits.
+                # The primary rate limit is usually based on points per hour, not CPU seconds.
+                if cpu_time_used >= cpu_time_limit and real_time_used < real_time_window:
+                    extra_delay = (cpu_time_used - cpu_time_limit) / 2 # Heuristic
+                    extra_delay = max(1, extra_delay) 
+                    print(f"CPU time limit heuristic reached. Delaying for {extra_delay:.2f} seconds.")
+                    time.sleep(extra_delay)
+                    # Reset window counters after deliberate delay
+                    cpu_time_used = 0
+                    real_time_used = 0
+                    start_time = time.time() # Reset batch timer
+                elif real_time_used >= real_time_window:
+                    print(f"Real time window limit reached. Resetting counters.")
+                    cpu_time_used = 0
+                    real_time_used = 0
+                    # No explicit sleep here, assuming next batch will start a new window.
+                    # Or, if this is within a batch retry, the standard retry delay will apply.
+
+
+                batch_request_start_time = time.time() # For measuring individual request time
+                
+                try:
+                    response = requests.post(api_url, json={'query': query, 'variables': variables}, headers=headers, timeout=30) # Added timeout
+                    response_time = time.time() - batch_request_start_time
+                    print(f"API request time: {response_time:.2f} seconds")
+
+                    # Consistent delay after each request to be polite to the API
+                    time.sleep(2.5) 
+                    
+                    response.raise_for_status() # Check for HTTP errors like 4xx, 5xx
+                    data = response.json()
+
+                    if 'errors' in data and data['errors']:
+                        is_rate_limited = False
+                        for error in data['errors']:
+                            print(f"GraphQL Error: {error.get('message', str(error))}")
+                            if error.get('type') == 'RATE_LIMITED':
+                                is_rate_limited = True
+                                # Try to get 'Retry-After' from GraphQL error extensions if available,
+                                # otherwise use X-RateLimit-Reset header.
+                                retry_after_graphql = error.get('extensions', {}).get('retryAfter')
+                                if retry_after_graphql:
+                                    delay = int(retry_after_graphql) + 1 # Add a small buffer
+                                    print(f"GraphQL Rate Limited. Suggested retry after {delay} seconds.")
+                                elif response.headers.get('X-RateLimit-Reset'):
+                                    reset_at = int(response.headers.get('X-RateLimit-Reset'))
+                                    delay = max(1, reset_at - int(time.time()) + 1)
+                                else: # Fallback if no specific retry time is given
+                                    delay = (2 ** attempt) * 5 + random.uniform(0,1) # Exponential backoff
+                                
+                                delay = min(delay, 300) # Cap delay
+                                print(f"Rate limited (GraphQL). Waiting for {delay:.2f} seconds...")
+                                time.sleep(delay)
+                                break # Break from error loop to retry batch
+                        if is_rate_limited:
+                            continue # Retry the current batch
+
+                    if 'data' in data:
+                        for j, node_id in enumerate(current_batch_node_ids):
+                            if node_id in processed_in_batch:
+                                continue
+                            
+                            node_data_from_response = data['data'].get(f"n{j}_node")
+                            
+                            if node_data_from_response:
+                                extracted_info = {
+                                    "__typename": node_data_from_response.get('__typename'),
+                                    "id": node_data_from_response.get('id')
+                                }
+                                if node_data_from_response.get('__typename') == 'User':
+                                    extracted_info.update({
+                                        "company": node_data_from_response.get("company"),
+                                        "email": node_data_from_response.get("email"),
+                                        "is_bounty_hunter": node_data_from_response.get("isBountyHunter"),
+                                        "is_hireable": node_data_from_response.get("isHireable"),
+                                        "location": node_data_from_response.get("location"),
+                                        "twitter_username": node_data_from_response.get("twitterUsername"),
+                                        "website_url": node_data_from_response.get("websiteUrl"),
+                                    })
+                                results[node_id] = {"is_active": True, "data": extracted_info}
+                            else:
+                                # Node ID was in query, but no data returned for it (e.g. ID doesn't exist, or permission issue for this specific node)
+                                print(f"Data for node_id {node_id} is null or missing in response.")
+                                results[node_id] = {"is_active": False, "data": None} # Mark as inactive if not found
+                            
+                            processed_in_batch.add(node_id)
+                        request_successful_for_batch = True # All nodes in batch processed from response
+                        break # Successfully processed batch, exit retry loop
+
+                except requests.exceptions.HTTPError as e:
+                    print(f"HTTP error on attempt {attempt + 1} for batch {i // batch_size + 1}: {e}")
+                    print(f"Status Code: {e.response.status_code if e.response else 'N/A'}")
+                    print(f"Response content: {e.response.text if e.response else 'N/A'}")
+
+                    rate_limit_info = {
+                        'remaining': e.response.headers.get('x-ratelimit-remaining') if e.response else 'N/A',
+                        'used': e.response.headers.get('x-ratelimit-used') if e.response else 'N/A',
+                        'reset': e.response.headers.get('x-ratelimit-reset') if e.response else 'N/A',
+                        'retry_after_header': e.response.headers.get('Retry-After') if e.response else 'N/A'
+                    }
+                    print(f"Rate Limit Info (from headers): {rate_limit_info}")
+
+                    if e.response is not None:
+                        if e.response.status_code in (502, 504): # Retry on Bad Gateway/Gateway Timeout
+                            count_502_errors +=1
+                            delay = (2 ** attempt) * 2 + random.uniform(0, 1) # Exponential backoff
+                            print(f"502/504 Error. Waiting for {delay:.2f} seconds...")
+                            time.sleep(delay)
+                            continue
+                        elif e.response.status_code in (403, 429): # Rate limited by HTTP status
+                            count_403_errors += 1
+                            retry_after_header = e.response.headers.get('Retry-After')
+                            if retry_after_header:
+                                delay = int(retry_after_header) + 1 # Add a small buffer
+                                print(f"Rate limited by HTTP {e.response.status_code} (Retry-After header). Waiting for {delay} seconds...")
+                            else:
+                                delay = (2 ** attempt) * 5 + random.uniform(0, 1) # Exponential backoff
+                                print(f"Rate limited by HTTP {e.response.status_code} (X-RateLimit headers). Waiting for {delay:.2f} seconds...")
+                            
+                            delay = min(delay, 300) # Cap delay
+                            time.sleep(delay)
+                            continue
+                    # For other HTTP errors, or if max retries reached
+                    if attempt == max_retries - 1:
+                        print(f"Max retries reached or unrecoverable HTTP error for batch {i // batch_size + 1}.")
+                        break # Exit retry loop for this batch
+                    else: # General backoff for other HTTP errors if retrying
+                        delay = (2 ** attempt) + random.uniform(0, 1)
+                        time.sleep(delay)
+
+
+                except requests.exceptions.RequestException as e: # Other network issues (timeout, connection error)
+                    print(f"RequestException on attempt {attempt + 1} for batch {i // batch_size + 1}: {e}")
+                    if attempt == max_retries - 1:
+                        print(f"Max retries reached for RequestException for batch {i // batch_size + 1}.")
+                        break
+                    delay = (2 ** attempt) * 2 + random.uniform(0, 1) # Exponential backoff
+                    print(f"Waiting for {delay:.2f} seconds...")
+                    time.sleep(delay)
+                
+                except Exception as e: # Catch any other unexpected errors during request/response processing
+                    print(f"An unexpected error occurred on attempt {attempt + 1} for batch {i // batch_size + 1}: {e}")
+                    if attempt == max_retries - 1:
+                        print(f"Max retries reached due to unexpected error for batch {i // batch_size + 1}.")
+                        break
+                    # Basic delay, or could break immediately depending on error type
+                    time.sleep(5)
+
+
+            # After all retries for a batch, mark any unprocessed node_ids in that batch as inactive
+            if not request_successful_for_batch: # If loop exited due to max_retries or break without success
+                for node_id_in_batch in current_batch_node_ids:
+                    if node_id_in_batch not in processed_in_batch:
+                        print(f"Node {node_id_in_batch} in batch {i // batch_size + 1} failed all retries or was unrecoverable.")
+                        results[node_id_in_batch] = {"is_active": False, "data": None}
+            
+            # Timing and CPU/Real time window update
+            batch_processing_time = time.time() - start_time # Total time for batch including retries/delays
+            # The `time_since_start` variable from your original code was measuring single request time.
+            # `response_time` above measures the actual `requests.post` call.
+            # The CPU/Real time logic might need to be based on `response_time` rather than total batch time if
+            # the goal is to throttle based on actual API interaction time.
+            # For simplicity, using batch_processing_time for real_time_used, and response_time (if available) for cpu_time_used.
+            # This part of the original logic is a heuristic and might need careful tuning.
+            # Let's assume `cpu_time_used` refers to the time the script was busy processing/waiting for API, not actual CPU cycles.
+            # If `response_time` was captured in the last successful try:
+            # cpu_time_used += response_time # This is not defined if all attempts failed before getting response_time
+            # A simpler approach for the heuristic:
+            cpu_time_used += batch_processing_time # Or a fraction of it, if batch_processing_time includes long sleeps
+            real_time_used += batch_processing_time
+
+            batch_time_history.append(batch_processing_time)
+            if batch_time_history: # Avoid division by zero if list is empty (though it shouldn't be here)
+                # Only print average if more than a few batches processed for meaningful avg
+                if len(batch_time_history) > 3:
+                    print(f"Average batch processing time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
+            print(f"Batch {i // batch_size + 1} completed. Total node_ids to process: {len(node_ids)}")
+            print(f"Time taken to process batch: {batch_processing_time:.2f} seconds")
+            print(f"Cumulative 'CPU time used' heuristic in window: {cpu_time_used:.2f} seconds")
+            print(f"Cumulative 'Real time used' in window: {real_time_used:.2f} seconds")
+            print("-" * 30)
+
+
+        error_counts = {"count_403_errors": count_403_errors, "count_502_errors": count_502_errors}
+        return results, error_counts
+
+    # Execute the query
+    with cloud_sql_engine.connect() as conn:
+
+        # query the latest_distinct_project_repos table to get the distinct repo list
+        result = conn.execute(
+            text("""select distinct contributor_node_id from clean.latest_contributors where contributor_node_id is not null""")
+            )
+        distinct_contributor_node_ids_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+
+    # check if df is a df and not empty
+    # if it is raise an error to the dagster context ui
+    if not isinstance(distinct_contributor_node_ids_df, pd.DataFrame) or distinct_contributor_node_ids_df.empty:
+        context.log.error("no contributor node ids found in builder love database")
+        return dg.MaterializeResult(
+            metadata={"row_count": dg.MetadataValue.int(0)}
+        )
+
+    # get the list of node_ids for sending to the function
+    node_ids = distinct_contributor_node_ids_df['contributor_node_id'].tolist()
+
+    # get github pat
+    gh_pat = os.getenv('go_blockchain_ecosystem')
+
+    # check if gh_pat is not None
+    if gh_pat is None:
+        context.log.warning("no github pat found")
+        return dg.MaterializeResult(
+            metadata={"row_count": dg.MetadataValue.int(0)}
+        )
+
+    results = get_github_contributor_data(node_ids, gh_pat)
+
+    # check if results is empty
+    # if it is raise an error to the dagster context ui
+    if not results:
+        context.log.error("no results returned by get_github_contributor_data function")
+        return dg.MaterializeResult(
+            metadata={"row_count": dg.MetadataValue.int(0)}
+        )
+
+    contributor_results = results[0]
+    count_http_errors = results[1]
+
+    # write results to pandas dataframe
+    processed_rows = []
+    for node_id, result_item in contributor_results.items():
+        # Start with the top-level information
+        row_data = {
+            "contributor_node_id": node_id,
+            "is_active": result_item["is_active"]
+        }
+        # If the 'data' field exists and is a dictionary, unpack its contents
+        nested_data = result_item.get("data")
+        if isinstance(nested_data, dict):
+            data_to_add = nested_data.copy()
+            data_to_add.pop('id', None) # Removes the 'id' from the nested dict before updating
+            data_to_add.pop('__typename', None) # Removes the '__typename' from the nested dict before updating
+            row_data.update(data_to_add)
+        processed_rows.append(row_data)
+
+    contributor_results_df = pd.DataFrame(processed_rows)
+    
+    # check if contributor_results_df is a df and not empty
+    # if it is raise an error to the dagster context ui
+    if not isinstance(contributor_results_df, pd.DataFrame) or contributor_results_df.empty:
+        context.log.error("no contributor results found")
+        return dg.MaterializeResult(
+            metadata={"row_count": dg.MetadataValue.int(0)}
+        )
+
+    # add unix datetime column
+    contributor_results_df['data_timestamp'] = pd.Timestamp.now()
+
+    # print info about the contributor_results_df
+    print(f"contributor_results_df:\n {contributor_results_df.info()}")
+
+    # write the data to the latest_inactive_contributors table
+    # use truncate and append to avoid removing indexes
+    try:
+        with cloud_sql_engine.connect() as conn:
+            with conn.begin():
+                # first truncate the table
+                conn.execute(text("truncate table raw.latest_contributor_data"))
+                context.log.info("Table truncated successfully. Now attempting to load new data.")
+                # then append the data
+                contributor_results_df.to_sql('latest_contributor_data', conn, if_exists='append', index=False, schema='raw')
+                context.log.info("Table load successful.")
+    except Exception as e:
+        context.log.error(f"error writing to latest_contributor_data table: {e}")
+        return dg.MaterializeResult(
+            metadata={"row_count": dg.MetadataValue.int(0)}
+        )
+
+    # # capture asset metadata
+    with cloud_sql_engine.connect() as conn:
+        preview_query = text("select count(*) from raw.latest_contributor_data")
+        result = conn.execute(preview_query)
+        # Fetch all rows into a list of tuples
+        row_count = result.fetchone()[0]
+
+        preview_query = text("select * from raw.latest_contributor_data")
+        result = conn.execute(preview_query)
+        result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+
+    return dg.MaterializeResult(
+        metadata={
+            "row_count": dg.MetadataValue.int(row_count),
+            "preview": dg.MetadataValue.md(result_df.to_markdown(index=False)),
+            "count_http_403_errors": dg.MetadataValue.int(count_http_errors['count_403_errors']),
+            "count_http_502_errors": dg.MetadataValue.int(count_http_errors['count_502_errors']),
         }
     )

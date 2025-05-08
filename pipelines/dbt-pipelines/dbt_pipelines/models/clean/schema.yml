@@ -451,16 +451,28 @@ models:
       - dbt_expectations.expect_table_row_count_to_be_between:
           min_value: 250000
           max_value: 1000000
-  - name: latest_inactive_contributors
+  - name: latest_contributor_data
     columns:
       - name: contributor_node_id
         tests:
           - not_null
-      - name: is_inactive
+      - name: is_active
         tests:
-          - not_null
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: boolean
+      - name: company
+      - name: email
+      - name: is_bounty_hunter
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: boolean
+      - name: is_hireable
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: boolean
+      - name: location
+      - name: twitter_username
+      - name: website_url
       - name: data_timestamp
         tests:
           - not_null
@@ -651,6 +663,53 @@ models:
     tests:
       - unique_combination_of_columns:
           column_names: [repo, language_name, data_timestamp]
+  - name: latest_project_repos_dominant_language
+    columns:
+      - name: repo
+        tests:
+          - not_null
+      - name: dominant_language
+        tests:
+          - not_null
+      - name: dominant_language_bytes
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: dominant_language_percentage
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+    tests:
+      - unique_combination_of_columns:
+          column_names: [repo, data_timestamp]
+      - check_row_count_stability:
+          lower_threshold_factor: 0.50 # New count should not be less than 50% of old count
+          upper_threshold_factor: 1.50 # New count should not be more than 150% of old count
+          min_rows_for_check: 100  
+  - name: latest_contributor_dominant_language
+    columns:
+      - name: contributor_unique_id_builder_love
+        tests:
+          - not_null
+      - name: dominant_language
+      - name: repo_count
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+    tests:
+      - unique_combination_of_columns:
+          column_names: [contributor_unique_id_builder_love, data_timestamp]
+      - check_row_count_stability:
+          lower_threshold_factor: 0.50 # New count should not be less than 50% of old count
+          upper_threshold_factor: 1.50 # New count should not be more than 150% of old count
+          min_rows_for_check: 100  
   - name: latest_project_contributor_count
     columns:
       - name: project_title
@@ -880,7 +939,10 @@ models:
     columns:
       - name: contributor_login
         tests:
-          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
+      - name: dominant_language
+        tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: text
       - name: contributor_unique_id_builder_love
@@ -888,21 +950,34 @@ models:
           - not_null
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: text
+      - name: contributor_html_url
       - name: total_repos_contributed_to
         tests:
-          - not_null
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: bigint
       - name: total_contributions
         tests:
-          - not_null
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: bigint
-      - name: repo_quality_weighted_contribution_score
+      - name: total_repo_quality_weighted_contribution_score
         tests:
-          - not_null
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: numeric
+      - name: total_og_repo_quality_weighted_contribution_score
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: normalized_total_repos_contributed_to
+      - name: normalized_total_contributions
+      - name: normalized_total_repo_quality_weighted_contribution_score
+      - name: normalized_total_og_repo_quality_weighted_contribution_score
+      - name: weighted_score
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: weighted_score_index
+      - name: contributor_rank
+      - name: quartile_bucket
       - name: data_timestamp
         tests:
           - not_null
@@ -910,7 +985,7 @@ models:
               column_type: timestamp without time zone
     tests:
       - unique_combination_of_columns:
-          column_names: [contributor_login, data_timestamp]
+          column_names: [contributor_unique_id_builder_love, data_timestamp]
   - name: four_week_change_project_repos_commit_count
     columns:
       - name: repo
