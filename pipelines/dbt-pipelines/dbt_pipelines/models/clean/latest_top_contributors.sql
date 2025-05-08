@@ -2,14 +2,17 @@
 -- create a table that scores the latest contributors by activity
 -- sources: latest_project_repos_contributors, latest_contributors
 -- referenced models: latest_project_repos, latest_top_projects
+-- use pre hooks to set work_mem and temp_buffers to 350MB and 175MB respectively
 
 {{ config(
     materialized='table',
     unique_key='contributor_unique_id_builder_love || data_timestamp',
-    tags=['latest_clean_data']
+    tags=['latest_clean_data'],
+    pre_hook="SET work_mem = '500MB'; SET temp_buffers = '200MB';",
+    post_hook="RESET work_mem; RESET temp_buffers;"
 ) }}
 
-with non_bot_contributors as (
+with active_non_bot_contributors as (
   select 
     repo,
     lprc.contributor_unique_id_builder_love,
@@ -18,9 +21,11 @@ with non_bot_contributors as (
     lprc.data_timestamp
 
   from {{ source('clean','latest_project_repos_contributors') }} lprc inner join {{ source('clean','latest_contributors')}} lc
-    on lprc.contributor_unique_id_builder_love = lc.contributor_unique_id_builder_love
+    on lprc.contributor_unique_id_builder_love = lc.contributor_unique_id_builder_love left join {{ ref('latest_contributor_data')}} lcd
+    on lc.contributor_node_id = lcd.contributor_node_id
 
-  where lower(contributor_type) <> 'bot' and contributor_unique_id_builder_love not in('|')
+  where lower(lc.contributor_type) <> 'bot' 
+  and (lcd.is_active = TRUE or lcd.is_active is NULL) -- drop false values, inidcating inactive
 ),
 
 repo_quality_weight_score as (
@@ -32,7 +37,7 @@ repo_quality_weight_score as (
     2 ^ (1 - ltr.weighted_score) as repo_quality_weight,
     cr.contributor_contributions * (2 ^ (1 - ltr.weighted_score)) as repo_quality_weighted_contribution_score
 
-  from {{ref('latest_top_repos')}} ltr left join non_bot_contributors cr 
+  from {{ref('latest_top_repos')}} ltr left join active_non_bot_contributors cr 
     on ltr.repo = cr.repo
 ),
 
@@ -50,19 +55,127 @@ contributor_repo_activity as (
     count(distinct repo) total_repos_contributed_to,
     sum(contributor_contributions) total_contributions
 
-  from non_bot_contributors
+  from active_non_bot_contributors
 
   group by 1
-)
+),
 
-select 
-  contributor_login,
-  lc.contributor_unique_id_builder_love,
-  total_repos_contributed_to,
-  total_contributions,
-  total_repo_quality_weighted_contribution_score,
-  lc.data_timestamp
+-- get non-forked (og) repo metrics by contributor
+
+contributors_og_repos as (
+  select 
+    c.repo,
+    c.contributor_unique_id_builder_love,
+    c.contributor_contributions
+
+  from active_non_bot_contributors c inner join {{ ref('latest_project_repos_is_fork') }} f
+    on c.repo = f.repo 
+
+  where f.is_fork = FALSE 
+),
+
+top_og_repo_contributors as (
+  select 
+    c.contributor_unique_id_builder_love,
+    sum(c.contributor_contributions * (2 ^ (1 - COALESCE(ltr.weighted_score,0)))) total_og_repo_quality_weighted_contribution_score
+
+  from contributors_og_repos c left join {{ref('latest_top_repos')}} ltr
+    on c.repo = ltr.repo
+
+  group by 1
+),
+
+top_contributor_metrics as (
+  select 
+    contributor_login,
+    lcdl.dominant_language,
+    lc.contributor_unique_id_builder_love,
+    total_repos_contributed_to,
+    total_contributions,
+    total_repo_quality_weighted_contribution_score,
+    total_og_repo_quality_weighted_contribution_score,
+    lc.contributor_html_url,
+    lc.data_timestamp
 
 from {{ source('clean','latest_contributors')}} lc left join sum_repo_quality_weight sr
   on lc.contributor_unique_id_builder_love = sr.contributor_unique_id_builder_love left join contributor_repo_activity cra
-  on lc.contributor_unique_id_builder_love = cra.contributor_unique_id_builder_love
+  on lc.contributor_unique_id_builder_love = cra.contributor_unique_id_builder_love left join {{ ref('latest_contributor_dominant_language') }} lcdl
+  on lc.contributor_unique_id_builder_love = lcdl.contributor_unique_id_builder_love left join top_og_repo_contributors torc
+  on lc.contributor_unique_id_builder_love = torc.contributor_unique_id_builder_love
+),
+
+normalized_top_contributors as (
+  select 
+    contributor_login,
+    contributor_unique_id_builder_love,
+    contributor_html_url,
+    dominant_language,
+    total_repos_contributed_to,
+    total_contributions,
+    total_repo_quality_weighted_contribution_score,
+    total_og_repo_quality_weighted_contribution_score,
+    (total_repos_contributed_to - MIN(total_repos_contributed_to) OVER ())::NUMERIC / NULLIF((MAX(total_repos_contributed_to) OVER () - MIN(total_repos_contributed_to) OVER ())::NUMERIC,0) AS normalized_total_repos_contributed_to,
+    (total_contributions - MIN(total_contributions) OVER ())::NUMERIC / NULLIF((MAX(total_contributions) OVER () - MIN(total_contributions) OVER ())::NUMERIC,0) AS normalized_total_contributions,
+    (total_repo_quality_weighted_contribution_score - MIN(total_repo_quality_weighted_contribution_score) OVER ())::NUMERIC / NULLIF((MAX(total_repo_quality_weighted_contribution_score) OVER () - MIN(total_repo_quality_weighted_contribution_score) OVER ())::NUMERIC,0) AS normalized_total_repo_quality_weighted_contribution_score,
+    (total_og_repo_quality_weighted_contribution_score - MIN(total_og_repo_quality_weighted_contribution_score) OVER ())::NUMERIC / NULLIF((MAX(total_og_repo_quality_weighted_contribution_score) OVER () - MIN(total_og_repo_quality_weighted_contribution_score) OVER ())::NUMERIC,0) AS normalized_total_og_repo_quality_weighted_contribution_score,
+    data_timestamp
+
+  from top_contributor_metrics
+),
+
+ranked_contributors as (
+  select 
+    contributor_login,
+    dominant_language,
+    contributor_unique_id_builder_love,
+    contributor_html_url,
+    total_repos_contributed_to,
+    total_contributions,
+    total_repo_quality_weighted_contribution_score,
+    total_og_repo_quality_weighted_contribution_score,
+    normalized_total_repos_contributed_to,
+    normalized_total_contributions,
+    normalized_total_repo_quality_weighted_contribution_score,
+    normalized_total_og_repo_quality_weighted_contribution_score,
+    (
+      (coalesce(normalized_total_repos_contributed_to,0) * .25) + 
+      (coalesce(normalized_total_contributions,0) * .25) +
+      (coalesce(normalized_total_repo_quality_weighted_contribution_score,0) * .35) +
+      (coalesce(normalized_total_og_repo_quality_weighted_contribution_score,0) * .15)
+    ) as weighted_score,
+    data_timestamp
+  
+  from normalized_top_contributors
+
+),
+
+final_ranking as (
+  select 
+    contributor_login,
+    dominant_language,
+    contributor_unique_id_builder_love,
+    contributor_html_url,
+    total_repos_contributed_to::bigint,
+    total_contributions::bigint,
+    total_repo_quality_weighted_contribution_score::numeric,
+    total_og_repo_quality_weighted_contribution_score::numeric,
+    normalized_total_repos_contributed_to::numeric,
+    normalized_total_contributions::numeric,
+    normalized_total_repo_quality_weighted_contribution_score::numeric,
+    normalized_total_og_repo_quality_weighted_contribution_score::numeric,
+    weighted_score::numeric,
+    (weighted_score * 100) as weighted_score_index,
+    RANK() OVER (
+      ORDER BY weighted_score DESC
+    ) AS contributor_rank,
+    NTILE(4) OVER (
+      ORDER BY weighted_score DESC
+    ) AS quartile_bucket,
+    data_timestamp
+
+  from ranked_contributors
+)
+
+select * 
+from final_ranking
+order by weighted_score desc
