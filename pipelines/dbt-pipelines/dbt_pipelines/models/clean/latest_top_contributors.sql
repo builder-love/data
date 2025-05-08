@@ -138,10 +138,10 @@ ranked_contributors as (
     normalized_total_repo_quality_weighted_contribution_score,
     normalized_total_og_repo_quality_weighted_contribution_score,
     (
-      (coalesce(normalized_total_repos_contributed_to,0) * .25) + 
+      (coalesce(normalized_total_repos_contributed_to,0) * .05) + 
       (coalesce(normalized_total_contributions,0) * .25) +
-      (coalesce(normalized_total_repo_quality_weighted_contribution_score,0) * .35) +
-      (coalesce(normalized_total_og_repo_quality_weighted_contribution_score,0) * .15)
+      (coalesce(normalized_total_repo_quality_weighted_contribution_score,0) * .45) +
+      (coalesce(normalized_total_og_repo_quality_weighted_contribution_score,0) * .25)
     ) as weighted_score,
     data_timestamp
   
