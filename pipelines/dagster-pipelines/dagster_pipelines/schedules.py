@@ -285,10 +285,10 @@ def latest_contributor_data_schedule(context):
 
     return {}
 
-# create a schedule to run latest_contributor_followers_job on the 10th and 24th of each month at 10 minutes past midnight
+# create a schedule to run latest_contributor_followers_job on the 9th of each month at 10 minutes past midnight
 @schedule(
     job=latest_contributor_followers_job,
-    cron_schedule="0 10 10,24 * *",
+    cron_schedule="0 10 9 * *",
     execution_timezone="America/New_York"
 )
 def latest_contributor_followers_schedule(context):
