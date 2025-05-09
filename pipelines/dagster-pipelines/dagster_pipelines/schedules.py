@@ -17,7 +17,8 @@ from dagster_pipelines.jobs import (
     update_crypto_ecosystems_repo_and_run_export_job,
     crypto_ecosystems_project_json_job,
     latest_contributor_data_job,
-    latest_contributor_followers_job
+    latest_contributor_followers_job,
+    latest_contributor_activity_job
 )
 from dagster_pipelines.cleaning_assets import all_dbt_assets, update_crypto_ecosystems_raw_file_job
 from dagster_pipelines.load_data_jobs import refresh_prod_schema
@@ -304,6 +305,28 @@ def latest_contributor_followers_schedule(context):
     context.log.info(f"latest_contributor_followers_schedule job duration: {end_time - start_time}")
 
     return {}
+
+# create a schedule to run latest_contributor_activity_job on the 9th of each month at 10 minutes past midnight
+@schedule(
+    job=latest_contributor_activity_job,
+    cron_schedule="10 0 9 * *",
+    execution_timezone="America/New_York"
+)
+def latest_contributor_activity_schedule(context):
+    # Log the start time of the job
+    context.log.info(f"latest_contributor_activity_schedule job started at: {context.scheduled_execution_time}")
+    start_time = context.scheduled_execution_time
+
+    # Log the end time of the job
+    context.log.info(f"latest_contributor_activity_schedule job ended at: {context.scheduled_execution_time}")
+    end_time = context.scheduled_execution_time
+    
+    # Log the duration of the job
+    context.log.info(f"latest_contributor_activity_schedule job duration: {end_time - start_time}")
+
+    return {}
+
+
 
 # create a schedule to run project_repos_is_fork_job every 7 days at midnight
 @schedule(
