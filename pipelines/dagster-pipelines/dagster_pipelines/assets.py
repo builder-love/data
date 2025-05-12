@@ -15,6 +15,108 @@ import psycopg2
 from urllib.parse import urlparse
 from datetime import datetime, timezone
 
+########################################################################################################################
+# lookup and swap github legacy contributor node id for the new format contributor node id
+########################################################################################################################
+
+def contributor_node_id_swap(context, df_contributors: pd.DataFrame, cloud_sql_engine) -> pd.DataFrame:
+    """
+    Swaps legacy GitHub contributor node IDs in a DataFrame for the new format IDs
+    by looking up values in the clean.latest_contributor_data table.
+
+    Args:
+        context: The Dagster context object (for logging).
+        df_contributors: Input DataFrame with a 'contributor_node_id' column
+                         that might contain legacy IDs.
+        cloud_sql_engine: SQLAlchemy engine connected to the database.
+
+    Returns:
+        A pandas DataFrame with the 'contributor_node_id' column updated
+        to the new format where applicable.
+    """
+    context.log.info("Starting contributor node ID swap process.")
+
+    # --- Input Validation ---
+    if 'contributor_node_id' not in df_contributors.columns:
+         context.log.error("Input dataframe df_contributors is missing the 'contributor_node_id' column. Skipping swap.")
+         return df_contributors
+
+    if df_contributors.empty:
+        context.log.info("Input dataframe df_contributors is empty. Skipping swap.")
+        return df_contributors
+
+    # --- Read Lookup Data ---
+    try:
+        # Construct the SQL query using sqlalchemy.text to handle potential schema names safely
+        lookup_query = text("""
+            SELECT DISTINCT
+                contributor_node_id,       -- New format ID
+                contributor_node_id_legacy -- Legacy format ID
+            FROM clean.latest_contributor_data
+            WHERE contributor_node_id_legacy IS NOT NULL
+              AND contributor_node_id IS NOT NULL
+        """)
+        # Read only necessary columns and distinct pairs
+        df_lookup = pd.read_sql(lookup_query, cloud_sql_engine)
+
+        context.log.info(f"Successfully read {len(df_lookup)} distinct lookup rows from clean.latest_contributor_data.")
+
+        # Handle case where lookup table is empty or missing columns (though query selects them)
+        if df_lookup.empty:
+            context.log.warning("Lookup table clean.latest_contributor_data returned no data or no relevant pairs. Skipping swap.")
+            return df_contributors
+        if 'contributor_node_id' not in df_lookup.columns or 'contributor_node_id_legacy' not in df_lookup.columns:
+             context.log.error("Lookup table clean.latest_contributor_data is missing required columns after query. Skipping swap.")
+             return df_contributors
+
+    except Exception as e:
+        context.log.error(f"Failed to read from clean.latest_contributor_data: {e}. Skipping swap.")
+        # Depending on requirements, you might want to raise the exception instead
+        # raise e
+        return df_contributors
+
+    # --- Perform the Swap using Merge ---
+
+    # Rename the new ID column in the lookup table to avoid naming conflicts after merge
+    df_lookup = df_lookup.rename(columns={'contributor_node_id': 'contributor_node_id_new'})
+
+    # Perform a left merge: Keep all rows from df_contributors.
+    # Match df_contributors.contributor_node_id (potentially legacy) with df_lookup.contributor_node_id_legacy
+    context.log.info(f"Performing left merge on 'contributor_node_id' (activity) == 'contributor_node_id_legacy' (lookup). Input df shape: {df_contributors.shape}")
+    df_merged = pd.merge(
+        df_contributors,
+        df_lookup[['contributor_node_id_new', 'contributor_node_id_legacy']], # Only merge necessary lookup columns
+        how='left',
+        left_on='contributor_node_id',
+        right_on='contributor_node_id_legacy'
+    )
+    context.log.info(f"Merge complete. Merged DataFrame shape: {df_merged.shape}")
+
+    # Identify rows where a swap should occur (a new ID was found via the legacy link)
+    swap_condition = df_merged['contributor_node_id_new'].notna()
+    num_swapped = swap_condition.sum()
+    context.log.info(f"Found {num_swapped} rows where contributor_node_id can be updated.")
+
+    # Update the original 'contributor_node_id' column
+    # If contributor_node_id_new is not null (match found), use it. Otherwise, keep the original.
+    df_merged['contributor_node_id'] = np.where(
+        swap_condition,                          # Condition: New ID found?
+        df_merged['contributor_node_id_new'],    # Value if True: Use the new ID
+        df_merged['contributor_node_id']         # Value if False: Keep original ID
+    )
+
+    # --- Cleanup and Return ---
+    # Drop the temporary columns added by the merge
+    # Use errors='ignore' in case the columns weren't added (e.g., if lookup was empty)
+    df_result = df_merged.drop(columns=['contributor_node_id_new', 'contributor_node_id_legacy'], errors='ignore')
+
+    context.log.info(f"Contributor node ID swap process completed. Final DataFrame shape: {df_result.shape}")
+
+    return df_result
+
+
+
+
 # function to get the most recently retrieved local copy of crypto ecosystems export.jsonl
 def get_crypto_ecosystems_project_json(context):
 
@@ -4200,13 +4302,14 @@ def latest_contributor_followers(context) -> dg.MaterializeResult:
         result = conn.execute(
             text(
                 """
-                    select distinct 
-                        lcd.contributor_node_id 
-                    from clean.latest_contributor_data lcd left join clean.latest_contributors lc
-                        on lcd.contributor_node_id = lc.contributor_node_id
-                    where lcd.is_active = true 
-                    and lower(lc.contributor_type) = 'user'
-                    and lcd.contributor_node_id is not null 
+                    select distinct lcd.contributor_node_id
+                    from clean.latest_contributor_data lcd left join clean.latest_contributor_activity lca
+                        on lcd.contributor_node_id = lca.contributor_node_id left join clean.latest_contributors lc
+                        on lcd.contributor_unique_id_builder_love = lc.contributor_unique_id_builder_love
+                    where lcd.contributor_node_id is not null
+                    and lca.has_contributed_in_last_year = true
+                    and lcd.is_active = true
+                    and lower(lc.contributor_type) not in('bot', 'anonymous')
                 """
                 )
             )
@@ -4280,6 +4383,16 @@ def latest_contributor_followers(context) -> dg.MaterializeResult:
 
     # add unix datetime column
     contributor_followers_df['data_timestamp'] = pd.Timestamp.now()
+
+    # swap the github legacy contributor node id for the new format contributor node id
+    contributor_followers_df = contributor_node_id_swap(context, contributor_followers_df, cloud_sql_engine)
+
+    # check results of swap
+    if not isinstance(contributor_followers_df, pd.DataFrame) or contributor_followers_df.empty:
+        context.log.error("no contributor results found after swapping legacy contributor node id for new format contributor node id")
+        return dg.MaterializeResult(
+            metadata={"row_count": dg.MetadataValue.int(0)}
+        )
 
     # print info about the contributor_results_df
     print(f"contributor_followers_df:\n {contributor_followers_df.info()}")
@@ -4550,13 +4663,14 @@ def latest_contributor_following_count(context) -> dg.MaterializeResult:
         result = conn.execute(
             text(
                 """
-                    select distinct 
-                        lcd.contributor_node_id 
-                    from clean.latest_contributor_data lcd left join clean.latest_contributors lc
+                    select distinct lcd.contributor_node_id
+                    from clean.latest_contributor_data lcd left join clean.latest_contributor_activity lca
+                        on lcd.contributor_node_id = lca.contributor_node_id left join clean.latest_contributors lc
                         on lcd.contributor_unique_id_builder_love = lc.contributor_unique_id_builder_love
-                    where lcd.is_active = true 
-                    and lower(lc.contributor_type) = 'user'
-                    and lcd.contributor_node_id is not null 
+                    where lcd.contributor_node_id is not null
+                    and lca.has_contributed_in_last_year = true
+                    and lcd.is_active = true
+                    and lower(lc.contributor_type) not in('bot', 'anonymous')
                 """
                 )
             )
@@ -4619,10 +4733,20 @@ def latest_contributor_following_count(context) -> dg.MaterializeResult:
     # add unix datetime column
     contributor_following_df['data_timestamp'] = pd.Timestamp.now()
 
+    # swap the github legacy contributor node id for the new format contributor node id
+    contributor_following_df = contributor_node_id_swap(context, contributor_following_df, cloud_sql_engine)
+
+    # check results of swap
+    if not isinstance(contributor_following_df, pd.DataFrame) or contributor_following_df.empty:
+        context.log.error("no contributor results found after swapping legacy contributor node id for new format contributor node id")
+        return dg.MaterializeResult(
+            metadata={"row_count": dg.MetadataValue.int(0)}
+        )
+
     # print info about the contributor_results_df
     print(f"contributor_following_df:\n {contributor_following_df.info()}")
 
-    # write the data to the latest_contributor_followers table
+    # write the data to the latest_contributor_following table
     # use truncate and append to avoid removing indexes
     try:
         with cloud_sql_engine.connect() as conn:
@@ -4681,14 +4805,14 @@ def get_github_user_latest_activity(context, node_ids, gh_pat):
     api_url = "https://api.github.com/graphql"
     headers = {"Authorization": f"bearer {gh_pat}"}
     results = {}
-    batch_size = 25 # Reduced batch_size as a precaution, adjust as needed
+    batch_size = 20 # Reduced batch_size as a precaution, adjust as needed
     
     error_counts = {"count_403_errors": 0, "count_502_errors": 0} 
     batch_time_history = []
 
     # Define date range for contributionsCollection (e.g., last year)
     now_utc = datetime.now(timezone.utc)
-    one_year_ago_utc = now_utc - pd.Timedelta(days=180) # Contributions from the last year
+    one_year_ago_utc = now_utc - pd.Timedelta(days=365) # Contributions from the last year
     
     for i in range(0, len(node_ids), batch_size):
         print(f"Processing batch for latest activity: {i // batch_size + 1} ({i} - {min(i + batch_size, len(node_ids)) -1} of {len(node_ids)-1})")
@@ -4838,8 +4962,8 @@ def latest_contributor_activity(context) -> dg.MaterializeResult:
                 """
                 SELECT DISTINCT 
                     lcd.contributor_node_id 
-                FROM clean.latest_contributor_data lcd
-                INNER JOIN clean.latest_contributors lc ON lcd.contributor_node_id_legacy = lc.contributor_node_id
+                FROM clean.latest_contributor_data lcd INNER JOIN clean.latest_contributors lc 
+                    ON lcd.contributor_unique_id_builder_love = lc.contributor_unique_id_builder_love
                 WHERE lcd.is_active = TRUE 
                   AND lower(lc.contributor_type) = 'user'
                   AND lcd.contributor_node_id IS NOT NULL
@@ -4899,6 +5023,16 @@ def latest_contributor_activity(context) -> dg.MaterializeResult:
 
     # add unix datetime column
     contributor_activity_df['data_timestamp'] = pd.Timestamp.now()
+
+    # swap the github legacy contributor node id for the new format contributor node id
+    contributor_activity_df = contributor_node_id_swap(context, contributor_activity_df, cloud_sql_engine)
+
+    # check results of swap
+    if not isinstance(contributor_activity_df, pd.DataFrame) or contributor_activity_df.empty:
+        context.log.error("no contributor results found after swapping legacy contributor node id for new format contributor node id")
+        return dg.MaterializeResult(
+            metadata={"row_count": dg.MetadataValue.int(0)}
+        )
     
     target_table_name = 'latest_contributor_activity'
     target_schema = 'raw'

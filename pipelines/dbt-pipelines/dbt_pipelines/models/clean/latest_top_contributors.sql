@@ -12,7 +12,70 @@
     post_hook="RESET work_mem; RESET temp_buffers;"
 ) }}
 
-with active_non_bot_contributors as (
+with not_a_bot_account as (
+  select
+    lcd.contributor_node_id
+
+  from {{ ref('latest_contributor_data') }} lcd left join {{ ref('latest_contributor_activity') }} lca
+    on lcd.contributor_node_id = lca.contributor_node_id left join {{ source('clean','latest_contributors') }} lc
+    on lcd.contributor_unique_id_builder_love = lc.contributor_unique_id_builder_love
+
+  WHERE lca.has_contributed_in_last_year = true
+  and lc.contributor_type <> 'bot'
+  and LOWER(lcd.bio) like '%not a bot account%'
+),
+
+sure_bot as (
+  select
+    lcd.contributor_node_id
+
+  from {{ ref('latest_contributor_data') }} lcd left join {{ ref('latest_contributor_activity') }} lca
+    on lcd.contributor_node_id = lca.contributor_node_id left join {{ source('clean','latest_contributors') }} lc
+    on lcd.contributor_unique_id_builder_love = lc.contributor_unique_id_builder_love
+
+  WHERE lca.has_contributed_in_last_year = true
+  and lc.contributor_type <> 'bot'
+  and lcd.contributor_node_id not in(select DISTINCT contributor_node_id from not_a_bot_account)
+  and (LOWER(lcd.bio) like '%i am a bot%' or LOWER(lcd.bio) like '%i''m a bot%' or LOWER(lcd.bio) like '%bot account%')
+  or LOWER(lcd.bio) like '%i''m a helpful bot%' or LOWER(lcd.bio) like '%i''m a github bot%' or LOWER(lcd.bio) like '%i''m a friendly bot%'
+  or LOWER(lcd.bio) like '%i am a github bot%' or LOWER(lcd.bio) like '%i am a helpful bot%' or LOWER(lcd.bio) like '%i am friendly bot%'
+  or LOWER(lcd.bio) like '%i''m a friendly github bot%' or LOWER(lcd.bio) like '%i''m a helpful gitHub bot%' or LOWER(lcd.bio) like '%i''m a robot%'
+  or LOWER(lcd.bio) like '%i am a robot%' or LOWER(lcd.bio) like '%robot account%'
+),
+
+sure_bot_login as (
+  select
+    lcd.contributor_node_id
+
+  from {{ ref('latest_contributor_data') }} lcd left join {{ ref('latest_contributor_activity') }} lca
+    on lcd.contributor_node_id = lca.contributor_node_id left join {{ source('clean','latest_contributors') }} lc
+    on lcd.contributor_unique_id_builder_love = lc.contributor_unique_id_builder_love left join {{ ref('latest_contributor_following') }} lcf
+    on lcd.contributor_node_id = lcf.contributor_node_id
+
+  WHERE lca.has_contributed_in_last_year = true
+  and lc.contributor_type <> 'bot'
+  and lcd.contributor_node_id not in(select DISTINCT contributor_node_id from not_a_bot_account)
+  and lcd.contributor_node_id not in(select DISTINCT contributor_node_id from sure_bot)
+  and lcf.total_following_count = 0
+  and LOWER(lc.contributor_login) like '%bot%'
+),
+
+manual_identify_bot as (
+  select lcd.contributor_node_id
+  from {{ ref('latest_contributor_data') }} lcd left join {{ source('clean','latest_contributors') }} lc
+    on lcd.contributor_unique_id_builder_love = lc.contributor_unique_id_builder_love 
+  where lc.contributor_login in ('bors')
+),
+
+bots as (
+  select sure_bot.contributor_node_id from sure_bot
+  union
+  select sure_bot_login.contributor_node_id from sure_bot_login
+  union 
+  select manual_identify_bot.contributor_node_id from manual_identify_bot
+),
+
+active_non_bot_contributors as (
   select 
     repo,
     lprc.contributor_unique_id_builder_love,
@@ -22,10 +85,13 @@ with active_non_bot_contributors as (
 
   from {{ source('clean','latest_project_repos_contributors') }} lprc inner join {{ source('clean','latest_contributors')}} lc
     on lprc.contributor_unique_id_builder_love = lc.contributor_unique_id_builder_love left join {{ ref('latest_contributor_data')}} lcd
-    on lc.contributor_node_id = lcd.contributor_node_id
+    on lc.contributor_unique_id_builder_love = lcd.contributor_unique_id_builder_love left join {{ ref('latest_contributor_activity')}} lca
+    on lcd.contributor_node_id = lca.contributor_node_id
 
   where lower(lc.contributor_type) <> 'bot' 
+  and lcd.contributor_node_id not in (select contributor_node_id from bots) -- remove unidentified bots
   and (lcd.is_active = TRUE or lcd.is_active is NULL) -- drop false values, inidcating inactive
+  and (lca.has_contributed_in_last_year = true or lca.has_contributed_in_last_year is NULL) -- drop false values, indicating inactive
 ),
 
 repo_quality_weight_score as (

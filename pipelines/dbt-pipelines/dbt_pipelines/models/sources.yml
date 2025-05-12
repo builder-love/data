@@ -61,6 +61,10 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
+      - name: latest_contributor_following
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
   - name: clean
     database: postgres
     schema: clean
@@ -284,6 +288,10 @@ sources:
         freshness: 
           warn_after: {count: 32, period: day}
       - name: latest_contributor_activity
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: latest_contributor_following
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
