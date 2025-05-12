@@ -57,6 +57,10 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
+      - name: latest_contributor_activity
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
   - name: clean
     database: postgres
     schema: clean
@@ -275,6 +279,14 @@ sources:
               combination_of_columns:
                 - contributor_unique_id_builder_love
                 - data_timestamp
+      - name: latest_contributor_data
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: latest_contributor_activity
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
       - name: latest_top_contributors
         loaded_at_field: data_timestamp
         freshness: 

@@ -11,11 +11,11 @@
 WITH project_sma AS (
   SELECT
     ntp.*,
-    -- Calculate the 6-week simple moving average (current week + 5 preceding weeks)
+    -- Calculate the 8-week simple moving average (current week + 7 preceding weeks)
     AVG(weighted_score) OVER (
         PARTITION BY project_title 
         ORDER BY report_date ASC   
-        ROWS BETWEEN 5 PRECEDING AND CURRENT ROW -- Window: current row + 5 previous rows
+        ROWS BETWEEN 7 PRECEDING AND CURRENT ROW -- Window: current row + 7 previous rows
     ) AS weighted_score_sma
   FROM
     {{ ref('normalized_top_projects') }} ntp
@@ -25,6 +25,7 @@ select
   project_title,
   report_date,
   data_timestamp,
+  repo_count,
   fork_count,
   stargaze_count,
   commit_count,

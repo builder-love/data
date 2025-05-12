@@ -14,6 +14,7 @@ from dagster_pipelines.assets import (
     crypto_ecosystems_project_json,
     latest_contributor_data,
     latest_contributor_followers,
+    latest_contributor_following_count,
     latest_contributor_activity
 )
 from dagster_pipelines.cleaning_assets import (
@@ -133,12 +134,19 @@ latest_contributor_followers_job = dg.define_asset_job(
     description="Queries the latest list of contributors to get follower list for each contributor. Overwrites the data in the raw.latest_contributor_followers table"
 )
 
+# create a job to run latest_contributor_following_count asset
+latest_contributor_following_count_job = dg.define_asset_job(
+    "latest_contributor_following_count_refresh", 
+    selection=["latest_contributor_following_count"],
+    tags={"github_api": "True"},
+)
+
 # create a job to run latest_contributor_activity asset
 latest_contributor_activity_job = dg.define_asset_job(
     "latest_contributor_activity_refresh", 
     selection=["latest_contributor_activity"],
     tags={"github_api": "True"},
-    description="Queries the latest list of contributors to get recent activity for each contributor. Overwrites the data in the raw.latest_contributor_activity table"
+    description="Queries the latest list of contributors to get recent activity for each contributor. Replaces the data in the raw.latest_contributor_activity table"
 )
 
 # Define a Dagster job that uses the dbt assets

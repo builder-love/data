@@ -4173,7 +4173,6 @@ def get_github_contributor_followers(context, node_ids, gh_pat):
 @dg.asset(
     required_resource_keys={"cloud_sql_postgres_resource"},
     group_name="ingestion",
-    automation_condition=dg.AutomationCondition.eager(),
     tags={"github_api": "True"}
 )
 def latest_contributor_followers(context) -> dg.MaterializeResult:
@@ -4330,6 +4329,344 @@ def latest_contributor_followers(context) -> dg.MaterializeResult:
 
 
 ###################################################################################
+### get github contributor following count
+###################################################################################
+
+def get_github_contributor_following_count(context, node_ids, gh_pat):
+    """
+    Retrieves GitHub user ID and a list of ALL their following (paginated),
+    using the GitHub GraphQL API.
+
+    Args:
+        node_ids: A list of GitHub contributor node IDs.
+        gh_pat: GitHub Personal Access Token with necessary scopes (e.g., read:user).
+
+    Returns:
+        A count of the number of following for each contributor node ID.
+    """
+
+    if not node_ids:
+        return {}, {"count_403_errors": 0, "count_502_errors": 0}
+
+    api_url = "https://api.github.com/graphql"
+    headers = {"Authorization": f"bearer {gh_pat}"}
+    results = {}
+    batch_size = 150
+    
+    cpu_time_used = 0 
+    real_time_used = 0
+    real_time_window = 60 
+    cpu_time_limit = 50   
+    error_counts = {"count_403_errors": 0, "count_502_errors": 0} 
+    batch_time_history = []
+
+    for i in range(0, len(node_ids), batch_size):
+        print(f"Processing batch: {i // batch_size + 1} ({i} - {min(i + batch_size, len(node_ids)) -1} of {len(node_ids)-1})")
+        batch_start_time = time.time()
+        current_batch_node_ids = node_ids[i:i + batch_size]
+        processed_in_batch = set()
+        query_definition_parts = []
+        query_body_parts = []
+        variables = {}
+
+        for j, node_id_value in enumerate(current_batch_node_ids):
+            variable_name = f"v{j}_nodeId"
+            node_alias = f"n{j}_node"
+            query_definition_parts.append(f"${variable_name}: ID!")
+            variables[variable_name] = node_id_value
+            # Followers will still have id and login.
+            query_body_parts.append(f"""
+                {node_alias}: node(id: ${variable_name}) {{
+                    __typename
+                    id # This is the primary ID of the user node being queried
+                    ... on User {{
+                        following(first: 1) {{
+                            totalCount
+                        }}
+                    }}
+                }}""")
+
+        if not query_definition_parts:
+            continue
+
+        full_query_definition = "query (" + ", ".join(query_definition_parts) + ") {"
+        full_query_body = "".join(query_body_parts)
+        query = full_query_definition + full_query_body + "\n}"
+
+        max_retries_main_batch = 5 
+        request_successful_for_batch = False
+
+        for attempt in range(max_retries_main_batch):
+            print(f"  Batch {i // batch_size + 1}, Main Request Attempt: {attempt + 1}")
+            
+            if cpu_time_used >= cpu_time_limit and real_time_used < real_time_window:
+                delay = max(1, (cpu_time_used - cpu_time_limit) / 2)
+                print(f"  CPU time heuristic. Delaying main batch for {delay:.2f}s.")
+                time.sleep(delay)
+                cpu_time_used = real_time_used = 0
+            elif real_time_used >= real_time_window:
+                cpu_time_used = real_time_used = 0
+            
+            batch_req_start_time_inner = time.time()
+            try:
+                response = requests.post(api_url, json={'query': query, 'variables': variables}, headers=headers, timeout=60) 
+                response_time = time.time() - batch_req_start_time_inner
+                print(f"  Main batch API request time: {response_time:.2f} seconds")
+                time.sleep(2.0) 
+                
+                response.raise_for_status()
+                data = response.json()
+
+                if 'errors' in data and data['errors']:
+                    is_rate_limited = False
+                    for error in data['errors']:
+                        print(f"  GraphQL Error (Main Batch): {error.get('message', str(error))}")
+                        if error.get('type') == 'RATE_LIMITED':
+                            is_rate_limited = True
+                            retry_after_graphql = error.get('extensions', {}).get('retryAfter')
+                            if retry_after_graphql: 
+                                delay = int(retry_after_graphql) + 1
+                            elif response.headers.get('X-RateLimit-Reset'): 
+                                delay = max(1, int(response.headers.get('X-RateLimit-Reset')) - int(time.time()) + 1)
+                            else: 
+                                delay = (2 ** attempt) * 5 + random.uniform(0,1)
+                            delay = min(delay, 300)
+                            print(f"  Rate limited (GraphQL Main Batch). Waiting {delay:.2f}s...")
+                            time.sleep(delay)
+                            break 
+                    if is_rate_limited: continue
+
+                if 'data' in data:
+                    for j_node_idx, node_id in enumerate(current_batch_node_ids):
+                        if node_id in processed_in_batch: continue
+                        
+                        node_data_from_response = data['data'].get(f"n{j_node_idx}_node")
+                        if node_data_from_response:
+                            if node_data_from_response.get('__typename') == 'User':
+                                # get followers data
+                                following_data = node_data_from_response.get("following")
+                                if following_data:
+                                    results[node_id] = {
+                                        "__typename": node_data_from_response.get('__typename'),
+                                        "id": node_data_from_response.get('id'),
+                                        "following_total_count": following_data.get("totalCount", 0)
+                                    }
+                                else:
+                                    results[node_id] = {
+                                        "__typename": node_data_from_response.get('__typename'),
+                                        "id": node_data_from_response.get('id'),
+                                        "following_total_count": 0
+                                    }
+                        else:
+                            results[node_id] = {
+                                "__typename": None,
+                                "id": node_id,
+                                "following_total_count": 0
+                            }
+                        processed_in_batch.add(node_id)
+                    request_successful_for_batch = True 
+                    break 
+            except requests.exceptions.HTTPError as e:
+                print(f"  HTTP error (Main Batch {i // batch_size + 1}): {e}")
+                if e.response is not None:
+                    if e.response.status_code in (502, 504): 
+                        error_counts["count_502_errors"] +=1
+                        delay = (2 ** attempt) * 2 + random.uniform(0,1) 
+                        time.sleep(delay)
+                        continue
+                    elif e.response.status_code in (403, 429): 
+                        error_counts["count_403_errors"] += 1
+                        retry_after_header = e.response.headers.get('Retry-After')
+                        if retry_after_header: 
+                            delay = int(retry_after_header) + 1
+                        else: 
+                            delay = (2 ** attempt) * 5 + random.uniform(0,1)
+                        time.sleep(min(delay,300))
+                        continue
+                if attempt == max_retries_main_batch - 1: 
+                    break
+                else: 
+                    time.sleep((2 ** attempt) + random.uniform(0,1))
+            except requests.exceptions.RequestException as e:
+                print(f"  RequestException (Main Batch {i // batch_size + 1}): {e}")
+                if attempt == max_retries_main_batch - 1: 
+                    break
+                time.sleep((2 ** attempt) * 2 + random.uniform(0,1))
+            except Exception as e:
+                print(f"  Unexpected error (Main Batch {i // batch_size + 1}): {e}")
+                print(traceback.format_exc())
+                if attempt == max_retries_main_batch - 1: 
+                    break
+                time.sleep(5)
+
+        if not request_successful_for_batch: 
+            for node_id_in_batch in current_batch_node_ids:
+                if node_id_in_batch not in processed_in_batch:
+                    results[node_id_in_batch] = {"data": None}
+            
+        batch_processing_time = time.time() - batch_start_time
+        cpu_time_used += batch_processing_time 
+        real_time_used += batch_processing_time
+
+        batch_time_history.append(batch_processing_time)
+        if len(batch_time_history) > 1: 
+            print(f"  Average total batch processing time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
+        print(f"Batch {i // batch_size + 1} completed. Time: {batch_processing_time:.2f}s. CPU heuristic: {cpu_time_used:.2f}s. Real time: {real_time_used:.2f}s.")
+        print("-" * 40)
+    
+    return results, error_counts
+
+
+# Main function to retrieve the list of ALL contributors a contributor is following
+# define the asset that gets following for github contributors in the clean.latest_contributor_data table
+# use graphql api node id
+@dg.asset(
+    required_resource_keys={"cloud_sql_postgres_resource"},
+    group_name="ingestion",
+    tags={"github_api": "True"}
+)
+def latest_contributor_following_count(context) -> dg.MaterializeResult:
+
+    # Define a fallback filename (consider making it unique per run)
+    fallback_filename = f"/tmp/contributors_following_fallback_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.parquet"
+
+    # Get the cloud sql postgres resource
+    cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+
+    # define the github pat
+    gh_pat = os.getenv('go_blockchain_ecosystem')
+
+    # check if gh_pat is not None
+    if gh_pat is None:
+        context.log.warning("no github pat found")
+        return dg.MaterializeResult(
+            metadata={"row_count": dg.MetadataValue.int(0)}
+        )
+    
+    # Execute the query
+    with cloud_sql_engine.connect() as conn:
+
+        # query the latest_distinct_project_repos table to get the distinct repo list
+        result = conn.execute(
+            text(
+                """
+                    select distinct 
+                        lcd.contributor_node_id 
+                    from clean.latest_contributor_data lcd left join clean.latest_contributors lc
+                        on lcd.contributor_unique_id_builder_love = lc.contributor_unique_id_builder_love
+                    where lcd.is_active = true 
+                    and lower(lc.contributor_type) = 'user'
+                    and lcd.contributor_node_id is not null 
+                """
+                )
+            )
+        distinct_contributor_node_ids_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+
+    # check if df is a df and not empty
+    # if it is raise an error to the dagster context ui
+    if not isinstance(distinct_contributor_node_ids_df, pd.DataFrame) or distinct_contributor_node_ids_df.empty:
+        context.log.error("no contributor node ids found in builder love database")
+        return dg.MaterializeResult(
+            metadata={"row_count": dg.MetadataValue.int(0)}
+        )
+
+    # get the list of node_ids for sending to the function
+    node_ids = distinct_contributor_node_ids_df['contributor_node_id'].tolist()
+
+    results = get_github_contributor_following_count(context, node_ids, gh_pat)
+
+    # check if results is empty
+    # if it is raise an error to the dagster context ui
+    if not results:
+        context.log.error("no results returned by get_github_contributor_following function")
+        return dg.MaterializeResult(
+            metadata={"row_count": dg.MetadataValue.int(0)}
+        )
+
+    contributor_results = results[0]
+    count_http_errors = results[1]
+
+    # write results to pandas dataframe
+    processed_rows = []
+
+    for original_queried_node_id, api_data_for_node in contributor_results.items():
+        # api_data_for_node is the dictionary like {"__typename": ..., "id": ..., "following_total_count": ...}
+
+        # The 'id' field from api_data_for_node is the GitHub ID. 
+        # For this flattening script, we'll assume api_data_for_node["id"] is the ID you want to store
+        # as 'contributor_node_id'.
+        contributor_id_for_df = api_data_for_node.get("id", original_queried_node_id) # Fallback to original if 'id' key is missing
+
+        total_following = api_data_for_node.get("following_total_count", 0)
+
+        row_data = {
+            "contributor_node_id": contributor_id_for_df, # This is the user whose stats these are
+            "total_following_count": total_following
+        }
+        processed_rows.append(row_data)
+
+    # Create the DataFrame
+    contributor_following_df = pd.DataFrame(processed_rows)
+    
+    # check if contributor_results_df is a df and not empty
+    # if it is raise an error to the dagster context ui
+    if not isinstance(contributor_following_df, pd.DataFrame) or contributor_following_df.empty:
+        context.log.error("no contributor results found")
+        return dg.MaterializeResult(
+            metadata={"row_count": dg.MetadataValue.int(0)}
+        )
+
+    # add unix datetime column
+    contributor_following_df['data_timestamp'] = pd.Timestamp.now()
+
+    # print info about the contributor_results_df
+    print(f"contributor_following_df:\n {contributor_following_df.info()}")
+
+    # write the data to the latest_contributor_followers table
+    # use truncate and append to avoid removing indexes
+    try:
+        with cloud_sql_engine.connect() as conn:
+            with conn.begin():
+                # first truncate the table
+                conn.execute(text("truncate table raw.latest_contributor_following"))
+                context.log.info("Table truncated successfully. Now attempting to load new data.")
+                # then append the data
+                contributor_following_df.to_sql('latest_contributor_following', conn, if_exists='append', index=False, schema='raw')
+                context.log.info("Table load successful.")
+    except Exception as e:
+        context.log.error(f"error writing to latest_contributor_following table: {e}")
+        try:
+            # Attempt to save as Parquet
+            contributor_following_df.to_parquet(fallback_filename, index=False)
+            context.log.info(f"Fallback Parquet file saved to: {fallback_filename}")
+        except Exception as e:
+            context.log.error(f"error writing to latest_contributor_following table: {e}")
+        return dg.MaterializeResult(
+            metadata={"row_count": dg.MetadataValue.int(0)}
+        )
+
+    # # capture asset metadata
+    with cloud_sql_engine.connect() as conn:
+        preview_query = text("select count(*) from raw.latest_contributor_following")
+        result = conn.execute(preview_query)
+        # Fetch all rows into a list of tuples
+        row_count = result.fetchone()[0]
+
+        preview_query = text("select * from raw.latest_contributor_following")
+        result = conn.execute(preview_query)
+        result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+
+    return dg.MaterializeResult(
+        metadata={
+            "row_count": dg.MetadataValue.int(row_count),
+            "preview": dg.MetadataValue.md(result_df.to_markdown(index=False)),
+            "count_http_403_errors": dg.MetadataValue.int(count_http_errors['count_403_errors']),
+            "count_http_502_errors": dg.MetadataValue.int(count_http_errors['count_502_errors']),
+        }
+    )
+
+
+###################################################################################
 ### get github user recent activity - 1 year
 ###################################################################################
 
@@ -4344,14 +4681,14 @@ def get_github_user_latest_activity(context, node_ids, gh_pat):
     api_url = "https://api.github.com/graphql"
     headers = {"Authorization": f"bearer {gh_pat}"}
     results = {}
-    batch_size = 40 # Reduced batch_size as a precaution, adjust as needed
+    batch_size = 25 # Reduced batch_size as a precaution, adjust as needed
     
     error_counts = {"count_403_errors": 0, "count_502_errors": 0} 
     batch_time_history = []
 
     # Define date range for contributionsCollection (e.g., last year)
     now_utc = datetime.now(timezone.utc)
-    one_year_ago_utc = now_utc - pd.Timedelta(days=365) # Contributions from the last year
+    one_year_ago_utc = now_utc - pd.Timedelta(days=180) # Contributions from the last year
     
     for i in range(0, len(node_ids), batch_size):
         print(f"Processing batch for latest activity: {i // batch_size + 1} ({i} - {min(i + batch_size, len(node_ids)) -1} of {len(node_ids)-1})")
@@ -4379,10 +4716,6 @@ def get_github_user_latest_activity(context, node_ids, gh_pat):
                     ... on User {{
                         contributionsCollection(from: $contributionFromDate, to: $contributionToDate) {{
                             hasAnyContributions
-                            totalCommitContributions
-                            totalPullRequestContributions
-                            totalIssueContributions
-                            totalRepositoryContributions
                         }}
                     }}
                 }}""")
@@ -4436,10 +4769,6 @@ def get_github_user_latest_activity(context, node_ids, gh_pat):
                                     latest_contribution_details = {
                                         # spread the extracted info into the latest_contribution_details
                                         "has_contributed_in_last_year": contrib_collection.get("hasAnyContributions"),
-                                        "total_commit_contributions": contrib_collection.get("totalCommitContributions"),
-                                        "total_pull_request_contributions": contrib_collection.get("totalPullRequestContributions"),
-                                        "total_issue_contributions": contrib_collection.get("totalIssueContributions"),
-                                        "total_repositories_created": contrib_collection.get("totalRepositoryContributions"),
                                         **extracted_info
                                     }
                             
@@ -4491,7 +4820,6 @@ def get_github_user_latest_activity(context, node_ids, gh_pat):
 @dg.asset(
     required_resource_keys={"cloud_sql_postgres_resource"},
     group_name="ingestion",
-    automation_condition=dg.AutomationCondition.eager(), # type: ignore
     tags={"github_api": "True"},
     description="Retrieves GitHub user ID, login, and their latest activity (aiming for top 100) using the GitHub GraphQL API."
 )
@@ -4511,12 +4839,10 @@ def latest_contributor_activity(context) -> dg.MaterializeResult:
                 SELECT DISTINCT 
                     lcd.contributor_node_id 
                 FROM clean.latest_contributor_data lcd
-                INNER JOIN clean.latest_contributors lc ON lcd.contributor_node_id = lc.contributor_node_id
+                INNER JOIN clean.latest_contributors lc ON lcd.contributor_node_id_legacy = lc.contributor_node_id
                 WHERE lcd.is_active = TRUE 
                   AND lower(lc.contributor_type) = 'user'
                   AND lcd.contributor_node_id IS NOT NULL
-
-                LIMIT 100
                 """
             )
         )
@@ -4549,20 +4875,11 @@ def latest_contributor_activity(context) -> dg.MaterializeResult:
 
                 # Access the 'latest_commit' dictionary (or None)
                 has_contributed_in_last_year = user_data.get("has_contributed_in_last_year")
-                total_commit_contributions = user_data.get("total_commit_contributions")
-                total_pull_request_contributions = user_data.get("total_pull_request_contributions")
-                total_issue_contributions = user_data.get("total_issue_contributions")
-                total_repositories_created = user_data.get("total_repositories_created")
 
                 # A latest commit was found for this user
                 row_data = {
                     "contributor_node_id": github_api_user_node_id,
                     "has_contributed_in_last_year": has_contributed_in_last_year,
-                    "commit_contributions_in_last_year": total_commit_contributions,
-                    "pull_request_contributions_in_last_year": total_pull_request_contributions,
-                    "issue_contributions_in_last_year": total_issue_contributions,
-                    "repositories_created_in_last_year": total_repositories_created,
-                    "total_contributions_in_last_year": int(total_commit_contributions or 0) + int(total_pull_request_contributions or 0) + int(total_issue_contributions or 0) + int(total_repositories_created or 0)
                 }
                 processed_activity_rows.append(row_data)
     print(f"create flatted python list of activity rows, of length {len(processed_activity_rows)}. Proceeding to create dataframe...")
@@ -4588,12 +4905,13 @@ def latest_contributor_activity(context) -> dg.MaterializeResult:
     try:
         with cloud_sql_engine.connect() as conn:
             with conn.begin():
-                # conn.execute(text(f"TRUNCATE TABLE {target_schema}.{target_table_name}"))
+                # first truncate the table
+                conn.execute(text(f"TRUNCATE TABLE {target_schema}.{target_table_name}"))
                 context.log.info(f"Table {target_schema}.{target_table_name} truncated successfully. Now attempting to load new data.")
                 contributor_activity_df.to_sql(
                     target_table_name, 
                     conn, 
-                    if_exists='replace', 
+                    if_exists='append', 
                     chunksize=50000, 
                     index=False, 
                     schema=target_schema,
