@@ -129,6 +129,12 @@ four_week_change_project_is_fork as (
   from {{ ref('four_week_change_project_is_fork') }} f
   where data_timestamp >= (CURRENT_DATE - INTERVAL '52 weeks')
 ),
+-- pass repo count as a reference for the chart
+normalized_project_repo_count as (
+  select 
+    r.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
+  from {{ ref('normalized_project_repo_count') }} r
+),
 
 all_metrics as (
   select 
@@ -146,8 +152,9 @@ all_metrics as (
     stargaze_change.data_timestamp as stargaze_change_data_timestamp,
     watcher_change.data_timestamp as watcher_change_data_timestamp,
     is_fork_change.data_timestamp as is_fork_change_data_timestamp,
+    r.data_timestamp as repo_data_timestamp,
     GREATEST(f.data_timestamp, s.data_timestamp, cc.data_timestamp, c.data_timestamp, w.data_timestamp, is_fork.data_timestamp, commit_change.data_timestamp, contributor_change.data_timestamp, fork_change.data_timestamp, stargaze_change.data_timestamp, watcher_change.data_timestamp,
-    is_fork_change.data_timestamp) row_data_timestamp,
+    is_fork_change.data_timestamp, r.data_timestamp) row_data_timestamp,
     f.fork_count,
     s.stargaze_count,
     cc.commit_count,
@@ -159,8 +166,9 @@ all_metrics as (
     fork_change.fork_count_pct_change_over_4_weeks,
     stargaze_change.stargaze_count_pct_change_over_4_weeks,
     watcher_change.watcher_count_pct_change_over_4_weeks,
-    is_fork_change.is_not_fork_ratio_pct_change_over_4_weeks
-    
+    is_fork_change.is_not_fork_ratio_pct_change_over_4_weeks,
+    r.repo_count
+
   from project_date_series_scaffold p left join normalized_project_fork_count f 
     on p.project_title = f.project_title and p.report_date = f.report_date left join normalized_project_stargaze_count s
     on p.project_title = s.project_title and p.report_date = s.report_date left join normalized_project_commit_count cc
@@ -173,7 +181,8 @@ all_metrics as (
     on p.project_title = fork_change.project_title and p.report_date = fork_change.report_date left join four_week_change_project_stargaze_count stargaze_change
     on p.project_title = stargaze_change.project_title and p.report_date = stargaze_change.report_date left join four_week_change_project_watcher_count watcher_change
     on p.project_title = watcher_change.project_title and p.report_date = watcher_change.report_date left join four_week_change_project_is_fork is_fork_change
-    on p.project_title = is_fork_change.project_title and p.report_date = is_fork_change.report_date
+    on p.project_title = is_fork_change.project_title and p.report_date = is_fork_change.report_date left join normalized_project_repo_count r
+    on p.project_title = r.project_title and p.report_date = r.report_date
 ),
 
 metrics_with_overall_max_ts AS (
@@ -189,6 +198,7 @@ grouped_metrics AS (
         *,
         -- Create grouping keys - these increment only when a non-null value appears for THAT column
         -- metrics
+        COUNT(repo_count) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as repo_grp,
         COUNT(fork_count) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as fork_grp,
         COUNT(stargaze_count) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as stargaze_grp,
         COUNT(commit_count) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as commit_grp,
@@ -212,6 +222,7 @@ metrics_locf AS (
         report_date,
         data_timestamp,
         -- metrics
+        MAX(repo_count) OVER (PARTITION BY project_title, repo_grp) AS repo_count,
         MAX(fork_count) OVER (PARTITION BY project_title, fork_grp) AS fork_count,
         MAX(stargaze_count) OVER (PARTITION BY project_title, stargaze_grp) AS stargaze_count,
         MAX(commit_count) OVER (PARTITION BY project_title, commit_grp) AS commit_count,
@@ -233,6 +244,7 @@ normalized_metrics AS (
          project_title,
          report_date,
          data_timestamp,
+         repo_count,
          fork_count,
          stargaze_count,
          commit_count,
@@ -266,6 +278,7 @@ ranked_projects AS (
       project_title,
       report_date,
       data_timestamp,
+      repo_count,
       fork_count,
       stargaze_count,
       commit_count,
@@ -313,6 +326,7 @@ final_ranking AS (
     project_title,
     report_date,
     data_timestamp,
+    repo_count,
     fork_count,
     stargaze_count,
     commit_count,
@@ -354,6 +368,7 @@ SELECT
   project_title,
   report_date::timestamp AS report_date,
   data_timestamp,
+  repo_count,
   fork_count,
   stargaze_count,
   commit_count,

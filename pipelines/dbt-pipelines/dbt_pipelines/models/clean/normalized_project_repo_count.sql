@@ -27,35 +27,6 @@
         {% set max_clean_timestamp = (modules.datetime.datetime.fromisoformat(initial_load_timestamp.replace('Z', '+00:00'))).isoformat() %}
     {% endif %}
 
-    -- get stats for outlier exclusion
-    {% set stats_query %}
-        -- Calculate the count of records for each data_timestamp in the clean table
-        with record_counts AS (
-            SELECT 
-                data_timestamp, 
-                COUNT(*) AS record_count
-            FROM {{ this }} -- Use {{ this }} to refer to the current model (clean table)
-            GROUP BY data_timestamp
-        )
-
-        -- Calculate the mean and standard deviation of the record counts from the clean table
-        SELECT 
-            AVG(record_count) AS mean_count, 
-            coalesce(STDDEV(record_count), 0) AS stddev_count
-        FROM record_counts
-    {% endset %}
-
-    {% set stats_results = run_query(stats_query) %}
-
-    {% if execute %}
-        {% set mean_count = stats_results.columns[0].values()[0] %}
-        {% set stddev_count = stats_results.columns[1].values()[0] %}
-    {% else %}
-        {% set mean_count = 0 %}
-        {% set stddev_count = 0 %}
-    {% endif %}
-    
-
     WITH 
 
     raw_data_timestamps as (
@@ -64,13 +35,11 @@
         group by 1
     ),
 
-    -- Identify the latest data_timestamp in the raw table
+    -- Identify the latest data_timestamp in the latest_active_distinct_project_repos table
     load_timestamps AS (
         SELECT data_timestamp AS load_timestamps
         FROM raw_data_timestamps
         where data_timestamp >= '{{ max_clean_timestamp }}'::timestamp + INTERVAL '6 days'
-        AND record_count <= ({{ mean_count }} * 1.5)
-        AND record_count >= ({{ mean_count }} * 0.5)
     ),
 
     -- Select all records from the raw table
@@ -88,7 +57,7 @@
     cer.project_title,
     COUNT(DISTINCT cer.repo) AS repo_count,
     MAX(ar.data_timestamp) AS data_timestamp
-    FROM {{ source('raw', 'crypto_ecosystems_raw_file') }} AS cer JOIN active_repos AS ar 
+    FROM {{ source('raw', 'crypto_ecosystems_raw_file') }} AS cer INNER JOIN active_repos AS ar 
     ON cer.repo = ar.repo
 
     GROUP BY cer.project_title

@@ -16,6 +16,7 @@ from dagster_pipelines.assets import (
     crypto_ecosystems_project_json,
     latest_contributor_data,
     latest_contributor_followers,
+    latest_contributor_following_count,
     latest_contributor_activity
 )
 from dagster_pipelines.cleaning_assets import ( 
@@ -41,6 +42,7 @@ from dagster_pipelines.jobs import (
     crypto_ecosystems_project_json_job,
     latest_contributor_data_job,
     latest_contributor_followers_job,
+    latest_contributor_following_count_job,
     latest_contributor_activity_job
 )
 from dagster_pipelines.schedules import (
@@ -64,6 +66,7 @@ from dagster_pipelines.schedules import (
     update_crypto_ecosystems_raw_file_schedule,
     latest_contributor_data_schedule,
     latest_contributor_followers_schedule,
+    latest_contributor_following_count_schedule,
     latest_contributor_activity_schedule
 )
 from dagster_pipelines.load_data_jobs import (
@@ -102,6 +105,7 @@ defs = Definitions(
         crypto_ecosystems_project_json,
         latest_contributor_data,
         latest_contributor_followers,
+        latest_contributor_following_count,
         latest_contributor_activity
         ],
     jobs=[
@@ -125,6 +129,7 @@ defs = Definitions(
         update_crypto_ecosystems_raw_file_job,
         latest_contributor_data_job,
         latest_contributor_followers_job,
+        latest_contributor_following_count_job,
         latest_contributor_activity_job
         ],
     schedules=[
@@ -148,6 +153,7 @@ defs = Definitions(
         update_crypto_ecosystems_raw_file_schedule,
         latest_contributor_data_schedule,
         latest_contributor_followers_schedule,
+        latest_contributor_following_count_schedule,
         latest_contributor_activity_schedule
         ],
 )
