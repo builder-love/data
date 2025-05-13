@@ -4061,7 +4061,7 @@ def get_github_contributor_followers_count(context, node_ids, gh_pat): # Renamed
     for i in range(0, len(node_ids), batch_size):
         current_batch_node_ids = node_ids[i:i + batch_size]
         batch_number = i // batch_size + 1
-        context.log.info(f"Processing batch: {batch_number} ({i} - {min(i + batch_size, len(node_ids)) -1} of {len(node_ids)-1})")
+        print(f"Processing batch: {batch_number} ({i} - {min(i + batch_size, len(node_ids)) -1} of {len(node_ids)-1})")
 
         query_definition_parts = []
         query_body_parts = []
@@ -4094,7 +4094,7 @@ def get_github_contributor_followers_count(context, node_ids, gh_pat): # Renamed
         request_successful_for_batch = False
 
         for attempt in range(max_retries_main_batch):
-            context.log.info(f"  Batch {batch_number}, Main Request Attempt: {attempt + 1}")
+            print(f"  Batch {batch_number}, Main Request Attempt: {attempt + 1}")
             try:
                 response = requests.post(api_url, json={'query': query, 'variables': variables}, headers=headers, timeout=60)
                 time.sleep(1.0 + random.uniform(0, 0.5)) # Basic sleep after each request
@@ -4111,7 +4111,7 @@ def get_github_contributor_followers_count(context, node_ids, gh_pat): # Renamed
                             # Basic exponential backoff for GraphQL rate limits
                             delay = (2 ** attempt) * 5 + random.uniform(0,1)
                             delay = min(delay, 300) # Cap delay
-                            context.log.info(f"  Rate limited (GraphQL Batch {batch_number}). Waiting {delay:.2f}s...")
+                            print(f"  Rate limited (GraphQL Batch {batch_number}). Waiting {delay:.2f}s...")
                             time.sleep(delay)
                             break # Break from errors loop, retry the request
                     if is_rate_limited:
@@ -4146,14 +4146,14 @@ def get_github_contributor_followers_count(context, node_ids, gh_pat): # Renamed
                         error_counts["count_502_errors"] +=1
                         delay = (2 ** attempt) * 3 + random.uniform(0,1) # Slightly more patient for 502s
                         delay = min(delay, 180)
-                        context.log.info(f"  Server error {e.response.status_code}. Retrying in {delay:.2f}s...")
+                        print(f"  Server error {e.response.status_code}. Retrying in {delay:.2f}s...")
                         time.sleep(delay)
                         continue
                     elif e.response.status_code in (403, 429):
                         error_counts["count_403_errors"] += 1
                         delay = (2 ** attempt) * 5 + random.uniform(0,1)
                         delay = min(delay, 300)
-                        context.log.info(f"  Rate limit/Auth error {e.response.status_code}. Retrying in {delay:.2f}s...")
+                        print(f"  Rate limit/Auth error {e.response.status_code}. Retrying in {delay:.2f}s...")
                         time.sleep(delay)
                         continue
                 if attempt == max_retries_main_batch - 1:
@@ -4190,10 +4190,10 @@ def get_github_contributor_followers_count(context, node_ids, gh_pat): # Renamed
                 if node_id_in_batch_final_fail not in results:
                     results[node_id_in_batch_final_fail] = {"id": node_id_in_batch_final_fail, "followers_total_count": None} # Indicate failure/no data
 
-        context.log.info(f"Batch {batch_number} completed processing.")
+        print(f"Batch {batch_number} completed processing.")
         print("-" * 40) # Keep for visual separation in logs if desired
 
-    context.log.info(f"Finished fetching follower counts. Processed {len(results)} contributors.")
+    print(f"Finished fetching follower counts. Processed {len(results)} contributors.")
     return results, error_counts
 
 
@@ -4235,7 +4235,7 @@ def latest_contributor_follower_counts(context) -> dg.MaterializeResult: # Renam
             ),
             conn
         )
-    context.log.info(f"Fetched {len(distinct_contributor_node_ids_df)} distinct contributor node IDs from the database.")
+    context.log.info(f"Fetched {len(distinct_contributor_node_ids_df)} distinct contributor node IDs from the database. Starting to fetch follower counts.")
 
     if distinct_contributor_node_ids_df.empty:
         context.log.error("No contributor node IDs found in the database that meet the criteria.")
