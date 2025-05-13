@@ -100,3 +100,59 @@ models:
     tests:
       - unique_combination_of_columns:
           column_names: [project_title, report_date]
+  - name: top_100_contributors
+    columns:
+      - name: contributor_login
+        tests:
+          - not_null
+      - name: contributor_type
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
+      - name: dominant_language
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
+      - name: contributor_unique_id_builder_love
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
+      - name: contributor_html_url
+        tests:
+          - not_null
+      - name: total_repos_contributed_to
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: total_contributions
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: contributions_to_og_repos
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: normalized_total_repo_quality_weighted_contribution_score_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: weighted_score_index
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: quartile_bucket
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: integer
+      - name: contributor_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: latest_data_timestamp
+        tests:
+          - not_null
+    tests:
+      - unique_combination_of_columns:
+          column_names: [contributor_unique_id_builder_love, latest_data_timestamp]

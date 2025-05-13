@@ -143,6 +143,7 @@ contributors_og_repos as (
 top_og_repo_contributors as (
   select 
     c.contributor_unique_id_builder_love,
+    sum(c.contributor_contributions) contributions_to_og_repos,
     sum(c.contributor_contributions * (2 ^ (1 - COALESCE(ltr.weighted_score,0)))) total_og_repo_quality_weighted_contribution_score
 
   from contributors_og_repos c left join {{ref('latest_top_repos')}} ltr
@@ -154,10 +155,12 @@ top_og_repo_contributors as (
 top_contributor_metrics as (
   select 
     contributor_login,
+    lc.contributor_type,
     lcdl.dominant_language,
     lc.contributor_unique_id_builder_love,
     total_repos_contributed_to,
     total_contributions,
+    contributions_to_og_repos,
     total_repo_quality_weighted_contribution_score,
     total_og_repo_quality_weighted_contribution_score,
     lc.contributor_html_url,
@@ -173,11 +176,13 @@ from {{ source('clean','latest_contributors')}} lc left join sum_repo_quality_we
 normalized_top_contributors as (
   select 
     contributor_login,
+    contributor_type,
     contributor_unique_id_builder_love,
     contributor_html_url,
     dominant_language,
     total_repos_contributed_to,
     total_contributions,
+    contributions_to_og_repos,
     total_repo_quality_weighted_contribution_score,
     total_og_repo_quality_weighted_contribution_score,
     (total_repos_contributed_to - MIN(total_repos_contributed_to) OVER ())::NUMERIC / NULLIF((MAX(total_repos_contributed_to) OVER () - MIN(total_repos_contributed_to) OVER ())::NUMERIC,0) AS normalized_total_repos_contributed_to,
@@ -192,11 +197,13 @@ normalized_top_contributors as (
 ranked_contributors as (
   select 
     contributor_login,
+    contributor_type,
     dominant_language,
     contributor_unique_id_builder_love,
     contributor_html_url,
     total_repos_contributed_to,
     total_contributions,
+    contributions_to_og_repos,
     total_repo_quality_weighted_contribution_score,
     total_og_repo_quality_weighted_contribution_score,
     normalized_total_repos_contributed_to,
@@ -218,11 +225,13 @@ ranked_contributors as (
 final_ranking as (
   select 
     contributor_login,
+    contributor_type,
     dominant_language,
     contributor_unique_id_builder_love,
     contributor_html_url,
     total_repos_contributed_to::bigint,
     total_contributions::bigint,
+    contributions_to_og_repos::bigint,
     total_repo_quality_weighted_contribution_score::numeric,
     total_og_repo_quality_weighted_contribution_score::numeric,
     normalized_total_repos_contributed_to::numeric,
@@ -231,6 +240,9 @@ final_ranking as (
     normalized_total_og_repo_quality_weighted_contribution_score::numeric,
     weighted_score::numeric,
     (weighted_score * 100) as weighted_score_index,
+    RANK() OVER (
+      ORDER BY normalized_total_repo_quality_weighted_contribution_score DESC
+    ) as normalized_total_repo_quality_weighted_contribution_score_rank,
     RANK() OVER (
       ORDER BY weighted_score DESC
     ) AS contributor_rank,

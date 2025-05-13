@@ -361,6 +361,7 @@ sources:
       - name: normalized_project_is_fork
       - name: normalized_top_projects
       - name: latest_top_projects
+      - name: latest_top_contributors
       - name: latest_project_fork_count
       - name: latest_project_stargaze_count
       - name: latest_project_watcher_count
