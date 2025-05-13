@@ -15,7 +15,7 @@ from dagster_pipelines.assets import (
     github_project_repos_is_fork,
     crypto_ecosystems_project_json,
     latest_contributor_data,
-    latest_contributor_followers,
+    latest_contributor_follower_counts,
     latest_contributor_following_count,
     latest_contributor_activity
 )
@@ -41,7 +41,7 @@ from dagster_pipelines.jobs import (
     update_crypto_ecosystems_repo_and_run_export_job,
     crypto_ecosystems_project_json_job,
     latest_contributor_data_job,
-    latest_contributor_followers_job,
+    latest_contributor_follower_counts_job,
     latest_contributor_following_count_job,
     latest_contributor_activity_job
 )
@@ -65,7 +65,7 @@ from dagster_pipelines.schedules import (
     crypto_ecosystems_project_json_schedule,
     update_crypto_ecosystems_raw_file_schedule,
     latest_contributor_data_schedule,
-    latest_contributor_followers_schedule,
+    latest_contributor_follower_counts_schedule,
     latest_contributor_following_count_schedule,
     latest_contributor_activity_schedule
 )
@@ -104,7 +104,7 @@ defs = Definitions(
         update_crypto_ecosystems_repo_and_run_export,
         crypto_ecosystems_project_json,
         latest_contributor_data,
-        latest_contributor_followers,
+        latest_contributor_follower_counts,
         latest_contributor_following_count,
         latest_contributor_activity
         ],
@@ -128,7 +128,7 @@ defs = Definitions(
         crypto_ecosystems_project_json_job,
         update_crypto_ecosystems_raw_file_job,
         latest_contributor_data_job,
-        latest_contributor_followers_job,
+        latest_contributor_follower_counts_job,
         latest_contributor_following_count_job,
         latest_contributor_activity_job
         ],
@@ -152,7 +152,7 @@ defs = Definitions(
         crypto_ecosystems_project_json_schedule,
         update_crypto_ecosystems_raw_file_schedule,
         latest_contributor_data_schedule,
-        latest_contributor_followers_schedule,
+        latest_contributor_follower_counts_schedule,
         latest_contributor_following_count_schedule,
         latest_contributor_activity_schedule
         ],

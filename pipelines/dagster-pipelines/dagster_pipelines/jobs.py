@@ -13,7 +13,7 @@ from dagster_pipelines.assets import (
     github_project_repos_is_fork,
     crypto_ecosystems_project_json,
     latest_contributor_data,
-    latest_contributor_followers,
+    latest_contributor_follower_counts,
     latest_contributor_following_count,
     latest_contributor_activity
 )
@@ -126,12 +126,12 @@ latest_contributor_data_job = dg.define_asset_job(
     description="Queries the latest list of contributors to check if the contributor is still active. Overwrites the data in the raw.latest_contributor_data table"
 )
 
-# create a job to run latest_contributor_followers asset
-latest_contributor_followers_job = dg.define_asset_job(
-    "latest_contributor_followers_refresh", 
-    selection=["latest_contributor_followers"],
+# create a job to run latest_contributor_follower_counts asset
+latest_contributor_follower_counts_job = dg.define_asset_job(
+    "latest_contributor_follower_counts_refresh", 
+    selection=["latest_contributor_follower_counts"],
     tags={"github_api": "True"},
-    description="Queries the latest list of contributors to get follower list for each contributor. Overwrites the data in the raw.latest_contributor_followers table"
+    description="Queries the latest list of contributors to get follower count for each contributor. Overwrites the data in the raw.latest_contributor_follower_counts table"
 )
 
 # create a job to run latest_contributor_following_count asset
