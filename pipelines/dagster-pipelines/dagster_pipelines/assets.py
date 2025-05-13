@@ -4055,7 +4055,7 @@ def get_github_contributor_followers_count(context, node_ids, gh_pat): # Renamed
     api_url = "https://api.github.com/graphql"
     headers = {"Authorization": f"bearer {gh_pat}"}
     results = {}
-    batch_size = 50 # GraphQL allows up to 100 aliases, but 50 is safer for stability/complexity
+    batch_size = 100 # GraphQL allows up to 100 aliases, but 50 is safer for stability/complexity
     error_counts = {"count_403_errors": 0, "count_502_errors": 0, "count_other_errors": 0}
 
     for i in range(0, len(node_ids), batch_size):
