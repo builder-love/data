@@ -995,6 +995,11 @@ models:
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: text
+      - name: contributor_type
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
       - name: dominant_language
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
@@ -1013,6 +1018,11 @@ models:
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: bigint
+      - name: contributions_to_og_repos
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: normalized_total_repo_quality_weighted_contribution_score_rank
       - name: total_repo_quality_weighted_contribution_score
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
