@@ -117,104 +117,6 @@ def contributor_node_id_swap(context, df_contributors: pd.DataFrame, cloud_sql_e
     return df_result
 
 
-def follower_contributor_node_id_swap(context, df_contributors: pd.DataFrame, cloud_sql_engine) -> pd.DataFrame:
-    """
-    Swaps legacy GitHub contributor node IDs in a DataFrame for the new format IDs
-    by looking up values in the clean.latest_contributor_data table.
-
-    This is the same as contributor_node_id_swap, but it is used for the followers table follower_node_id column..
-
-    Args:
-        context: The Dagster context object (for logging).
-        df_contributors: Input DataFrame with a 'follower_node_id' column
-                         that might contain legacy IDs.
-        cloud_sql_engine: SQLAlchemy engine connected to the database.
-
-    Returns:
-        A pandas DataFrame with the 'follower_node_id' column updated
-        to the new format where applicable.
-    """
-    context.log.info("Starting follower contributor node ID swap process.")
-
-    # --- Input Validation ---
-    if 'follower_node_id' not in df_contributors.columns:
-         context.log.error("Input dataframe df_contributors is missing the 'follower_node_id' column. Skipping swap.")
-         return df_contributors
-
-    if df_contributors.empty:
-        context.log.info("Input dataframe df_contributors is empty. Skipping swap.")
-        return df_contributors
-
-    # --- Read Lookup Data ---
-    try:
-        # Construct the SQL query using sqlalchemy.text to handle potential schema names safely
-        lookup_query = text("""
-            SELECT DISTINCT
-                contributor_node_id,       -- New format ID
-                contributor_node_id_legacy -- Legacy format ID
-            FROM clean.latest_contributor_data
-            WHERE contributor_node_id_legacy IS NOT NULL
-              AND contributor_node_id IS NOT NULL
-        """)
-        # Read only necessary columns and distinct pairs
-        df_lookup = pd.read_sql(lookup_query, cloud_sql_engine)
-
-        context.log.info(f"Successfully read {len(df_lookup)} distinct lookup rows from clean.latest_contributor_data.")
-
-        # Handle case where lookup table is empty or missing columns (though query selects them)
-        if df_lookup.empty:
-            context.log.warning("Lookup table clean.latest_contributor_data returned no data or no relevant pairs. Skipping swap.")
-            return df_contributors
-        if 'contributor_node_id' not in df_lookup.columns or 'contributor_node_id_legacy' not in df_lookup.columns:
-             context.log.error("Lookup table clean.latest_contributor_data is missing required columns after query. Skipping swap.")
-             return df_contributors
-
-    except Exception as e:
-        context.log.error(f"Failed to read from clean.latest_contributor_data: {e}. Skipping swap.")
-        # Depending on requirements, you might want to raise the exception instead
-        # raise e
-        return df_contributors
-
-    # --- Perform the Swap using Merge ---
-
-    # Rename the new ID column in the lookup table to avoid naming conflicts after merge
-    df_lookup = df_lookup.rename(columns={'contributor_node_id': 'contributor_node_id_new'})
-
-    # Perform a left merge: Keep all rows from df_contributors.
-    # Match df_contributors.contributor_node_id (potentially legacy) with df_lookup.contributor_node_id_legacy
-    context.log.info(f"Performing left merge on 'follower_node_id' (activity) == 'contributor_node_id_legacy' (lookup). Input df shape: {df_contributors.shape}")
-    df_merged = pd.merge(
-        df_contributors,
-        df_lookup[['contributor_node_id_new', 'contributor_node_id_legacy']], # Only merge necessary lookup columns
-        how='left',
-        left_on='follower_node_id',
-        right_on='contributor_node_id_legacy'
-    )
-    context.log.info(f"Merge complete. Merged DataFrame shape: {df_merged.shape}")
-
-    # Identify rows where a swap should occur (a new ID was found via the legacy link)
-    swap_condition = df_merged['contributor_node_id_new'].notna()
-    num_swapped = swap_condition.sum()
-    context.log.info(f"Found {num_swapped} rows where contributor_node_id can be updated.")
-
-    # Update the original 'follower_node_id' column
-    # If contributor_node_id_new is not null (match found), use it. Otherwise, keep the original.
-    df_merged['follower_node_id'] = np.where(
-        swap_condition,                          # Condition: New ID found?
-        df_merged['contributor_node_id_new'],    # Value if True: Use the new ID
-        df_merged['follower_node_id']         # Value if False: Keep original ID
-    )
-
-    # --- Cleanup and Return ---
-    # Drop the temporary columns added by the merge
-    # Use errors='ignore' in case the columns weren't added (e.g., if lookup was empty)
-    df_result = df_merged.drop(columns=['contributor_node_id_new', 'contributor_node_id_legacy'], errors='ignore')
-
-    context.log.info(f"Follower contributor node ID swap process completed. Final DataFrame shape: {df_result.shape}")
-
-    return df_result
-
-
 
 # function to get the most recently retrieved local copy of crypto ecosystems export.jsonl
 def get_crypto_ecosystems_project_json(context):
@@ -4293,9 +4195,7 @@ def latest_contributor_follower_counts(context) -> dg.MaterializeResult: # Renam
     try:
         with cloud_sql_engine.connect() as conn:
             with conn.begin():
-                # If this is a new table or you always want to replace:
-                conn.execute(text(f"TRUNCATE TABLE {db_schema}.{table_name}"))
-                context.log.info(f"Table {db_schema}.{table_name} truncated successfully. Now attempting to load new data.")
+                context.log.info(f"Attempting to load new data to table {db_schema}.{table_name}.")
                 contributor_followers_counts_df.to_sql(
                     table_name,
                     conn,
