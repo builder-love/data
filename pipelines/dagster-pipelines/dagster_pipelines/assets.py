@@ -4230,7 +4230,6 @@ def latest_contributor_follower_counts(context) -> dg.MaterializeResult: # Renam
                     and lca.has_contributed_in_last_year = true
                     and lcd.is_active = true
                     and lower(lc.contributor_type) not in('bot', 'anonymous')
-                    limit 200
                 """
             ),
             conn
@@ -4295,12 +4294,12 @@ def latest_contributor_follower_counts(context) -> dg.MaterializeResult: # Renam
         with cloud_sql_engine.connect() as conn:
             with conn.begin():
                 # If this is a new table or you always want to replace:
-                # conn.execute(text(f"TRUNCATE TABLE {db_schema}.{table_name}"))
+                conn.execute(text(f"TRUNCATE TABLE {db_schema}.{table_name}"))
                 context.log.info(f"Table {db_schema}.{table_name} truncated successfully. Now attempting to load new data.")
                 contributor_followers_counts_df.to_sql(
                     table_name,
                     conn,
-                    if_exists='replace',
+                    if_exists='append',
                     chunksize=50000,
                     index=False,
                     schema=db_schema
