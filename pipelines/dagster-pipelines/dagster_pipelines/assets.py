@@ -4177,7 +4177,7 @@ def get_github_contributor_followers(context, node_ids, gh_pat):
     api_url = "https://api.github.com/graphql"
     headers = {"Authorization": f"bearer {gh_pat}"}
     results = {}
-    batch_size = 50
+    batch_size = 25
     
     cpu_time_used = 0 
     real_time_used = 0
@@ -4201,7 +4201,7 @@ def get_github_contributor_followers(context, node_ids, gh_pat):
             node_alias = f"n{j}_node"
             query_definition_parts.append(f"${variable_name}: ID!")
             variables[variable_name] = node_id_value
-            # Followers will still have id and login.
+            # Followers will still have id.
             query_body_parts.append(f"""
                 {node_alias}: node(id: ${variable_name}) {{
                     __typename
