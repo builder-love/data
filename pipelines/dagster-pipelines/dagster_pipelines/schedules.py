@@ -17,7 +17,7 @@ from dagster_pipelines.jobs import (
     update_crypto_ecosystems_repo_and_run_export_job,
     crypto_ecosystems_project_json_job,
     latest_contributor_data_job,
-    latest_contributor_followers_job,
+    latest_contributor_follower_counts_job,
     latest_contributor_following_count_job,
     latest_contributor_activity_job
 )
@@ -287,23 +287,23 @@ def latest_contributor_data_schedule(context):
 
     return {}
 
-# create a schedule to run latest_contributor_followers_job on the 9th of each month at 10 minutes past midnight
+# create a schedule to run latest_contributor_follower_counts_job on the 9th of each month at 10 minutes past midnight
 @schedule(
-    job=latest_contributor_followers_job,
+    job=latest_contributor_follower_counts_job,
     cron_schedule="10 0 9 * *",
     execution_timezone="America/New_York"
 )
-def latest_contributor_followers_schedule(context):
+def latest_contributor_follower_counts_schedule(context):
     # Log the start time of the job
-    context.log.info(f"latest_contributor_followers_schedule job started at: {context.scheduled_execution_time}")
+    context.log.info(f"latest_contributor_follower_counts_schedule job started at: {context.scheduled_execution_time}")
     start_time = context.scheduled_execution_time
 
     # Log the end time of the job
-    context.log.info(f"latest_contributor_followers_schedule job ended at: {context.scheduled_execution_time}")
+    context.log.info(f"latest_contributor_follower_counts_schedule job ended at: {context.scheduled_execution_time}")
     end_time = context.scheduled_execution_time
     
     # Log the duration of the job
-    context.log.info(f"latest_contributor_followers_schedule job duration: {end_time - start_time}")
+    context.log.info(f"latest_contributor_follower_counts_schedule job duration: {end_time - start_time}")
 
     return {}
 
