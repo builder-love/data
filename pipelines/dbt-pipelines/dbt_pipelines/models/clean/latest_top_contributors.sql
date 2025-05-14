@@ -3,6 +3,7 @@
 -- sources: latest_project_repos_contributors, latest_contributors
 -- referenced models: latest_project_repos, latest_top_projects
 -- use pre hooks to set work_mem and temp_buffers to 350MB and 175MB respectively
+-- ref the latest_repo_exclude table to exclude non-crypto native, popular repos that make their way into the crypto ecosystem dataset
 
 {{ config(
     materialized='table',
@@ -14,10 +15,11 @@
 
 with not_a_bot_account as (
   select
-    lcd.contributor_node_id
+    lcd.contributor_node_id,
+    lcd.contributor_unique_id_builder_love
 
   from {{ ref('latest_contributor_data') }} lcd left join {{ ref('latest_contributor_activity') }} lca
-    on lcd.contributor_node_id = lca.contributor_node_id left join {{ source('clean','latest_contributors') }} lc
+    on lcd.contributor_node_id = lca.contributor_node_id left join {{ source('clean_schema','latest_contributors_clean') }} lc
     on lcd.contributor_unique_id_builder_love = lc.contributor_unique_id_builder_love
 
   WHERE lca.has_contributed_in_last_year = true
@@ -27,10 +29,11 @@ with not_a_bot_account as (
 
 sure_bot as (
   select
-    lcd.contributor_node_id
+    lcd.contributor_node_id,
+    lcd.contributor_unique_id_builder_love
 
   from {{ ref('latest_contributor_data') }} lcd left join {{ ref('latest_contributor_activity') }} lca
-    on lcd.contributor_node_id = lca.contributor_node_id left join {{ source('clean','latest_contributors') }} lc
+    on lcd.contributor_node_id = lca.contributor_node_id left join {{ source('clean_schema','latest_contributors_clean') }} lc
     on lcd.contributor_unique_id_builder_love = lc.contributor_unique_id_builder_love
 
   WHERE lca.has_contributed_in_last_year = true
@@ -45,10 +48,11 @@ sure_bot as (
 
 sure_bot_login as (
   select
-    lcd.contributor_node_id
+    lcd.contributor_node_id,
+    lcd.contributor_unique_id_builder_love
 
   from {{ ref('latest_contributor_data') }} lcd left join {{ ref('latest_contributor_activity') }} lca
-    on lcd.contributor_node_id = lca.contributor_node_id left join {{ source('clean','latest_contributors') }} lc
+    on lcd.contributor_node_id = lca.contributor_node_id left join {{ source('clean_schema','latest_contributors_clean') }} lc
     on lcd.contributor_unique_id_builder_love = lc.contributor_unique_id_builder_love left join {{ ref('latest_contributor_following') }} lcf
     on lcd.contributor_node_id = lcf.contributor_node_id
 
@@ -61,18 +65,29 @@ sure_bot_login as (
 ),
 
 manual_identify_bot as (
-  select lcd.contributor_node_id
-  from {{ ref('latest_contributor_data') }} lcd left join {{ source('clean','latest_contributors') }} lc
+  select lcd.contributor_node_id,
+    lcd.contributor_unique_id_builder_love
+
+  from {{ ref('latest_contributor_data') }} lcd left join {{ source('clean_schema','latest_contributors_clean') }} lc
     on lcd.contributor_unique_id_builder_love = lc.contributor_unique_id_builder_love 
   where lc.contributor_login in ('bors')
 ),
 
 bots as (
-  select sure_bot.contributor_node_id from sure_bot
+  select sure_bot.contributor_node_id,
+    sure_bot.contributor_unique_id_builder_love
+
+  from sure_bot
   union
-  select sure_bot_login.contributor_node_id from sure_bot_login
+  select sure_bot_login.contributor_node_id,
+    sure_bot_login.contributor_unique_id_builder_love
+
+  from sure_bot_login
   union 
-  select manual_identify_bot.contributor_node_id from manual_identify_bot
+  select manual_identify_bot.contributor_node_id,
+    manual_identify_bot.contributor_unique_id_builder_love
+
+  from manual_identify_bot
 ),
 
 active_non_bot_contributors as (
@@ -83,7 +98,7 @@ active_non_bot_contributors as (
     contributor_contributions,
     lprc.data_timestamp
 
-  from {{ source('clean','latest_project_repos_contributors') }} lprc inner join {{ source('clean','latest_contributors')}} lc
+  from {{ source('clean_schema','latest_project_repos_contributors_clean') }} lprc inner join {{ source('clean_schema','latest_contributors_clean')}} lc
     on lprc.contributor_unique_id_builder_love = lc.contributor_unique_id_builder_love left join {{ ref('latest_contributor_data')}} lcd
     on lc.contributor_unique_id_builder_love = lcd.contributor_unique_id_builder_love left join {{ ref('latest_contributor_activity')}} lca
     on lcd.contributor_node_id = lca.contributor_node_id
@@ -105,6 +120,8 @@ repo_quality_weight_score as (
 
   from {{ref('latest_top_repos')}} ltr left join active_non_bot_contributors cr 
     on ltr.repo = cr.repo
+  
+  where ltr.repo not in (select distinct repo from {{ ref('latest_repo_exclude') }})
 ),
 
 sum_repo_quality_weight as (
@@ -138,6 +155,7 @@ contributors_og_repos as (
     on c.repo = f.repo 
 
   where f.is_fork = FALSE 
+  and c.repo not in (select distinct repo from {{ ref('latest_repo_exclude') }})
 ),
 
 top_og_repo_contributors as (
@@ -157,20 +175,29 @@ top_contributor_metrics as (
     contributor_login,
     lc.contributor_type,
     lcdl.dominant_language,
+    lcd.location,
     lc.contributor_unique_id_builder_love,
-    total_repos_contributed_to,
-    total_contributions,
-    contributions_to_og_repos,
-    total_repo_quality_weighted_contribution_score,
-    total_og_repo_quality_weighted_contribution_score,
+    coalesce(total_repos_contributed_to, 0) as total_repos_contributed_to,
+    coalesce(total_contributions, 0) as total_contributions,
+    coalesce(contributions_to_og_repos, 0) as contributions_to_og_repos,
+    coalesce(total_repo_quality_weighted_contribution_score, 0) as total_repo_quality_weighted_contribution_score,
+    coalesce(total_og_repo_quality_weighted_contribution_score, 0) as total_og_repo_quality_weighted_contribution_score,
+    coalesce(lcfc.followers_total_count, 0) as followers_total_count,
     lc.contributor_html_url,
     lc.data_timestamp
 
-from {{ source('clean','latest_contributors')}} lc left join sum_repo_quality_weight sr
+from {{ source('clean_schema','latest_contributors_clean')}} lc left join sum_repo_quality_weight sr
   on lc.contributor_unique_id_builder_love = sr.contributor_unique_id_builder_love left join contributor_repo_activity cra
   on lc.contributor_unique_id_builder_love = cra.contributor_unique_id_builder_love left join {{ ref('latest_contributor_dominant_language') }} lcdl
   on lc.contributor_unique_id_builder_love = lcdl.contributor_unique_id_builder_love left join top_og_repo_contributors torc
-  on lc.contributor_unique_id_builder_love = torc.contributor_unique_id_builder_love
+  on lc.contributor_unique_id_builder_love = torc.contributor_unique_id_builder_love left join {{ ref('latest_contributor_data') }} lcd
+  on lc.contributor_unique_id_builder_love = lcd.contributor_unique_id_builder_love left join {{ ref('latest_contributor_follower_count') }} lcfc
+  on lcd.contributor_node_id = lcfc.contributor_node_id
+
+-- filter out bots from the final contributor list
+-- we use contributor_unique_id_builder_love since latest_contributors likely contains legacy contributor_node_id values
+where lc.contributor_type <> 'bot'
+and lc.contributor_unique_id_builder_love not in (select distinct contributor_unique_id_builder_love from bots)
 ),
 
 normalized_top_contributors as (
@@ -179,16 +206,19 @@ normalized_top_contributors as (
     contributor_type,
     contributor_unique_id_builder_love,
     contributor_html_url,
+    location,
     dominant_language,
     total_repos_contributed_to,
     total_contributions,
     contributions_to_og_repos,
     total_repo_quality_weighted_contribution_score,
     total_og_repo_quality_weighted_contribution_score,
+    followers_total_count,
     (total_repos_contributed_to - MIN(total_repos_contributed_to) OVER ())::NUMERIC / NULLIF((MAX(total_repos_contributed_to) OVER () - MIN(total_repos_contributed_to) OVER ())::NUMERIC,0) AS normalized_total_repos_contributed_to,
     (total_contributions - MIN(total_contributions) OVER ())::NUMERIC / NULLIF((MAX(total_contributions) OVER () - MIN(total_contributions) OVER ())::NUMERIC,0) AS normalized_total_contributions,
     (total_repo_quality_weighted_contribution_score - MIN(total_repo_quality_weighted_contribution_score) OVER ())::NUMERIC / NULLIF((MAX(total_repo_quality_weighted_contribution_score) OVER () - MIN(total_repo_quality_weighted_contribution_score) OVER ())::NUMERIC,0) AS normalized_total_repo_quality_weighted_contribution_score,
     (total_og_repo_quality_weighted_contribution_score - MIN(total_og_repo_quality_weighted_contribution_score) OVER ())::NUMERIC / NULLIF((MAX(total_og_repo_quality_weighted_contribution_score) OVER () - MIN(total_og_repo_quality_weighted_contribution_score) OVER ())::NUMERIC,0) AS normalized_total_og_repo_quality_weighted_contribution_score,
+    (followers_total_count - MIN(followers_total_count) OVER ())::NUMERIC / NULLIF((MAX(followers_total_count) OVER () - MIN(followers_total_count) OVER ())::NUMERIC,0) AS normalized_followers_total_count,
     data_timestamp
 
   from top_contributor_metrics
@@ -199,6 +229,7 @@ ranked_contributors as (
     contributor_login,
     contributor_type,
     dominant_language,
+    location,
     contributor_unique_id_builder_love,
     contributor_html_url,
     total_repos_contributed_to,
@@ -206,15 +237,18 @@ ranked_contributors as (
     contributions_to_og_repos,
     total_repo_quality_weighted_contribution_score,
     total_og_repo_quality_weighted_contribution_score,
+    followers_total_count,
     normalized_total_repos_contributed_to,
     normalized_total_contributions,
     normalized_total_repo_quality_weighted_contribution_score,
     normalized_total_og_repo_quality_weighted_contribution_score,
+    normalized_followers_total_count,
     (
       (coalesce(normalized_total_repos_contributed_to,0) * .05) + 
-      (coalesce(normalized_total_contributions,0) * .25) +
-      (coalesce(normalized_total_repo_quality_weighted_contribution_score,0) * .45) +
-      (coalesce(normalized_total_og_repo_quality_weighted_contribution_score,0) * .25)
+      (coalesce(normalized_total_contributions,0) * .20) +
+      (coalesce(normalized_total_repo_quality_weighted_contribution_score,0) * .40) +
+      (coalesce(normalized_total_og_repo_quality_weighted_contribution_score,0) * .25) +
+      (coalesce(normalized_followers_total_count,0) * .10)
     ) as weighted_score,
     data_timestamp
   
@@ -227,6 +261,7 @@ final_ranking as (
     contributor_login,
     contributor_type,
     dominant_language,
+    location,
     contributor_unique_id_builder_love,
     contributor_html_url,
     total_repos_contributed_to::bigint,
@@ -234,10 +269,12 @@ final_ranking as (
     contributions_to_og_repos::bigint,
     total_repo_quality_weighted_contribution_score::numeric,
     total_og_repo_quality_weighted_contribution_score::numeric,
+    followers_total_count::bigint,
     normalized_total_repos_contributed_to::numeric,
     normalized_total_contributions::numeric,
     normalized_total_repo_quality_weighted_contribution_score::numeric,
     normalized_total_og_repo_quality_weighted_contribution_score::numeric,
+    normalized_followers_total_count::numeric,
     weighted_score::numeric,
     (weighted_score * 100) as weighted_score_index,
     RANK() OVER (

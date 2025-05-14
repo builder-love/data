@@ -11,18 +11,19 @@
 select 
     contributor_unique_id_builder_love,
     contributor_login,
-    contributor_type,
+    case when lower(contributor_type) = 'anonymous' then TRUE else FALSE end as is_anon,
     dominant_language,
+    coalesce(location, 'Unknown') as location,
     contributor_html_url,
     total_repos_contributed_to,
     total_contributions,
     contributions_to_og_repos,
     normalized_total_repo_quality_weighted_contribution_score_rank,
+    followers_total_count,
     weighted_score_index,
-    quartile_bucket,
     contributor_rank,
     TO_CHAR(data_timestamp, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS latest_data_timestamp
 
-from {{ source('prod', 'latest_top_contributors') }}
+from {{ source('prod_schema', 'latest_top_contributors_prod') }}
 order by weighted_score desc
 limit 100

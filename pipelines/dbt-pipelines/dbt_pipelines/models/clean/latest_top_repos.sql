@@ -51,7 +51,7 @@ all_metrics as (
     stargaze_change.stargaze_count_pct_change_over_4_weeks,
     watcher_change.watcher_count_pct_change_over_4_weeks
     
-  from {{ source('clean', 'latest_active_distinct_project_repos') }} p left join {{ ref('latest_project_repos_fork_count') }} f 
+  from {{ source('clean_schema', 'latest_active_distinct_project_repos_clean') }} p left join {{ ref('latest_project_repos_fork_count') }} f 
     on p.repo = f.repo left join {{ ref('latest_project_repos_stargaze_count') }} s
     on p.repo = s.repo left join {{ ref('latest_project_repos_watcher_count') }} w
     on p.repo = w.repo left join latest_four_week_change_repos_fork_count fork_change

@@ -65,7 +65,11 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
-  - name: clean
+      - name: contributor_follower_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+  - name: clean_schema
     database: postgres
     schema: clean
     tables:
@@ -137,7 +141,9 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 8, period: day}
-      - name: latest_active_distinct_project_repos
+      - name: latest_active_distinct_project_repos_clean
+        identifier: latest_active_distinct_project_repos
+        description: "latest_active_distinct_project_repos for clean schema"
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 8, period: day}
@@ -149,7 +155,9 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
-      - name: latest_project_repos
+      - name: latest_project_repos_clean
+        identifier: latest_project_repos
+        description: "latest_project_repos for clean schema"
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
@@ -221,7 +229,9 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 8, period: day}
-      - name: latest_project_repos_contributors
+      - name: latest_project_repos_contributors_clean
+        identifier: latest_project_repos_contributors
+        description: "latest_project_repos_contributors for clean schema"
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
@@ -245,7 +255,9 @@ sources:
                 - repo
                 - contributor_unique_id_builder_love
                 - data_timestamp
-      - name: latest_contributors
+      - name: latest_contributors_clean
+        identifier: latest_contributors
+        description: "latest_contributors for clean schema"
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
@@ -347,22 +359,53 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 8, period: day}
+      - name: contributor_follower_count
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: latest_repo_exclude
   # note: the prod tables listed in this sources file are used in source() functions in the models/api folder
   # we use source() instead of ref() because the prod tables are not transformed by dbt--prod schema is a nightly replication of clean
-  - name: prod
+  - name: prod_schema
     database: postgres
     schema: prod
     tables:
-      - name: normalized_project_commit_count
-      - name: normalized_project_contributor_count
-      - name: normalized_project_fork_count
-      - name: normalized_project_stargaze_count
-      - name: normalized_project_watcher_count
-      - name: normalized_project_is_fork
-      - name: normalized_top_projects
-      - name: latest_top_projects
-      - name: latest_top_contributors
-      - name: latest_project_fork_count
-      - name: latest_project_stargaze_count
-      - name: latest_project_watcher_count
-      - name: latest_project_is_fork
+      - name: normalized_project_commit_count_prod
+        identifier: normalized_project_commit_count
+        description: "normalized_project_commit_count for prod"
+      - name: normalized_project_contributor_count_prod
+        identifier: normalized_project_contributor_count
+        description: "normalized_project_contributor_count for prod"
+      - name: normalized_project_fork_count_prod
+        identifier: normalized_project_fork_count
+        description: "normalized_project_fork_count for prod"
+      - name: normalized_project_stargaze_count_prod
+        identifier: normalized_project_stargaze_count
+        description: "normalized_project_stargaze_count for prod"
+      - name: normalized_project_watcher_count_prod
+        identifier: normalized_project_watcher_count
+        description: "normalized_project_watcher_count for prod"
+      - name: normalized_project_is_fork_prod
+        identifier: normalized_project_is_fork
+        description: "normalized_project_is_fork for prod"
+      - name: normalized_top_projects_prod
+        identifier: normalized_top_projects
+        description: "normalized_top_projects for prod"
+      - name: latest_top_projects_prod
+        identifier: latest_top_projects
+        description: "latest_top_projects for prod"
+      - name: latest_top_contributors_prod
+        identifier: latest_top_contributors
+        description: "latest_top_contributors for prod"
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: latest_project_fork_count_prod
+        identifier: latest_project_fork_count
+        description: "latest_project_fork_count for prod"
+      - name: latest_project_watcher_count_prod
+        identifier: latest_project_watcher_count
+        description: "latest_project_watcher_count for prod"
+      - name: latest_project_is_fork_prod
+        identifier: latest_project_is_fork
+        description: "latest_project_is_fork for prod"

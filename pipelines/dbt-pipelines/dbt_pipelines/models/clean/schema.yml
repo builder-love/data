@@ -340,7 +340,27 @@ models:
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: numeric
+      - name: weighted_score_sma
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: prior_4_weeks_weighted_score
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
       - name: project_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: prior_4_weeks_project_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: absolute_project_rank_change_over_4_weeks
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: rank_of_project_rank_change_over_4_weeks
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: bigint
@@ -971,11 +991,31 @@ models:
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: numeric
+      - name: weighted_score_index
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
       - name: weighted_score_sma
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: numeric
+      - name: prior_4_weeks_weighted_score
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
       - name: project_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: prior_4_weeks_project_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: absolute_project_rank_change_over_4_weeks
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: rank_of_project_rank_change_over_4_weeks
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: bigint
@@ -1004,6 +1044,10 @@ models:
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: text
+      - name: location
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
       - name: contributor_unique_id_builder_love
         tests:
           - not_null
@@ -1022,6 +1066,10 @@ models:
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: bigint
+      - name: followers_total_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
       - name: normalized_total_repo_quality_weighted_contribution_score_rank
       - name: total_repo_quality_weighted_contribution_score
         tests:
@@ -1035,6 +1083,7 @@ models:
       - name: normalized_total_contributions
       - name: normalized_total_repo_quality_weighted_contribution_score
       - name: normalized_total_og_repo_quality_weighted_contribution_score
+      - name: normalized_followers_total_count
       - name: weighted_score
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
@@ -1050,6 +1099,40 @@ models:
     tests:
       - unique_combination_of_columns:
           column_names: [contributor_unique_id_builder_love, data_timestamp]
+  - name: normalized_contributor_follower_count
+    columns:
+      - name: contributor_node_id
+        tests:
+          - not_null
+      - name: followers_total_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+    tests:
+      - unique_combination_of_columns:
+          column_names: [contributor_node_id, data_timestamp]
+  - name: latest_contributor_follower_count
+    columns:
+      - name: contributor_node_id
+        tests:
+          - not_null
+      - name: followers_total_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+    tests:
+      - unique_combination_of_columns:
+          column_names: [contributor_node_id, data_timestamp]
   - name: four_week_change_project_repos_commit_count
     columns:
       - name: repo
@@ -1281,3 +1364,16 @@ models:
     tests:
       - unique_combination_of_columns:
           column_names: [project_title, data_timestamp]
+  - name: latest_repo_exclude
+    columns:
+      - name: repo
+        tests:
+          - not_null
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+    tests:
+      - unique_combination_of_columns:
+          column_names: [repo, data_timestamp]

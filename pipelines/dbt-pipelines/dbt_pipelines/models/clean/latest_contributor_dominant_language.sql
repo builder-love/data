@@ -18,7 +18,7 @@ with non_bot_contributors as (
     contributor_contributions,
     lprc.data_timestamp
 
-  from {{ source('clean','latest_project_repos_contributors') }} lprc inner join {{ source('clean','latest_contributors') }} lc
+  from {{ source('clean_schema','latest_project_repos_contributors_clean') }} lprc inner join {{ source('clean_schema','latest_contributors_clean') }} lc
     on lprc.contributor_unique_id_builder_love = lc.contributor_unique_id_builder_love
 
   where lower(lc.contributor_type) <> 'bot' and lc.contributor_unique_id_builder_love not in('|')
