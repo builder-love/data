@@ -359,9 +359,29 @@ final_ranking AS (
     NTILE(4) OVER (
       PARTITION BY report_date
       ORDER BY weighted_score DESC
-    ) AS quartile_bucket
+    ) AS quartile_bucket,
+    -- Calculate the 8-week simple moving average (current week + 7 preceding weeks)
+    AVG(weighted_score) OVER (
+        PARTITION BY project_title 
+        ORDER BY report_date ASC   
+        ROWS BETWEEN 7 PRECEDING AND CURRENT ROW -- Window: current row + 7 previous rows
+    ) AS weighted_score_sma,
+    LAG(weighted_score, 3) OVER (
+        PARTITION BY project_title 
+        ORDER BY report_date
+    ) AS prior_4_weeks_weighted_score
 
   FROM ranked_projects
+),
+
+ranking_changes as (
+  select fr.*,
+  LAG(project_rank, 3) OVER (
+      PARTITION BY project_title 
+      ORDER BY report_date
+  ) AS prior_4_weeks_project_rank
+
+  from final_ranking fr
 )
 
 SELECT
@@ -394,8 +414,15 @@ SELECT
   normalized_watcher_count_pct_change_over_4_weeks,
   normalized_is_not_fork_ratio_pct_change_over_4_weeks,
   weighted_score,
+  weighted_score_sma,
+  prior_4_weeks_weighted_score,
   round(weighted_score * 100, 1) AS weighted_score_index,
   project_rank,
+  prior_4_weeks_project_rank,
+  (prior_4_weeks_project_rank - project_rank) absolute_project_rank_change_over_4_weeks,
+  RANK() OVER (
+    ORDER BY (prior_4_weeks_project_rank - project_rank) DESC
+  ) AS rank_of_project_rank_change_over_4_weeks,
   quartile_bucket,
   CASE
       WHEN quartile_bucket = 1 THEN 'Top Project'
@@ -405,6 +432,6 @@ SELECT
       ELSE 'Unknown'
   END AS project_rank_category
 
-FROM final_ranking
+FROM ranking_changes
 
 ORDER BY report_date desc, weighted_score DESC

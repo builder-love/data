@@ -4107,8 +4107,8 @@ def get_github_contributor_followers_count(context, node_ids, gh_pat): # Renamed
     group_name="ingestion",
     tags={"github_api": "True"}
 )
-def latest_contributor_follower_counts(context) -> dg.MaterializeResult: # Renamed asset
-    context.log.info("Starting latest_contributor_follower_counts asset.")
+def contributor_follower_counts(context) -> dg.MaterializeResult: # Renamed asset
+    context.log.info("Starting contributor_follower_counts asset.")
 
     fallback_filename = f"/tmp/contributor_follower_counts_fallback_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.parquet"
     cloud_sql_engine = context.resources.cloud_sql_postgres_resource
@@ -4189,7 +4189,7 @@ def latest_contributor_follower_counts(context) -> dg.MaterializeResult: # Renam
     context.log.info(f"Final contributor_followers_counts_df to load:\n{contributor_followers_counts_df.head().to_markdown(index=False)}")
 
     # Define table name carefully - this implies a new table structure
-    table_name = 'latest_contributor_follower_counts' # Suggesting a new table name
+    table_name = 'contributor_follower_counts' # Suggesting a new table name
     db_schema = 'raw'
 
     try:

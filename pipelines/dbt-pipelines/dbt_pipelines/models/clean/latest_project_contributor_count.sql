@@ -16,7 +16,7 @@ with latest_project_repos_contributors as (
     lprc.repo,
     lc.contributor_login,
     lprc.data_timestamp
-  from {{ source('clean', 'latest_project_repos_contributors') }} lprc left join {{ source('clean', 'latest_contributors') }} lc 
+  from {{ source('clean_schema', 'latest_project_repos_contributors_clean') }} lprc left join {{ source('clean_schema', 'latest_contributors_clean') }} lc 
     on lprc.contributor_unique_id_builder_love = lc.contributor_unique_id_builder_love
   where LOWER(lc.contributor_type) IN ('user', 'anonymous') 
     and lprc.contributor_contributions > 0 
@@ -28,7 +28,7 @@ project_contributor_count as (
   count(distinct contributors.contributor_login) contributor_count,
   max(contributors.data_timestamp) data_timestamp
 
-  from latest_project_repos_contributors contributors left join {{ source('clean', 'latest_project_repos') }} lpr
+  from latest_project_repos_contributors contributors left join {{ source('clean_schema', 'latest_project_repos_clean') }} lpr
     on contributors.repo = lpr.repo
   where lpr.project_title is not null
   group by 1
