@@ -307,10 +307,6 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
-      - name: latest_top_contributors
-        loaded_at_field: data_timestamp
-        freshness: 
-          warn_after: {count: 32, period: day}
       - name: latest_contributor_dominant_language
         loaded_at_field: data_timestamp
         freshness: 
