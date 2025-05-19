@@ -14,7 +14,9 @@
 {{ config(
     materialized='table',
     unique_key='project_organization_url || report_date',
-    tags=['latest_clean_data']
+    tags=['latest_clean_data'],
+    pre_hook="SET work_mem = '240MB'; SET temp_buffers = '120MB';",
+    post_hook="RESET work_mem; RESET temp_buffers;"
 ) }}
 
 WITH distinct_project_orgs as (
