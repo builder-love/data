@@ -1,7 +1,6 @@
 from dagster import schedule, ScheduleDefinition, define_asset_job
 from dagster_dbt import build_schedule_from_dbt_selection
 from dagster_pipelines.jobs import (
-    github_project_orgs_job, 
     latest_active_distinct_project_repos_job, 
     project_repos_stargaze_count_job, 
     project_repos_fork_count_job, 
@@ -82,27 +81,6 @@ def update_crypto_ecosystems_raw_file_schedule(context):
     
     # Log the duration of the job
     context.log.info(f"update_crypto_ecosystems_raw_file_schedule job duration: {end_time - start_time}")
-
-    return {}
-
-
-# create a schedule to run github_project_orgs_job every 15 days at midnight
-@schedule(
-    job=github_project_orgs_job,
-    cron_schedule="10 0 15 * *", 
-    execution_timezone="America/New_York"
-)
-def github_project_orgs_schedule(context):
-    # Log the start time of the job
-    context.log.info(f"github_project_orgs_schedule job started at: {context.scheduled_execution_time}")
-    start_time = context.scheduled_execution_time
-
-    # Log the end time of the job
-    context.log.info(f"github_project_orgs_schedule job ended at: {context.scheduled_execution_time}")
-    end_time = context.scheduled_execution_time
-    
-    # Log the duration of the job
-    context.log.info(f"github_project_orgs_schedule job duration: {end_time - start_time}")
 
     return {}
 
@@ -417,15 +395,6 @@ normalized_dbt_assets_schedule = ScheduleDefinition(
     execution_timezone="America/New_York", 
     name="normalized_dbt_assets_daily_schedule",  # Give the schedule a name
 )
-
-# to select a specific dbt asset, use the following code
-# normalized_dbt_assets_schedule = build_schedule_from_dbt_selection(
-#     [all_dbt_assets],
-#     job_name="normalized_dbt_assets_job",  # Give the schedule a name
-#     cron_schedule="50 9 * * *",
-#     execution_timezone="America/New_York", 
-#     dbt_select="fqn:normalized_project_organizations"
-# )
 
 # create a schedule to run latest_dbt_assets_job every day at 1030 est
 # Create the schedule

@@ -1,22 +1,6 @@
 version: 2
 
 models:
-  - name: normalized_project_organizations
-    columns:
-      - name: data_timestamp
-        tests:
-          - not_null
-          - dbt_expectations.expect_column_values_to_be_of_type:
-              column_type: timestamp without time zone
-      - name: project_organization_url
-        tests:
-          - not_null
-      - name: project_title
-        tests:
-          - not_null
-    tests:
-      - unique_combination_of_columns:
-          column_names: [project_organization_url, project_title, data_timestamp]
   - name: normalized_project_repo_count
     columns:
       - name: data_timestamp
@@ -393,10 +377,10 @@ models:
           column_names: [repo, data_timestamp]
   - name: latest_project_organizations
     columns:
-      - name: project_title
+      - name: project_organization_url
         tests:
           - not_null
-      - name: project_organization_url
+      - name: project_title
         tests:
           - not_null
       - name: data_timestamp
@@ -406,7 +390,7 @@ models:
               column_type: timestamp without time zone
     tests:
       - unique_combination_of_columns:
-          column_names: [project_organization_url, project_title, data_timestamp]
+          column_names: [project_title, project_organization_url, data_timestamp]
   - name: latest_project_sub_ecosystems
     columns:
       - name: project_title
@@ -433,7 +417,11 @@ models:
           - not_null
       - name: repo_source
         tests:
-          - not_null  
+          - not_null 
+      - name: project_organization_url
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
       - name: data_timestamp
         tests:
           - not_null
@@ -920,6 +908,68 @@ models:
     tests:
       - unique_combination_of_columns:
           column_names: [repo, data_timestamp] 
+  - name: latest_top_project_organizations
+    columns:
+      - name: project_organization_url
+        tests:
+          - not_null
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+      - name: fork_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: integer
+      - name: stargaze_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: integer
+      - name: watcher_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: integer
+      - name: fork_count_pct_change_over_4_weeks
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: stargaze_count_pct_change_over_4_weeks
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: watcher_count_pct_change_over_4_weeks
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: normalized_fork_count
+      - name: normalized_stargaze_count
+      - name: normalized_watcher_count
+      - name: normalized_fork_count_pct_change_over_4_weeks
+      - name: normalized_stargaze_count_pct_change_over_4_weeks
+      - name: normalized_watcher_count_pct_change_over_4_weeks
+      - name: weighted_score
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: weighted_score_index
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: org_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: quartile_bucket
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: integer
+      - name: org_rank_category
+        tests:
+          - not_null
+    tests:
+      - unique_combination_of_columns:
+          column_names: [project_organization_url, data_timestamp]
   - name: latest_top_projects
     columns:
       - name: project_title
@@ -1029,6 +1079,52 @@ models:
     tests:
       - unique_combination_of_columns:
           column_names: [project_title, report_date]
+  - name: latest_top_project_repos
+    columns:
+      - name: project_title
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
+      - name: latest_data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
+      - name: repo
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
+      - name: fork_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: integer
+      - name: stargaze_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: integer
+      - name: watcher_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: integer
+      - name: weighted_score_index
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: repo_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: quartile_bucket
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: integer
+      - name: repo_rank_category
+        tests:
+          - not_null
+    tests:
+      - unique_combination_of_columns:
+          column_names: [project_title, repo, latest_data_timestamp]
   - name: latest_top_contributors
     columns:
       - name: contributor_login
