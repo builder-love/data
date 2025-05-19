@@ -4,7 +4,6 @@ from dagster import Definitions
 from dagster_pipelines.resources import cloud_sql_postgres_resource, dbt_resource, electric_capital_ecosystems_repo
 
 from dagster_pipelines.assets import (
-    github_project_orgs, 
     latest_active_distinct_github_project_repos,
     github_project_repos_stargaze_count, 
     github_project_repos_fork_count, 
@@ -25,7 +24,6 @@ from dagster_pipelines.cleaning_assets import (
     update_crypto_ecosystems_raw_file_job
 )
 from dagster_pipelines.jobs import (
-    github_project_orgs_job, 
     latest_active_distinct_project_repos_job, 
     project_repos_stargaze_count_job, 
     project_repos_fork_count_job, 
@@ -46,7 +44,6 @@ from dagster_pipelines.jobs import (
     latest_contributor_activity_job
 )
 from dagster_pipelines.schedules import (
-    github_project_orgs_schedule, 
     latest_active_distinct_project_repos_schedule, 
     project_repos_stargaze_count_schedule, 
     project_repos_fork_count_schedule, 
@@ -90,7 +87,6 @@ defs = Definitions(
         "electric_capital_ecosystems_repo": electric_capital_ecosystems_repo
     },
     assets=[
-        github_project_orgs, 
         latest_active_distinct_github_project_repos, 
         github_project_repos_stargaze_count, 
         github_project_repos_fork_count,
@@ -109,7 +105,6 @@ defs = Definitions(
         latest_contributor_activity
         ],
     jobs=[
-        github_project_orgs_job, 
         latest_active_distinct_project_repos_job, 
         project_repos_stargaze_count_job, 
         project_repos_fork_count_job, 
@@ -133,7 +128,6 @@ defs = Definitions(
         latest_contributor_activity_job
         ],
     schedules=[
-        github_project_orgs_schedule, 
         latest_active_distinct_project_repos_schedule, 
         project_repos_stargaze_count_schedule, 
         project_repos_fork_count_schedule,

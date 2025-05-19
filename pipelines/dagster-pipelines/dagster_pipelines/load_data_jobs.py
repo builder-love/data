@@ -10,6 +10,30 @@ from dagster import Output, op, job, Out, Failure, asset
 from dagster_pipelines.api_data import create_dbt_api_views
 
 @op(required_resource_keys={"cloud_sql_postgres_resource"})
+def create_prod_indexes(context, previous_op_output): 
+    """
+    Creates necessary indexes on tables in the temp_prod schema
+    before it's swapped to become the prod schema.
+    """
+    cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+    with cloud_sql_engine.connect() as conn:
+        context.log.info("Creating index on temp_prod.latest_top_project_repos...")
+        # Use CREATE INDEX IF NOT EXISTS to make the op idempotent
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_latest_top_project_repos_project_title 
+            ON temp_prod.latest_top_project_repos (project_title);
+        """))
+        # holde for other indexes for other tables in temp_prod here
+        # ...
+
+        context.log.info("Analyzing temp_prod.latest_top_project_repos after index creation...")
+        conn.execute(text("ANALYZE temp_prod.latest_top_project_repos;"))
+        
+        conn.commit()
+    context.log.info("Successfully created indexes on temp_prod tables.")
+    return previous_op_output 
+
+@op(required_resource_keys={"cloud_sql_postgres_resource"})
 def create_temp_prod_schema(context, _):
     cloud_sql_engine = context.resources.cloud_sql_postgres_resource
     with cloud_sql_engine.connect() as conn:
@@ -132,7 +156,8 @@ def refresh_prod_schema():
     dbt_results = run_dbt_tests_on_clean()
     temp_schema = create_temp_prod_schema(dbt_results)
     copy_data = copy_clean_to_temp_prod(temp_schema)
-    schemas_swapped = swap_schemas(copy_data)
+    indexes_created = create_prod_indexes(copy_data)
+    schemas_swapped = swap_schemas(indexes_created)
 
     # Build API models AFTER swap, targeting the 'api' schema
     # this is necessary because we use 'cascade' in cleanup_old_schema function

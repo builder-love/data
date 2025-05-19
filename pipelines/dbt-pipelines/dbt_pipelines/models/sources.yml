@@ -73,10 +73,6 @@ sources:
     database: postgres
     schema: clean
     tables:
-      - name: normalized_project_organizations
-        loaded_at_field: data_timestamp
-        freshness: 
-          warn_after: {count: 32, period: day}
       - name: normalized_project_repo_count
         loaded_at_field: data_timestamp
         freshness: 
@@ -226,6 +222,10 @@ sources:
         freshness: 
           warn_after: {count: 8, period: day}
       - name: latest_top_projects
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
+      - name: latest_top_project_repos
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 8, period: day}
@@ -405,3 +405,9 @@ sources:
       - name: latest_project_is_fork_prod
         identifier: latest_project_is_fork
         description: "latest_project_is_fork for prod"
+      - name: latest_top_project_repos_prod
+        identifier: latest_top_project_repos
+        description: "latest_top_project_repos for prod"
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}

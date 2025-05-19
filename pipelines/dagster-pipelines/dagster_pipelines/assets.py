@@ -226,64 +226,6 @@ def crypto_ecosystems_project_json(context) -> dg.MaterializeResult:
     )
 
 
-# define the asset that gets the list of github orgs for a project
-@dg.asset(
-    required_resource_keys={"cloud_sql_postgres_resource"},
-    group_name="ingestion",
-)
-def github_project_orgs(context) -> dg.MaterializeResult:
-    # Get the cloud sql postgres resource
-    cloud_sql_engine = context.resources.cloud_sql_postgres_resource
-
-    query_text = """
-        -- Specify the target table and the columns you want to insert into
-        INSERT INTO raw.project_organizations (project_title, project_organization_url, data_timestamp)
-
-        -- data to be inserted
-        WITH projects AS (
-        SELECT
-            project_title,
-            'https://github.com/' || split_part(repo, '/', 4) AS project_organization_url
-
-        FROM raw.crypto_ecosystems_raw_file
-        WHERE sub_ecosystems = '{}'
-            AND split_part(repo, '/', 4) <> ''
-        )
-
-        SELECT DISTINCT ON (project_title) 
-            project_title,             
-            project_organization_url,  
-            CURRENT_TIMESTAMP
-
-        FROM projects
-    """
-
-    # send the insert into query to postgres 
-    try: 
-        with cloud_sql_engine.connect() as conn:
-            conn.execute(text(query_text))
-            conn.commit()
-
-            # capture asset metadata
-            preview_query = text("select count(*) from raw.project_organizations")
-            result = conn.execute(preview_query)
-            # Fetch all rows into a list of tuples
-            row_count = result.fetchone()[0]
-
-            preview_query = text("select * from raw.project_organizations limit 10")
-            result = conn.execute(preview_query)
-            result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
-
-            return dg.MaterializeResult(
-                metadata={
-                    "raw_table_row_count": dg.MetadataValue.int(row_count),
-                    "raw_table_preview": dg.MetadataValue.md(result_df.to_markdown(index=False))
-                }
-            )
-    except Exception as e:
-        raise ValueError(f"Error inserting into raw.project_organizations: {e}")
-
-
 # define the asset that gets the active, distinct repo list from the latest_distinct_project_repos table
 @dg.asset(
     required_resource_keys={"cloud_sql_postgres_resource"},

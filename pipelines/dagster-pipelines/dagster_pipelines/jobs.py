@@ -2,7 +2,6 @@ from dagster import job
 import dagster as dg
 from dagster import define_asset_job
 from dagster_pipelines.assets import (
-    github_project_orgs,  
     latest_active_distinct_github_project_repos,
     github_project_repos_stargaze_count, 
     github_project_repos_fork_count, 
@@ -37,14 +36,6 @@ crypto_ecosystems_project_json_job = dg.define_asset_job(
     "crypto_ecosystems_project_json_refresh", 
     selection=["crypto_ecosystems_project_json"],
     description="Reads the local exports.jsonl file and creates a staging table in the raw schema"
-)
-
-# create a job to run github_project_orgs asset
-github_project_orgs_job = dg.define_asset_job(
-    "github_project_orgs_refresh", 
-    selection=["github_project_orgs"],
-    tags={"github_api": "True"},
-    description="Gets the listed orgs from the project's toml file in the crypto_ecosystems repo and appends them to the raw.github_project_organizations table"
 )
 
 # create a job to run latest_active_distinct_project_repos asset

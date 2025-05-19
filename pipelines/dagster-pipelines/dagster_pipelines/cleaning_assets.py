@@ -60,15 +60,6 @@ else:
     # Define an empty list or handle appropriately if dbt assets are optional
     all_dbt_assets = []
 
-# to select a specific dbt asset, use the following code
-# @dbt_assets(
-#     manifest="/home/builder-love/data/pipelines/dbt-pipelines/dbt_pipelines/target/manifest.json",
-#     select="fqn:normalized_project_organizations"  # Select ALL dbt resources
-# )
-# def all_dbt_assets(context: AssetExecutionContext, dbt_resource: DbtCliResource):
-#     yield from dbt_resource.cli(["run", "--select", "fqn:normalized_project_organizations"], context=context).stream()
-#     yield from dbt_resource.cli(["test", "--select", "fqn:normalized_project_organizations"], context=context).stream()
-
 ########################################################################################################################
 
 
