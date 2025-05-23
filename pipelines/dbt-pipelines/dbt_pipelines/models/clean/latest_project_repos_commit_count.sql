@@ -1,3 +1,4 @@
+-- latest_project_repos_commit_count.sql
 -- create a view that shows the latest project repos and their commit count
 
 {{ config(

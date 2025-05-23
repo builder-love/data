@@ -8,7 +8,7 @@
     tags=['timestamp_normalized']
 ) }}
 
-{% set initial_load_timestamp = '2025-03-20T20:40:39.337025Z' %}
+{% set initial_load_timestamp = '2025-05-21T19:45:34.463275Z' %}
 
 {% if is_incremental() %}
 

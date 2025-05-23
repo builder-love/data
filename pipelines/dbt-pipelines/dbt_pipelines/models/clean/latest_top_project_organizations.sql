@@ -15,7 +15,7 @@
     materialized='table',
     unique_key='project_organization_url || report_date',
     tags=['latest_clean_data'],
-    pre_hook="SET work_mem = '240MB'; SET temp_buffers = '120MB';",
+    pre_hook="SET work_mem = '400MB'; SET temp_buffers = '200MB';",
     post_hook="RESET work_mem; RESET temp_buffers;"
 ) }}
 
@@ -198,11 +198,11 @@ SELECT
   normalized_stargaze_count_pct_change_over_4_weeks::numeric,
   normalized_watcher_count_pct_change_over_4_weeks::numeric,
   weighted_score::numeric,
-  round(weighted_score * 100, 1) AS weighted_score_index,
-  org_rank,
-  quartile_bucket,
+  round(weighted_score::numeric * 100, 1) AS weighted_score_index,
+  org_rank::integer,
+  quartile_bucket::integer,
   CASE
-      WHEN quartile_bucket = 1 THEN 'Top Repo'
+      WHEN quartile_bucket = 1 THEN 'Top Organization'
       WHEN quartile_bucket = 2 THEN 'Leader'
       WHEN quartile_bucket = 3 THEN 'In-The-Mix'
       WHEN quartile_bucket = 4 THEN 'Laggard'

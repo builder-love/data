@@ -10,7 +10,7 @@
 
 select 
   project_title,
-  latest_data_timestamp,
+  TO_CHAR(data_timestamp, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS latest_data_timestamp,
   repo,
   fork_count,
   stargaze_count,
@@ -21,5 +21,3 @@ select
   repo_rank_category
 
 from {{ source('prod_schema', 'latest_top_project_repos_prod') }}
-
-order by weighted_score_index desc

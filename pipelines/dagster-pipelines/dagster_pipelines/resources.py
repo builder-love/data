@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from sqlalchemy import create_engine
-from dagster import resource
+from dagster import resource, EnvVar
 from dagster_dbt import DbtCliResource
 
 # define the cloud sql postgres resource
@@ -25,24 +25,66 @@ def cloud_sql_postgres_resource(context):
     engine = create_engine(conn_str)
     return engine
 
-# define the path to dbt project directory
-# Get the absolute path to the directory containing this file (resources.py)
-_THIS_FILE_DIR = Path(__file__).parent.resolve()
-_PROJECT_ROOT_PATH = _THIS_FILE_DIR.parent.parent
+# Define the path to dbt project directory
+_THIS_FILE_DIR = Path(__file__).parent.resolve() # Assuming resources.py is in dagster_pipelines/
+_DAGSTER_PROJECT_ROOT = _THIS_FILE_DIR.parent # Root of dagster_pipelines project
+_MONOREPO_ROOT = _DAGSTER_PROJECT_ROOT.parent # Root of the monorepo (e.g., data/)
 
-# this calculates the path relative to the current file (resources.py)
-# assumes resources.py -> dagster_pipelines -> dagster-pipelines -> data -> dbt-pipelines/dbt_pipelines
-DBT_PROJECT_PATH = _PROJECT_ROOT_PATH / "dbt-pipelines" / "dbt_pipelines"
+DBT_PROJECT_DIR = _MONOREPO_ROOT / "dbt-pipelines" / "dbt_pipelines"
+DBT_PROFILES_DIR = DBT_PROJECT_DIR # Assuming profiles.yml is in the dbt project directory
 
 # Calculate path to the dbt executable inside dbt_venv
-DBT_EXECUTABLE_PATH = _PROJECT_ROOT_PATH / "dbt_venv" / "bin" / "dbt"
+DBT_EXECUTABLE_PATH = _MONOREPO_ROOT / "dbt_venv" / "bin" / "dbt"
 
-# define dbt resource
-dbt_resource = DbtCliResource(
-    project_dir=os.fspath(DBT_PROJECT_PATH),  
-    profiles_dir=os.fspath(DBT_PROJECT_PATH),
-    executable=os.fspath(DBT_EXECUTABLE_PATH)
+# dbt resource for STAGING environment
+# This will use the 'stg' target from your profiles.yml by default if 'target' is not specified,
+# or you can explicitly set it.
+dbt_stg_resource = DbtCliResource(
+    project_dir=os.fspath(DBT_PROJECT_DIR),
+    profiles_dir=os.fspath(DBT_PROFILES_DIR),
+    executable=os.fspath(DBT_EXECUTABLE_PATH),
+    target="stg"  # Explicitly set target to 'stg'
 )
+
+# dbt resource for PRODUCTION environment
+dbt_prod_resource = DbtCliResource(
+    project_dir=os.fspath(DBT_PROJECT_DIR),
+    profiles_dir=os.fspath(DBT_PROFILES_DIR),
+    executable=os.fspath(DBT_EXECUTABLE_PATH),
+    target="prod"  # Explicitly set target to 'prod'
+)
+
+# Resource to get the active environment configuration
+@resource(config_schema={"env_target": str}) # Expect "prod" or "stg"
+def active_env_config_resource(context):
+    env_target = context.resource_config["env_target"]
+    config_data = {}  # Initialize an empty dictionary
+
+    if env_target == "stg":
+        config_data = {
+            "raw_schema": "raw_stg",
+            "clean_schema": "clean_stg",
+            "temp_target_schema": "temp_prod_stg",
+            "target_schema": "prod_stg",
+            "target_schema_old": "prod_stg_old",
+            "api_schema": "api_stg",
+        }
+    elif env_target == "prod":
+        config_data = {
+            "raw_schema": "raw",
+            "clean_schema": "clean",
+            "temp_target_schema": "temp_prod",
+            "target_schema": "prod",
+            "target_schema_old": "prod_old",
+            "api_schema": "api",
+        }
+    else:
+        raise ValueError(f"Unsupported env_target: {env_target}. Must be 'prod' or 'stg'.")
+
+    # Add the environment name to the returned dictionary using the key 'env'
+    config_data['env'] = env_target 
+
+    return config_data
 
 # define the crypto ecosystems repo resource
 @resource

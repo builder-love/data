@@ -1,6 +1,7 @@
 import os
 
 from pathlib import Path
+from typing import Any, Dict, Mapping, Optional
 import time
 import dagster as dg
 import pandas as pd
@@ -8,58 +9,110 @@ from sqlalchemy import text
 import requests
 import json
 import random
-from dagster_pipelines.assets import github_project_repos_contributors
 from dagster_dbt import DbtCliResource, DagsterDbtTranslator, dbt_assets, DbtCliInvocation
 from dagster import asset, AssetExecutionContext, AssetKey, op, Out, Output, job
-from dagster_pipelines.resources import dbt_resource
+from dagster_pipelines.resources import dbt_stg_resource, dbt_prod_resource
 import gzip
 import psycopg2
 
 ################################################ normalized time series data ################################################
 
-# this calculates the path relative to the current file (resources.py)
-# assumes resources.py -> dagster_pipelines -> dagster-pipelines -> data -> dbt-pipelines/dbt_pipelines
-_THIS_FILE_DIR = Path(__file__).parent.resolve()
-_PROJECT_ROOT_PATH = _THIS_FILE_DIR.parent.parent
-MANIFEST_PATH = _PROJECT_ROOT_PATH / "dbt-pipelines" / "dbt_pipelines" / "target" / "manifest.json"
+_THIS_FILE_DIR = Path(__file__).parent.resolve() # dagster_pipelines/cleaning_assets.py
+_DAGSTER_PROJECT_ROOT = _THIS_FILE_DIR.parent # dagster_pipelines/
+_MONOREPO_ROOT = _DAGSTER_PROJECT_ROOT.parent # e.g., data/
 
-# Define Custom Translator for dbt sources
+DBT_PROJECT_DIR_FOR_MANIFESTS = _MONOREPO_ROOT / "dbt-pipelines" / "dbt_pipelines"
+
+# Manifest path for STAGING
+DBT_STG_MANIFEST_PATH = DBT_PROJECT_DIR_FOR_MANIFESTS / "target" / "stg" / "manifest.json"
+
+# Manifest path for PRODUCTION
+DBT_PROD_MANIFEST_PATH = DBT_PROJECT_DIR_FOR_MANIFESTS / "target" / "prod" / "manifest.json"
+
+# --- Custom DagsterDbtTranslator ---
+# Define Custom Translator for dbt sources (can be reused)
 class CustomDbtTranslator(DagsterDbtTranslator):
-    def get_asset_key(self, dbt_resource_props) -> AssetKey:
-        """
-        Override this method to customize asset key generation.
-        """
-        # Get the default asset key first
-        asset_key = super().get_asset_key(dbt_resource_props)
+    def __init__(self, target_group_name: str, environment_prefix: str):
+        self._target_group_name = target_group_name
+        self.environment_prefix = environment_prefix  # e.g., "prod" or "stg"
+        super().__init__()
 
-        # Check if the resource is a dbt source
-        if dbt_resource_props["resource_type"] == "source":
-            # Prepend 'sources' (or anything unique) to the key path
-            # This changes ['clean', 'latest_project_repos'] to ['sources', 'clean', 'latest_project_repos']
-            # for the source only.
-            return AssetKey(["sources"] + asset_key.path) 
+    def get_asset_key(self, dbt_node_info: Dict[str, Any]) -> AssetKey:
+        # Get the default asset key (e.g., AssetKey(["clean_stg", "latest_project_repos"]))
+        base_key = super().get_asset_key(dbt_node_info)
+        base_path = base_key.path
 
-        # For all other resource types (like models), use the default key
-        return asset_key
+        if dbt_node_info.get("resource_type") == "source":
+            # Apply environment prefix and existing "dbt_sources" prefix for sources
+            # e.g., AssetKey(["stg", "dbt_sources", "raw_schema_name", "source_table_name"])
+            return AssetKey([self.environment_prefix, "dbt_sources"] + base_path)
+        
+        # For models (and other non-source dbt resources like seeds, snapshots)
+        # Prepend the environment prefix to make the AssetKey globally unique in Dagster
+        # e.g., AssetKey(["stg", "clean_stg", "latest_project_repos"])
+        return AssetKey([self.environment_prefix] + base_path)
 
-# --- Use the Translator in your dbt_assets definition ---
-# Make sure DBT_MANIFEST_PATH points to your actual manifest.json
-# If it doesn't exist, run `dbt build` or `dbt compile` in your dbt project first.
-if MANIFEST_PATH.exists():
+    def get_tags(self, dbt_node_info: Dict[str, Any]) -> Optional[Mapping[str, str]]:
+        dagster_tags = super().get_tags(dbt_node_info) or {}
+        dbt_model_tags = dbt_node_info.get("tags", [])
+        for tag in dbt_model_tags:
+            dagster_tags[tag] = ""
+        return dagster_tags if dagster_tags else None
+
+    def get_group_name(self, dbt_node_info: Dict[str, Any]) -> Optional[str]:
+        return self._target_group_name
+
+# --- Define dbt Assets using @dbt_assets ---
+
+# --- PRODUCTION dbt assets ---
+if DBT_PROD_MANIFEST_PATH.exists():
     @dbt_assets(
-    manifest=MANIFEST_PATH,
-    dagster_dbt_translator=CustomDbtTranslator(),
-    select="fqn:*"  # Select ALL dbt resources
+        manifest=DBT_PROD_MANIFEST_PATH,
+        dagster_dbt_translator=CustomDbtTranslator(
+            target_group_name="prod_dbt_assets",
+            environment_prefix="prod"  # Add environment prefix
+        ) # Pass an instance of the translator, configured with the desired group name; translating dbt tags to Dagster tags
     )
-    def all_dbt_assets(context: AssetExecutionContext, dbt_resource: DbtCliResource):
-        yield from dbt_resource.cli(["run"], context=context).stream()
-        yield from dbt_resource.cli(["test"], context=context).stream()
+    def all_prod_dbt_assets(context: AssetExecutionContext, dbt_cli: DbtCliResource):
+        """
+        Dagster assets for dbt models in the production environment,
+        loaded from the production manifest.
+        The DbtCliResource (dbt_prod_resource via with_resources) will handle targeting 'prod'.
+        """
+        # dbt.cli(["build"], ...) will run models, tests, seeds, snapshots based on the manifest.
+        # The DbtCliResource is already configured for the 'prod' target.
+        # You can add selectors here if you want to refine what dbt runs, e.g., dbt.cli(["build", "--select", "my_model"])
+        # but for "all" assets, you typically build everything represented by the manifest assets.
+        # yield from dbt.cli(["build"], context=context).stream()
+        # Alternatively, if you want separate run and test:
+        yield from dbt_cli.cli(["run"], context=context).stream()
+        yield from dbt_cli.cli(["test"], context=context).stream()
 else:
-    # Handle case where manifest doesn't exist (e.g., define empty assets list or raise error)
-    print(f"WARNING: dbt manifest not found at {MANIFEST_PATH}. Skipping dbt asset definition.")
-    # Define an empty list or handle appropriately if dbt assets are optional
-    all_dbt_assets = []
+    print(f"WARNING: dbt PRODUCTION manifest not found at {DBT_PROD_MANIFEST_PATH}. Skipping prod_dbt_assets definition.")
+    print(f"Please run 'dbt compile --target prod' (or 'dbt run --target prod') in your dbt project.")
+    all_prod_dbt_assets = [] # type: ignore
 
+# --- STAGING dbt assets ---
+if DBT_STG_MANIFEST_PATH.exists():
+    @dbt_assets(
+        manifest=DBT_STG_MANIFEST_PATH,
+        dagster_dbt_translator=CustomDbtTranslator(
+            target_group_name="stg_dbt_assets",
+            environment_prefix="stg"  # Add environment prefix 
+        ) # Pass an instance of the translator, configured with the desired group name; translating dbt tags to Dagster tags
+    )
+    def all_stg_dbt_assets(context: AssetExecutionContext, dbt_cli: DbtCliResource):
+        """
+        Dagster assets for dbt models in the staging environment,
+        loaded from the staging manifest.
+        The DbtCliResource (dbt_stg_resource via with_resources) will handle targeting 'stg'.
+        """
+        yield from dbt_cli.cli(["run"], context=context).stream()
+        yield from dbt_cli.cli(["test"], context=context).stream()
+else:
+    print(f"WARNING: dbt STAGING manifest not found at {DBT_STG_MANIFEST_PATH}. Skipping stg_dbt_assets definition.")
+    print(f"Please run 'dbt compile --target stg' (or 'dbt run --target stg') in your dbt project.")
+    all_stg_dbt_assets = [] # type: ignore
 ########################################################################################################################
 
 
@@ -86,11 +139,14 @@ def run_validations(context,
                     df_contributors: pd.DataFrame, 
                     df_project_repos_contributors: pd.DataFrame, 
                     engine, 
-                    schema_name: str = "clean", 
                     final_table_name_contributors: str = "latest_contributors", 
                     final_table_name_project_repos_contributors: str = "latest_project_repos_contributors") -> bool:
     """Runs validation checks on the DataFrame against the existing final table."""
-    context.log.info("Running validations...")
+
+    env_config = context.resources.active_env_config  # Get environment config
+    clean_schema = env_config["clean_schema"]
+
+    context.log.info(f"-------------************** Running validations in environment: {env_config['env']} **************-------------")
 
     context.log.info("Checking if DataFrames are empty...")
     if df_contributors.empty or df_project_repos_contributors.empty:
@@ -108,29 +164,29 @@ def run_validations(context,
     existing_record_count_val_project_repos_contributors = None
 
     try:
-        context.log.info(f"Checking existing data in {schema_name}.{final_table_name_contributors} and {schema_name}.{final_table_name_project_repos_contributors}...")
+        context.log.info(f"Checking existing data in {clean_schema}.{final_table_name_contributors} and {clean_schema}.{final_table_name_project_repos_contributors}...")
         with engine.connect() as conn:
             table_exists_result_contributors = conn.execute(text(
-                f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = '{schema_name}' AND table_name = '{final_table_name_contributors}');"
+                f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = '{clean_schema}' AND table_name = '{final_table_name_contributors}');"
             ))
             final_table_exists_contributors = table_exists_result_contributors.scalar_one()
 
             table_exists_result_project_repos_contributors = conn.execute(text(
-                f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = '{schema_name}' AND table_name = '{final_table_name_project_repos_contributors}');"
+                f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = '{clean_schema}' AND table_name = '{final_table_name_project_repos_contributors}');"
             ))
             final_table_exists_project_repos_contributors = table_exists_result_project_repos_contributors.scalar_one()
 
             if final_table_exists_contributors:
-                result_count = conn.execute(text(f"SELECT COUNT(*) FROM {schema_name}.{final_table_name_contributors}"))
+                result_count = conn.execute(text(f"SELECT COUNT(*) FROM {clean_schema}.{final_table_name_contributors}"))
                 existing_record_count_val_contributors = result_count.scalar()
             else:
-                context.log.warning(f"Final table {schema_name}.{final_table_name_contributors} does not exist. Skipping comparison checks for this table.")
+                context.log.warning(f"Final table {clean_schema}.{final_table_name_contributors} does not exist. Skipping comparison checks for this table.")
 
             if final_table_exists_project_repos_contributors:
-                result_count = conn.execute(text(f"SELECT COUNT(*) FROM {schema_name}.{final_table_name_project_repos_contributors}"))
+                result_count = conn.execute(text(f"SELECT COUNT(*) FROM {clean_schema}.{final_table_name_project_repos_contributors}"))
                 existing_record_count_val_project_repos_contributors = result_count.scalar()
             else:
-                context.log.warning(f"Final table {schema_name}.{final_table_name_project_repos_contributors} does not exist. Skipping comparison checks for this table.")
+                context.log.warning(f"Final table {clean_schema}.{final_table_name_project_repos_contributors} does not exist. Skipping comparison checks for this table.")
     except Exception as e:
         context.log.error(f"Error accessing existing data: {e}", exc_info=True)
         raise ValueError(f"Validation failed: Error accessing existing data.")
@@ -166,50 +222,217 @@ def run_validations(context,
     context.log.info("All validations passed.")
     return True
 
-@dg.asset(
-    required_resource_keys={"cloud_sql_postgres_resource"},
-    group_name="clean_data",
-    deps=[github_project_repos_contributors],
-    automation_condition=dg.AutomationCondition.eager(),
-)
-def process_compressed_contributors_data(context) -> dg.MaterializeResult:
-    # Get the cloud sql postgres resource
-    cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+# to accomodate multiple environments, we will use a factory function
+def create_process_compressed_contributors_data_asset(env_prefix: str):
 
-    # Define table names constants for clarity and easy changes
-    staging_table_name_contributors = "latest_contributors_staging"
-    final_table_name_contributors = "latest_contributors"
-    old_table_name_contributors = "latest_contributors_old"
-    staging_table_name_project_repos_contributors = "latest_project_repos_contributors_staging"
-    final_table_name_project_repos_contributors = "latest_project_repos_contributors"
-    old_table_name_project_repos_contributors = "latest_project_repos_contributors_old"
-    schema_name = "clean"
+    # Construct the AssetKey for the upstream dependency.
+    # The upstream asset's base name is "github_project_repos_contributors".
+    # It will also have the same env_prefix.
+    upstream_dependency_key = AssetKey([env_prefix, "github_project_repos_contributors"])
 
-    # Execute the query
-    # Extracts, decompresses, and inserts data into the clean table.
-    try:
-        with cloud_sql_engine.connect() as conn:
+    @dg.asset(
+        key_prefix=env_prefix,
+        name="process_compressed_contributors_data",
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        group_name="clean_data",
+        deps=[upstream_dependency_key],
+        automation_condition=dg.AutomationCondition.eager(),
+    )
+    def _process_compressed_contributors_data_env_specific(context) -> dg.MaterializeResult:
+        # Get the cloud sql postgres resource
+        cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+        env_config = context.resources.active_env_config  # Get environment config
+        clean_schema = env_config["clean_schema"]
+        raw_schema = env_config["raw_schema"]
+        # Define table names constants for clarity and easy changes
+        staging_table_name_contributors = "latest_contributors_staging"
+        final_table_name_contributors = "latest_contributors"
+        old_table_name_contributors = "latest_contributors_old"
+        staging_table_name_project_repos_contributors = "latest_project_repos_contributors_staging"
+        final_table_name_project_repos_contributors = "latest_project_repos_contributors"
+        old_table_name_project_repos_contributors = "latest_project_repos_contributors_old"
 
-            # first get data_timestamp from source and target tables to compare
-            result = conn.execute(text("select max(data_timestamp) from raw.project_repos_contributors"))
-            max_source_ts_aware = result.scalar()
-            result = conn.execute(text("select max(data_timestamp) from clean.latest_contributors"))
-            target_ts_aware_contributors = result.scalar()
+        # tell the user what environment they are running in
+        context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
-            # confirm max_source_ts_aware and target_ts_aware_contributors are not None
-            if max_source_ts_aware is None or target_ts_aware_contributors is None:
-                raise ValueError("Validation failed: max_source_ts_aware or target_ts_aware_contributors is None.")
-                return dg.MaterializeResult(
-                    metadata={
-                        "latest_contributors_preview": "No rows found for preview.",
-                        "latest_project_repos_contributors_preview": "No rows found for preview.",
-                        "message": "Data is not valid."
-                    }
-                )
+        # Execute the query
+        # Extracts, decompresses, and inserts data into the clean table.
+        try:
+            with cloud_sql_engine.connect() as conn:
 
-            datetime_validation = process_compressed_contributors_validation_dates(context, target_ts_aware_contributors, max_source_ts_aware, final_table_name_contributors)
+                # first get data_timestamp from source and target tables to compare
+                result = conn.execute(text(f"select max(data_timestamp) from {raw_schema}.project_repos_contributors"))
+                max_source_ts_aware = result.scalar()
+                result = conn.execute(text(f"select max(data_timestamp) from {clean_schema}.latest_contributors"))
+                target_ts_aware_contributors = result.scalar()
 
-            if not datetime_validation:
+                # confirm max_source_ts_aware and target_ts_aware_contributors are not None
+                if max_source_ts_aware is None or target_ts_aware_contributors is None:
+                    raise ValueError("Validation failed: max_source_ts_aware or target_ts_aware_contributors is None.")
+                    return dg.MaterializeResult(
+                        metadata={
+                            "latest_contributors_preview": "No rows found for preview.",
+                            "latest_project_repos_contributors_preview": "No rows found for preview.",
+                            "message": "Data is not valid."
+                        }
+                    )
+
+                datetime_validation = process_compressed_contributors_validation_dates(context, target_ts_aware_contributors, max_source_ts_aware, final_table_name_contributors)
+
+                if not datetime_validation:
+                    context.log.warning("Validation failed: Data is not valid.")
+                    return dg.MaterializeResult(
+                        metadata={
+                            "latest_contributors_preview": "No rows found for preview.",
+                            "latest_project_repos_contributors_preview": "No rows found for preview.",
+                            "message": "Data is not valid."
+                        }
+                    )
+                context.log.info("Date validation passed. Proceeding with data extraction...")
+
+                # get the data from the source table
+                result = conn.execute(text(
+                    f"""
+                    SELECT repo, contributor_list -- select the bytea column data
+                    FROM {raw_schema}.project_repos_contributors
+                    WHERE data_timestamp = (SELECT MAX(data_timestamp) FROM {raw_schema}.project_repos_contributors)
+                    """
+                ))
+                rows = pd.DataFrame(result.fetchall(), columns=result.keys())
+
+                if rows.empty:
+                    raise ValueError("Validation failed: DataFrame is empty.")
+                    return dg.MaterializeResult(metadata={"row_count": 0, "message": "No raw data found."})
+
+                # capture the data in a list
+                print(f"Fetched {len(rows)} repos with compressed data. Decompressing...")
+                data = []
+                for repo, compressed_byte_data in rows.itertuples(index=False):
+
+                    if compressed_byte_data is None:
+                        print(f"Warning: Skipping repo {repo} due to NULL compressed data.")
+                        continue # Skip this row if data is NUL
+
+                    # Decompress the data - returns json byte string
+                    try:
+                        contributors_json_string = gzip.decompress(compressed_byte_data)
+                    except gzip.BadGzipFile as e:
+                        print(f"Error decompressing data for repo {repo}: {e}. Skipping.")
+                        continue # Skip this repo if decompression fails
+                    except Exception as e:
+                        print(f"Unexpected error during decompression for repo {repo}: {e}. Skipping.")
+                        continue # Skip on other unexpected errors
+
+                    # Parse the JSON string into a list of dictionaries
+                    try:
+                        contributors_list = json.loads(contributors_json_string)
+                    except json.JSONDecodeError as e:
+                        print(f"Error decoding JSON for repo {repo}: {e}. Skipping.")
+                        continue # Skip if JSON is invalid
+
+                    for contributor in contributors_list:
+                        if contributor['type'] != 'Anonymous':
+                            data.append({
+                                "repo": repo,
+                                "contributor_login": contributor['login'],
+                                "contributor_id": contributor.get('id'),
+                                "contributor_node_id": contributor.get('node_id'),
+                                "contributor_avatar_url": contributor.get('avatar_url'),
+                                "contributor_gravatar_id": contributor.get('gravatar_id'),
+                                "contributor_url": contributor.get('url'),
+                                "contributor_html_url": contributor.get('html_url'),
+                                "contributor_followers_url": contributor.get('followers_url'),
+                                "contributor_following_url": contributor.get('following_url'),
+                                "contributor_gists_url": contributor.get('gists_url'),
+                                "contributor_starred_url": contributor.get('starred_url'),
+                                "contributor_subscriptions_url": contributor.get('subscriptions_url'),
+                                "contributor_organizations_url": contributor.get('organizations_url'),
+                                "contributor_repos_url": contributor.get('repos_url'),
+                                "contributor_events_url": contributor.get('events_url'),
+                                "contributor_received_events_url": contributor.get('received_events_url'),
+                                "contributor_type": contributor.get('type'),
+                                "contributor_user_view_type": contributor.get('user_view_type'),
+                                "contributor_site_admin": contributor.get('site_admin'),
+                                "contributor_contributions": contributor.get('contributions'),
+                                "contributor_name": contributor.get('name'), # contributor.get('name') is not always present
+                                "contributor_email": contributor.get('email'), # contributor.get('email') is not always present,
+                                "contributor_unique_id_builder_love": f"{contributor.get('login')}|{contributor.get('id')}", # derived unique identifier for the contributor
+                            })
+                        else:
+                            data.append({
+                                "repo": repo,
+                                "contributor_login": f"{contributor['name']}",
+                                "contributor_id": None,
+                                "contributor_node_id": None,
+                                "contributor_avatar_url": None,
+                                "contributor_gravatar_id": None,
+                                "contributor_url": None,
+                                "contributor_html_url": None,
+                                "contributor_followers_url": None,
+                                "contributor_following_url": None,
+                                "contributor_gists_url": None,
+                                "contributor_starred_url": None,
+                                "contributor_subscriptions_url": None,
+                                "contributor_organizations_url": None,
+                                "contributor_repos_url": None,
+                                "contributor_events_url": None,
+                                "contributor_received_events_url": None,
+                                "contributor_type": contributor.get('type'),
+                                "contributor_user_view_type": None,
+                                "contributor_site_admin": None,
+                                "contributor_contributions": contributor['contributions'],
+                                "contributor_name": contributor['name'],
+                                "contributor_email": contributor['email'],
+                                "contributor_unique_id_builder_love": f"{contributor.get('name')}|{contributor.get('email')}", # derived unique identifier for the contributor
+                            })
+
+            if not data:
+                context.log.info("Data list is empty after processing raw rows. Raising error.")
+                raise ValueError("Validation failed: Data is empty.")
+
+            # write the data to a pandas dataframe
+            contributors_df = pd.DataFrame(data)
+
+            # get the current unix timestamp as an object so we can pass it to the dataframes
+            data_timestamp = pd.Timestamp.now()
+
+            # create two new dataframes from the contributors_df
+            # one containing the columns: contributor_unique_id_builder_love, repo, contributor_contributions, data_timestamp
+            latest_project_repos_contributors_columns = ['contributor_unique_id_builder_love', 'repo', 'contributor_contributions']
+            # one containing the columns: contributor_unique_id_builder_love, contributor_login, contributor_id, contributor_node_id, contributor_avatar_url, contributor_gravatar_id, contributor_url, contributor_html_url, contributor_followers_url, contributor_following_url, contributor_gists_url, contributor_starred_url, contributor_subscriptions_url, contributor_organizations_url, contributor_site_admin, contributor_repos_url, contributor_events_url, contributor_received_events_url, contributor_type, contributor_user_view_type, contributor_name, contributor_email, data_timestamp
+            latest_contributors_columns = ['contributor_unique_id_builder_love','contributor_login', 'contributor_id', 'contributor_node_id', 'contributor_avatar_url', 'contributor_gravatar_id', 'contributor_url', 'contributor_html_url', 'contributor_followers_url', 'contributor_following_url', 'contributor_gists_url', 'contributor_starred_url', 'contributor_subscriptions_url', 'contributor_organizations_url', 'contributor_site_admin', 'contributor_repos_url', 'contributor_events_url', 'contributor_received_events_url', 'contributor_type', 'contributor_user_view_type', 'contributor_name', 'contributor_email']
+
+            # create the new dataframes
+            latest_project_repos_contributors_df = contributors_df[latest_project_repos_contributors_columns]
+            latest_contributors_df = contributors_df[latest_contributors_columns]
+
+            # print the number of rows in the dataframes
+            if len(contributors_df) > 0 and len(latest_project_repos_contributors_df) > 0 and len(latest_contributors_df) > 0:
+                print(f"Created decompressed dataframe with {len(contributors_df)} rows.")
+                print(f"Created latest_project_repos_contributors_df with {len(latest_project_repos_contributors_df)} rows.")
+                print(f"Created latest_contributors_df with {len(latest_contributors_df)} rows.")
+                if len(latest_project_repos_contributors_df) != len(latest_contributors_df) != len(contributors_df):
+                    raise ValueError("Validation failed: Dataframes are not the same size.")
+                else:
+                    print("All dataframes have the same number of rows.")
+                    print("Dropping old dataframes to free up memory...")
+                    del contributors_df
+            else:
+                raise ValueError("Validation failed: Dataframes are empty.")
+
+            # first update the unix timestamp so that both dataframes have the same data_timestamp
+            # add the data_timestamp to the dataframes
+            latest_project_repos_contributors_df['data_timestamp'] = data_timestamp
+            latest_contributors_df['data_timestamp'] = data_timestamp
+
+            # drop full duplicates from the latest_contributors_df
+            # this table represents the unique contributors across all repos
+            latest_contributors_df = latest_contributors_df.drop_duplicates()
+
+            # Run Validations (Comparing processed data against current FINAL table)
+            validations_passed = run_validations(context, latest_contributors_df, latest_project_repos_contributors_df, cloud_sql_engine, final_table_name_contributors, final_table_name_project_repos_contributors)
+            
+            if not validations_passed:
                 context.log.warning("Validation failed: Data is not valid.")
                 return dg.MaterializeResult(
                     metadata={
@@ -218,267 +441,117 @@ def process_compressed_contributors_data(context) -> dg.MaterializeResult:
                         "message": "Data is not valid."
                     }
                 )
-            context.log.info("Date validation passed. Proceeding with data extraction...")
+            print("All validations passed. Proceeding with data processing...")
 
-            # get the data from the source table
-            result = conn.execute(text(
-                """
-                SELECT repo, contributor_list -- select the bytea column data
-                FROM raw.project_repos_contributors
-                WHERE data_timestamp = (SELECT MAX(data_timestamp) FROM raw.project_repos_contributors)
-                """
-            ))
-            rows = pd.DataFrame(result.fetchall(), columns=result.keys())
+            # Write DataFrame to Staging Tables first
+            # write to two tables here: latest_project_repos_contributors and latest_contributors
+            context.log.info(f"Writing data to staging tables {clean_schema}.{staging_table_name_contributors} and {clean_schema}.{staging_table_name_project_repos_contributors}...")
+            latest_contributors_df.to_sql(
+                staging_table_name_contributors,
+                cloud_sql_engine,
+                if_exists='replace', # Replace staging table safely
+                index=False,
+                schema=clean_schema,
+                chunksize=50000 # Good for large dataframes
+            )
+            latest_project_repos_contributors_df.to_sql(
+                staging_table_name_project_repos_contributors,
+                cloud_sql_engine,
+                if_exists='replace', # Replace staging table safely
+                index=False,
+                schema=clean_schema,
+                chunksize=50000 # Good for large dataframes
+            )
+            print("Successfully wrote to staging tables.")
 
-            if rows.empty:
-                raise ValueError("Validation failed: DataFrame is empty.")
-                return dg.MaterializeResult(metadata={"row_count": 0, "message": "No raw data found."})
+            # Perform Atomic Swap via Transaction
+            context.log.info(f"Performing atomic swap to update {clean_schema}.{final_table_name_contributors} and {clean_schema}.{final_table_name_project_repos_contributors}...")
+            with cloud_sql_engine.connect() as conn:
+                with conn.begin(): # Start transaction
+                    # Use CASCADE if Foreign Keys might point to the table
+                    print(f"Dropping old tables {clean_schema}.{old_table_name_contributors} and {clean_schema}.{old_table_name_project_repos_contributors} if they exist...")
+                    conn.execute(text(f"DROP TABLE IF EXISTS {clean_schema}.{old_table_name_contributors} CASCADE;"))
+                    conn.execute(text(f"DROP TABLE IF EXISTS {clean_schema}.{old_table_name_project_repos_contributors} CASCADE;"))
 
-            # capture the data in a list
-            print(f"Fetched {len(rows)} repos with compressed data. Decompressing...")
-            data = []
-            for repo, compressed_byte_data in rows.itertuples(index=False):
+                    print(f"Renaming current {clean_schema}.{final_table_name_contributors} to {clean_schema}.{old_table_name_contributors} (if it exists)...")
+                    conn.execute(text(f"ALTER TABLE IF EXISTS {clean_schema}.{final_table_name_contributors} RENAME TO {old_table_name_contributors};"))
+                    print(f"Renaming current {clean_schema}.{final_table_name_project_repos_contributors} to {clean_schema}.{old_table_name_project_repos_contributors} (if it exists)...")
+                    conn.execute(text(f"ALTER TABLE IF EXISTS {clean_schema}.{final_table_name_project_repos_contributors} RENAME TO {old_table_name_project_repos_contributors};"))
 
-                if compressed_byte_data is None:
-                    print(f"Warning: Skipping repo {repo} due to NULL compressed data.")
-                    continue # Skip this row if data is NUL
+                    print(f"Renaming staging tables {clean_schema}.{staging_table_name_contributors} and {clean_schema}.{staging_table_name_project_repos_contributors} to {clean_schema}.{final_table_name_contributors} and {clean_schema}.{final_table_name_project_repos_contributors}...")
+                    conn.execute(text(f"ALTER TABLE {clean_schema}.{staging_table_name_contributors} RENAME TO {final_table_name_contributors};"))
+                    conn.execute(text(f"ALTER TABLE {clean_schema}.{staging_table_name_project_repos_contributors} RENAME TO {final_table_name_project_repos_contributors};"))
+                # Transaction commits here if no exceptions were raised inside the 'with conn.begin()' block
+            context.log.info("Atomic swap successful.")
 
-                # Decompress the data - returns json byte string
-                try:
-                    contributors_json_string = gzip.decompress(compressed_byte_data)
-                except gzip.BadGzipFile as e:
-                    print(f"Error decompressing data for repo {repo}: {e}. Skipping.")
-                    continue # Skip this repo if decompression fails
-                except Exception as e:
-                    print(f"Unexpected error during decompression for repo {repo}: {e}. Skipping.")
-                    continue # Skip on other unexpected errors
+            # cleanup old table (outside the main transaction)
+            context.log.info(f"Cleaning up old tables {clean_schema}.{old_table_name_contributors} and {clean_schema}.{old_table_name_project_repos_contributors}...")
+            try:
+                with cloud_sql_engine.connect() as conn:
+                    with conn.begin():
+                        conn.execute(text(f"DROP TABLE IF EXISTS {clean_schema}.{old_table_name_contributors} CASCADE;"))
+                        conn.execute(text(f"DROP TABLE IF EXISTS {clean_schema}.{old_table_name_project_repos_contributors} CASCADE;"))
+                        context.log.info(f"Cleaned up tables {clean_schema}.{old_table_name_contributors} and {clean_schema}.{old_table_name_project_repos_contributors}.")
+            except Exception as cleanup_e:
+                # Log warning - cleanup failure shouldn't fail the asset run
+                context.log.warning(f"Could not drop old tables {clean_schema}.{old_table_name_contributors} and {clean_schema}.{old_table_name_project_repos_contributors}: {cleanup_e}")
 
-                # Parse the JSON string into a list of dictionaries
-                try:
-                    contributors_list = json.loads(contributors_json_string)
-                except json.JSONDecodeError as e:
-                    print(f"Error decoding JSON for repo {repo}: {e}. Skipping.")
-                    continue # Skip if JSON is invalid
+            # recreate the indexes for both tables
+            try:
+                with cloud_sql_engine.connect() as conn:
+                    with conn.begin():
+                        # create the unique_id index
+                        conn.execute(text(f"CREATE INDEX IF NOT EXISTS idx_latest_contributors_unique_id ON {clean_schema}.{final_table_name_contributors} (contributor_unique_id_builder_love);"))
+                        conn.execute(text(f"CREATE INDEX IF NOT EXISTS idx_latest_project_repos_contributors_unique_id ON {clean_schema}.{final_table_name_project_repos_contributors} (contributor_unique_id_builder_love);"))
 
-                for contributor in contributors_list:
-                    if contributor['type'] != 'Anonymous':
-                        data.append({
-                            "repo": repo,
-                            "contributor_login": contributor['login'],
-                            "contributor_id": contributor.get('id'),
-                            "contributor_node_id": contributor.get('node_id'),
-                            "contributor_avatar_url": contributor.get('avatar_url'),
-                            "contributor_gravatar_id": contributor.get('gravatar_id'),
-                            "contributor_url": contributor.get('url'),
-                            "contributor_html_url": contributor.get('html_url'),
-                            "contributor_followers_url": contributor.get('followers_url'),
-                            "contributor_following_url": contributor.get('following_url'),
-                            "contributor_gists_url": contributor.get('gists_url'),
-                            "contributor_starred_url": contributor.get('starred_url'),
-                            "contributor_subscriptions_url": contributor.get('subscriptions_url'),
-                            "contributor_organizations_url": contributor.get('organizations_url'),
-                            "contributor_repos_url": contributor.get('repos_url'),
-                            "contributor_events_url": contributor.get('events_url'),
-                            "contributor_received_events_url": contributor.get('received_events_url'),
-                            "contributor_type": contributor.get('type'),
-                            "contributor_user_view_type": contributor.get('user_view_type'),
-                            "contributor_site_admin": contributor.get('site_admin'),
-                            "contributor_contributions": contributor.get('contributions'),
-                            "contributor_name": contributor.get('name'), # contributor.get('name') is not always present
-                            "contributor_email": contributor.get('email'), # contributor.get('email') is not always present,
-                            "contributor_unique_id_builder_love": f"{contributor.get('login')}|{contributor.get('id')}", # derived unique identifier for the contributor
-                        })
-                    else:
-                        data.append({
-                            "repo": repo,
-                            "contributor_login": f"{contributor['name']}",
-                            "contributor_id": None,
-                            "contributor_node_id": None,
-                            "contributor_avatar_url": None,
-                            "contributor_gravatar_id": None,
-                            "contributor_url": None,
-                            "contributor_html_url": None,
-                            "contributor_followers_url": None,
-                            "contributor_following_url": None,
-                            "contributor_gists_url": None,
-                            "contributor_starred_url": None,
-                            "contributor_subscriptions_url": None,
-                            "contributor_organizations_url": None,
-                            "contributor_repos_url": None,
-                            "contributor_events_url": None,
-                            "contributor_received_events_url": None,
-                            "contributor_type": contributor.get('type'),
-                            "contributor_user_view_type": None,
-                            "contributor_site_admin": None,
-                            "contributor_contributions": contributor['contributions'],
-                            "contributor_name": contributor['name'],
-                            "contributor_email": contributor['email'],
-                            "contributor_unique_id_builder_love": f"{contributor.get('name')}|{contributor.get('email')}", # derived unique identifier for the contributor
-                        })
+                        # create repo index
+                        conn.execute(text(f"CREATE INDEX IF NOT EXISTS idx_latest_project_repos_contributors_repo ON {clean_schema}.{final_table_name_project_repos_contributors} (repo);"))
 
-        if not data:
-            context.log.info("Data list is empty after processing raw rows. Raising error.")
-            raise ValueError("Validation failed: Data is empty.")
+                        # analyze the tables to ensure the indexes are used
+                        conn.execute(text(f"ANALYZE {clean_schema}.{final_table_name_contributors};"))
+                        conn.execute(text(f"ANALYZE {clean_schema}.{final_table_name_project_repos_contributors};"))
+            except Exception as index_e:
+                print(f"Could not create indexes for {clean_schema}.{final_table_name_contributors} and {clean_schema}.{final_table_name_project_repos_contributors}: {index_e}")
+                raise e
 
-        # write the data to a pandas dataframe
-        contributors_df = pd.DataFrame(data)
+            # Fetch Metadata from the FINAL table for MaterializeResult
+            print("Fetching metadata for Dagster result...")
+            with cloud_sql_engine.connect() as conn:
+                row_count_result = conn.execute(text(f"SELECT COUNT(*) FROM {clean_schema}.{final_table_name_contributors}"))
+                row_count_result_project_repos_contributors = conn.execute(text(f"SELECT COUNT(*) FROM {clean_schema}.{final_table_name_project_repos_contributors}"))
+                # Use scalar_one() for single value, assumes table not empty after swap
+                row_count = row_count_result.scalar_one()
+                row_count_project_repos_contributors = row_count_result_project_repos_contributors.scalar_one()
 
-        # get the current unix timestamp as an object so we can pass it to the dataframes
-        data_timestamp = pd.Timestamp.now()
+                preview_result = conn.execute(text(f"SELECT * FROM {clean_schema}.{final_table_name_contributors} LIMIT 10"))
+                preview_result_project_repos_contributors = conn.execute(text(f"SELECT * FROM {clean_schema}.{final_table_name_project_repos_contributors} LIMIT 10"))
+                # Fetch into dicts using .mappings().all() for easy DataFrame creation
+                result_df = pd.DataFrame(preview_result.mappings().all())
+                result_df_project_repos_contributors = pd.DataFrame(preview_result_project_repos_contributors.mappings().all())
 
-        # create two new dataframes from the contributors_df
-        # one containing the columns: contributor_unique_id_builder_love, repo, contributor_contributions, data_timestamp
-        latest_project_repos_contributors_columns = ['contributor_unique_id_builder_love', 'repo', 'contributor_contributions']
-        # one containing the columns: contributor_unique_id_builder_love, contributor_login, contributor_id, contributor_node_id, contributor_avatar_url, contributor_gravatar_id, contributor_url, contributor_html_url, contributor_followers_url, contributor_following_url, contributor_gists_url, contributor_starred_url, contributor_subscriptions_url, contributor_organizations_url, contributor_site_admin, contributor_repos_url, contributor_events_url, contributor_received_events_url, contributor_type, contributor_user_view_type, contributor_name, contributor_email, data_timestamp
-        latest_contributors_columns = ['contributor_unique_id_builder_love','contributor_login', 'contributor_id', 'contributor_node_id', 'contributor_avatar_url', 'contributor_gravatar_id', 'contributor_url', 'contributor_html_url', 'contributor_followers_url', 'contributor_following_url', 'contributor_gists_url', 'contributor_starred_url', 'contributor_subscriptions_url', 'contributor_organizations_url', 'contributor_site_admin', 'contributor_repos_url', 'contributor_events_url', 'contributor_received_events_url', 'contributor_type', 'contributor_user_view_type', 'contributor_name', 'contributor_email']
-
-        # create the new dataframes
-        latest_project_repos_contributors_df = contributors_df[latest_project_repos_contributors_columns]
-        latest_contributors_df = contributors_df[latest_contributors_columns]
-
-        # print the number of rows in the dataframes
-        if len(contributors_df) > 0 and len(latest_project_repos_contributors_df) > 0 and len(latest_contributors_df) > 0:
-            print(f"Created decompressed dataframe with {len(contributors_df)} rows.")
-            print(f"Created latest_project_repos_contributors_df with {len(latest_project_repos_contributors_df)} rows.")
-            print(f"Created latest_contributors_df with {len(latest_contributors_df)} rows.")
-            if len(latest_project_repos_contributors_df) != len(latest_contributors_df) != len(contributors_df):
-                raise ValueError("Validation failed: Dataframes are not the same size.")
-            else:
-                print("All dataframes have the same number of rows.")
-                print("Dropping old dataframes to free up memory...")
-                del contributors_df
-        else:
-            raise ValueError("Validation failed: Dataframes are empty.")
-
-        # first update the unix timestamp so that both dataframes have the same data_timestamp
-        # add the data_timestamp to the dataframes
-        latest_project_repos_contributors_df['data_timestamp'] = data_timestamp
-        latest_contributors_df['data_timestamp'] = data_timestamp
-
-        # drop full duplicates from the latest_contributors_df
-        # this table represents the unique contributors across all repos
-        latest_contributors_df = latest_contributors_df.drop_duplicates()
-
-        # Run Validations (Comparing processed data against current FINAL table)
-        validations_passed = run_validations(context, latest_contributors_df, latest_project_repos_contributors_df, cloud_sql_engine, schema_name, final_table_name_contributors, final_table_name_project_repos_contributors)
-        
-        if not validations_passed:
-            context.log.warning("Validation failed: Data is not valid.")
+            print(f"Asset materialization complete. Final row count: {row_count}")
+            print(f"Asset materialization complete. Final row count: {row_count_project_repos_contributors}")
             return dg.MaterializeResult(
                 metadata={
-                    "latest_contributors_preview": "No rows found for preview.",
-                    "latest_project_repos_contributors_preview": "No rows found for preview.",
-                    "message": "Data is not valid."
+                    "latest_contributors_row_count": dg.MetadataValue.int(row_count),
+                    "latest_project_repos_contributors_row_count": dg.MetadataValue.int(row_count_project_repos_contributors),
+                    "latest_contributors_preview": dg.MetadataValue.md(result_df.to_markdown(index=False)) if not result_df.empty else "No rows found for preview.",
+                    "latest_project_repos_contributors_preview": dg.MetadataValue.md(result_df_project_repos_contributors.to_markdown(index=False)) if not result_df_project_repos_contributors.empty else "No rows found for preview.",
+                    "message": "Data processed and table updated successfully."
                 }
             )
-        print("All validations passed. Proceeding with data processing...")
 
-        # Write DataFrame to Staging Tables first
-        # write to two tables here: latest_project_repos_contributors and latest_contributors
-        context.log.info(f"Writing data to staging tables {schema_name}.{staging_table_name_contributors} and {schema_name}.{staging_table_name_project_repos_contributors}...")
-        latest_contributors_df.to_sql(
-            staging_table_name_contributors,
-            cloud_sql_engine,
-            if_exists='replace', # Replace staging table safely
-            index=False,
-            schema=schema_name,
-            chunksize=50000 # Good for large dataframes
-        )
-        latest_project_repos_contributors_df.to_sql(
-            staging_table_name_project_repos_contributors,
-            cloud_sql_engine,
-            if_exists='replace', # Replace staging table safely
-            index=False,
-            schema=schema_name,
-            chunksize=50000 # Good for large dataframes
-        )
-        print("Successfully wrote to staging tables.")
+        # --- Exception Handling for the entire asset function ---
+        except ValueError as ve:
+            context.log.error(f"Validation error: {ve}", exc_info=True)
+            raise ve # Re-raise to fail the Dagster asset run clearly indicating validation failure
 
-        # Perform Atomic Swap via Transaction
-        context.log.info(f"Performing atomic swap to update {schema_name}.{final_table_name_contributors} and {schema_name}.{final_table_name_project_repos_contributors}...")
-        with cloud_sql_engine.connect() as conn:
-            with conn.begin(): # Start transaction
-                # Use CASCADE if Foreign Keys might point to the table
-                print(f"Dropping old tables {schema_name}.{old_table_name_contributors} and {schema_name}.{old_table_name_project_repos_contributors} if they exist...")
-                conn.execute(text(f"DROP TABLE IF EXISTS {schema_name}.{old_table_name_contributors} CASCADE;"))
-                conn.execute(text(f"DROP TABLE IF EXISTS {schema_name}.{old_table_name_project_repos_contributors} CASCADE;"))
+        except Exception as e:
+            context.log.error(f"An unexpected error occurred: {e}", exc_info=True)
+            raise e # Re-raise any other exception to fail the Dagster asset run
 
-                print(f"Renaming current {schema_name}.{final_table_name_contributors} to {schema_name}.{old_table_name_contributors} (if it exists)...")
-                conn.execute(text(f"ALTER TABLE IF EXISTS {schema_name}.{final_table_name_contributors} RENAME TO {old_table_name_contributors};"))
-                print(f"Renaming current {schema_name}.{final_table_name_project_repos_contributors} to {schema_name}.{old_table_name_project_repos_contributors} (if it exists)...")
-                conn.execute(text(f"ALTER TABLE IF EXISTS {schema_name}.{final_table_name_project_repos_contributors} RENAME TO {old_table_name_project_repos_contributors};"))
+    return _process_compressed_contributors_data_env_specific
 
-                print(f"Renaming staging tables {schema_name}.{staging_table_name_contributors} and {schema_name}.{staging_table_name_project_repos_contributors} to {schema_name}.{final_table_name_contributors} and {schema_name}.{final_table_name_project_repos_contributors}...")
-                conn.execute(text(f"ALTER TABLE {schema_name}.{staging_table_name_contributors} RENAME TO {final_table_name_contributors};"))
-                conn.execute(text(f"ALTER TABLE {schema_name}.{staging_table_name_project_repos_contributors} RENAME TO {final_table_name_project_repos_contributors};"))
-            # Transaction commits here if no exceptions were raised inside the 'with conn.begin()' block
-        context.log.info("Atomic swap successful.")
-
-        # cleanup old table (outside the main transaction)
-        context.log.info(f"Cleaning up old tables {schema_name}.{old_table_name_contributors} and {schema_name}.{old_table_name_project_repos_contributors}...")
-        try:
-            with cloud_sql_engine.connect() as conn:
-                with conn.begin():
-                    conn.execute(text(f"DROP TABLE IF EXISTS {schema_name}.{old_table_name_contributors} CASCADE;"))
-                    conn.execute(text(f"DROP TABLE IF EXISTS {schema_name}.{old_table_name_project_repos_contributors} CASCADE;"))
-                    context.log.info(f"Cleaned up tables {schema_name}.{old_table_name_contributors} and {schema_name}.{old_table_name_project_repos_contributors}.")
-        except Exception as cleanup_e:
-            # Log warning - cleanup failure shouldn't fail the asset run
-            context.log.warning(f"Could not drop old tables {schema_name}.{old_table_name_contributors} and {schema_name}.{old_table_name_project_repos_contributors}: {cleanup_e}")
-
-        # recreate the indexes for both tables
-        try:
-            with cloud_sql_engine.connect() as conn:
-                with conn.begin():
-                    # create the unique_id index
-                    conn.execute(text(f"CREATE INDEX IF NOT EXISTS idx_latest_contributors_unique_id ON {schema_name}.{final_table_name_contributors} (contributor_unique_id_builder_love);"))
-                    conn.execute(text(f"CREATE INDEX IF NOT EXISTS idx_latest_project_repos_contributors_unique_id ON {schema_name}.{final_table_name_project_repos_contributors} (contributor_unique_id_builder_love);"))
-
-                    # create repo index
-                    conn.execute(text(f"CREATE INDEX IF NOT EXISTS idx_latest_project_repos_contributors_repo ON {schema_name}.{final_table_name_project_repos_contributors} (repo);"))
-
-                    # analyze the tables to ensure the indexes are used
-                    conn.execute(text(f"ANALYZE {schema_name}.{final_table_name_contributors};"))
-                    conn.execute(text(f"ANALYZE {schema_name}.{final_table_name_project_repos_contributors};"))
-        except Exception as index_e:
-            print(f"Could not create indexes for {schema_name}.{final_table_name_contributors} and {schema_name}.{final_table_name_project_repos_contributors}: {index_e}")
-            raise e
-
-        # Fetch Metadata from the FINAL table for MaterializeResult
-        print("Fetching metadata for Dagster result...")
-        with cloud_sql_engine.connect() as conn:
-            row_count_result = conn.execute(text(f"SELECT COUNT(*) FROM {schema_name}.{final_table_name_contributors}"))
-            row_count_result_project_repos_contributors = conn.execute(text(f"SELECT COUNT(*) FROM {schema_name}.{final_table_name_project_repos_contributors}"))
-            # Use scalar_one() for single value, assumes table not empty after swap
-            row_count = row_count_result.scalar_one()
-            row_count_project_repos_contributors = row_count_result_project_repos_contributors.scalar_one()
-
-            preview_result = conn.execute(text(f"SELECT * FROM {schema_name}.{final_table_name_contributors} LIMIT 10"))
-            preview_result_project_repos_contributors = conn.execute(text(f"SELECT * FROM {schema_name}.{final_table_name_project_repos_contributors} LIMIT 10"))
-            # Fetch into dicts using .mappings().all() for easy DataFrame creation
-            result_df = pd.DataFrame(preview_result.mappings().all())
-            result_df_project_repos_contributors = pd.DataFrame(preview_result_project_repos_contributors.mappings().all())
-
-        print(f"Asset materialization complete. Final row count: {row_count}")
-        print(f"Asset materialization complete. Final row count: {row_count_project_repos_contributors}")
-        return dg.MaterializeResult(
-            metadata={
-                "latest_contributors_row_count": dg.MetadataValue.int(row_count),
-                "latest_project_repos_contributors_row_count": dg.MetadataValue.int(row_count_project_repos_contributors),
-                "latest_contributors_preview": dg.MetadataValue.md(result_df.to_markdown(index=False)) if not result_df.empty else "No rows found for preview.",
-                "latest_project_repos_contributors_preview": dg.MetadataValue.md(result_df_project_repos_contributors.to_markdown(index=False)) if not result_df_project_repos_contributors.empty else "No rows found for preview.",
-                "message": "Data processed and table updated successfully."
-            }
-        )
-
-    # --- Exception Handling for the entire asset function ---
-    except ValueError as ve:
-        context.log.error(f"Validation error: {ve}", exc_info=True)
-        raise ve # Re-raise to fail the Dagster asset run clearly indicating validation failure
-
-    except Exception as e:
-        context.log.error(f"An unexpected error occurred: {e}", exc_info=True)
-        raise e # Re-raise any other exception to fail the Dagster asset run
 ########################################################################################################################
 
 
@@ -486,43 +559,77 @@ def process_compressed_contributors_data(context) -> dg.MaterializeResult:
 # crypto ecosystems raw file assets
 ########################################################################################################################
 
-@op(required_resource_keys={"dbt_resource"}, out={"dbt_test_results": Out(bool)})
+@op(
+    required_resource_keys={"active_dbt_runner"}, 
+    out={"dbt_test_results": Out(bool)}
+    )
 def run_dbt_tests_on_crypto_ecosystems_raw_file_staging(context) -> bool: #Correct return type
-    """Runs dbt tests against the crypto_ecosystems_raw_file_staging schema."""
-    context.log.info("Running dbt tests on crypto_ecosystems_raw_file_staging schema.")
+    """
+    Runs dbt tests (path:tests/crypto_ecosystems/) using the active dbt target (prod or stg).
+    """
+    active_dbt_runner = context.resources.active_dbt_runner
+    target_name = active_dbt_runner.target # "prod" or "stg"
+
+    # tell the user what environment we are running in
+    context.log.info(f"----------************* Running in environment: {target_name} *************----------")
+
+    context.log.info(f"Running dbt tests on path:tests/crypto_ecosystems/ for dbt target: {target_name}.")
+
     try:
-        invocation: DbtCliInvocation = context.resources.dbt_resource.cli(
+        invocation: DbtCliInvocation = active_dbt_runner.cli(
             ["test", "--select", "path:tests/crypto_ecosystems/"], context=context
         ).wait()
         print(f"dbt test invocation stdout: {type(invocation)}")
         print(f"dbt test invocation stdout: {invocation}")
         print(f"the returncode is {invocation.process.returncode}")
         if invocation.process.returncode == 0:  # Correct way to check for success
-            context.log.info("dbt tests on crypto_ecosystems_raw_file_staging schema passed.")
+            context.log.info(f"dbt tests on path:tests/crypto_ecosystems/ (target: {target_name}) passed.")
             yield Output(True, output_name="dbt_test_results")
         else:
+            context.log.error(f"dbt tests on path:tests/crypto_ecosystems/ (target: {target_name}) failed.")
             context.log.info(f"dbt test invocation stdout: {invocation._stdout}")
             context.log.error(f"dbt test invocation stdout: {invocation._error_messages}") #Correct way to get output
             yield Output(False, output_name="dbt_test_results") # Still return a value
 
     except Exception as e:
-        context.log.error(f"Error running dbt tests: {e}")
+        context.log.error(f"Error running dbt tests for path:tests/crypto_ecosystems/ (target: {target_name}): {e}", exc_info=True)
         yield Output(False, output_name="dbt_test_results")  # Consistent return type
 
 # perform the DML work
 # load new data from crypto_ecosystems_raw_file_staging table into crypto_ecosystems_raw_file table, and archive any data that is not in staging table
 @op(
-    required_resource_keys={"cloud_sql_postgres_resource"}
+    required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"}
 )
-def load_new_data_from_staging_to_final(context, _):
+def load_new_data_from_staging_to_final(context, previous_op_result):
+    """
+    Loads new data from the environment-specific staging table 
+    (e.g., raw.crypto_ecosystems_raw_file_staging or raw_stg.crypto_ecosystems_raw_file_staging)
+    into the environment-specific final table (e.g., raw.crypto_ecosystems_raw_file or raw_stg.crypto_ecosystems_raw_file),
+    and archives data from the final table that is not present in the staging table.
+    """
+    env_config = context.resources.active_env_config
+    # Determine schema names based on the active environment configuration
+    # Assuming 'raw_schema' is defined in your active_env_config_resource
+    # to be "raw" for prod and "raw_stg" for staging.
+    raw_schema = env_config["raw_schema"] 
+
+    # tell the user what environment we are running in
+    context.log.info(f"----------************* Running in environment: {env_config['env']} *************----------")
+
+    main_table = f"{raw_schema}.crypto_ecosystems_raw_file"
+    staging_table = f"{raw_schema}.crypto_ecosystems_raw_file_staging"
+    archive_table = f"{raw_schema}.crypto_ecosystems_raw_file_archive"
+
+    context.log.info(f"Operating on main table: {main_table}, staging table: {staging_table}, archive table: {archive_table}")
+
     cloud_sql_engine = context.resources.cloud_sql_postgres_resource
     with cloud_sql_engine.connect() as conn:
-        dml_query = text("""
+        dml_query = text(f"""
             -- Step 1a: Identify the primary keys (or ctids) of rows to delete ONCE
             CREATE TEMP TABLE IF NOT EXISTS tmp_keys_to_delete AS
             SELECT main.id 
-            FROM raw.crypto_ecosystems_raw_file main
-            LEFT JOIN raw.crypto_ecosystems_raw_file_staging sk
+            FROM {main_table} main
+            LEFT JOIN {staging_table} sk
                 ON main.project_title = sk.project_title
                 AND main.sub_ecosystems IS NOT DISTINCT FROM sk.sub_ecosystems
                 AND main.repo = sk.repo
@@ -530,41 +637,43 @@ def load_new_data_from_staging_to_final(context, _):
             WHERE sk.repo IS NULL;
 
             -- Step 1b: Archive rows by joining main table to the keys identified
-            INSERT INTO raw.crypto_ecosystems_raw_file_archive (
+            INSERT INTO {archive_table} (
                 id, project_title, sub_ecosystems, repo, tags, data_timestamp,
                 archived_at
             )
             SELECT
                 main.id, main.project_title, main.sub_ecosystems, main.repo, main.tags, main.data_timestamp,
                 NOW() AT TIME ZONE 'utc'
-            FROM raw.crypto_ecosystems_raw_file main
+            FROM {main_table} main
             JOIN tmp_keys_to_delete keys_td ON main.id = keys_td.id; -- Join using the key
 
             -- Step 1c: Delete rows from main using the identified keys (MUCH more efficient)
-            DELETE FROM raw.crypto_ecosystems_raw_file main
+            DELETE FROM {main_table} main
             WHERE main.id IN (SELECT id FROM tmp_keys_to_delete); -- Use simple IN clause with keys
 
             -- Step 1d: Clean up the temporary table
             DROP TABLE tmp_keys_to_delete;
 
-            -- 2. Insert new rows (those in staging but not having an exact match in main)
-            INSERT INTO raw.crypto_ecosystems_raw_file (
+            -- 2. Insert new rows (those in staging table but not having an exact match in main table)
+            INSERT INTO {main_table} (
                 project_title, sub_ecosystems, repo, tags, data_timestamp -- list all columns
             )
             SELECT
                 stg.project_title, stg.sub_ecosystems, stg.repo, stg.tags, stg.data_timestamp -- select all columns
-            FROM raw.crypto_ecosystems_raw_file_staging stg
-            LEFT JOIN raw.crypto_ecosystems_raw_file main -- Note: Join target table changed from example
+            FROM {staging_table} stg
+            LEFT JOIN {main_table} main
                 ON stg.project_title = main.project_title
                 AND stg.sub_ecosystems IS NOT DISTINCT FROM main.sub_ecosystems
                 AND stg.repo = main.repo
                 AND stg.tags IS NOT DISTINCT FROM main.tags
-
             WHERE main.repo IS NULL; -- If any part of the composite key in main is NULL, it means no match was found
         """)
         conn.execute(dml_query)
         conn.commit()
-    context.log.info("Crypto ecosystems raw file data updates loaded from staging to final. Any data that is not in staging table is archived from the final table.")
+    context.log.info(
+        f"Data updates from {staging_table} loaded to {main_table}. "
+        f"Non-matching data from {main_table} archived to {archive_table}."
+    )
     yield Output(None) # Use yield
 
 @job()

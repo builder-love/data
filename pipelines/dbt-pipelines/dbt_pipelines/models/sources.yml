@@ -2,8 +2,8 @@ version: 2
 
 sources:
   - name: raw
-    database: postgres
-    schema: raw
+    database: "{{ env_var('cloud_sql_postgres_db', 'postgres') }}"
+    schema: "{{ 'raw_stg' if target.name == 'stg' else 'raw' }}"
     tables:
       - name: crypto_ecosystems_raw_file
         loaded_at_field: data_timestamp
@@ -70,8 +70,8 @@ sources:
         freshness: 
           warn_after: {count: 32, period: day}
   - name: clean_schema
-    database: postgres
-    schema: clean
+    database: "{{ env_var('cloud_sql_postgres_db', 'postgres') }}"
+    schema: "{{ 'clean_stg' if target.name == 'stg' else 'clean' }}"
     tables:
       - name: normalized_project_repo_count
         loaded_at_field: data_timestamp
@@ -363,8 +363,8 @@ sources:
   # note: the prod tables listed in this sources file are used in source() functions in the models/api folder
   # we use source() instead of ref() because the prod tables are not transformed by dbt--prod schema is a nightly replication of clean
   - name: prod_schema
-    database: postgres
-    schema: prod
+    database: "{{ env_var('cloud_sql_postgres_db', 'postgres') }}"
+    schema: "{{ 'prod_stg' if target.name == 'stg' else 'prod' }}"
     tables:
       - name: normalized_project_commit_count_prod
         identifier: normalized_project_commit_count
@@ -408,6 +408,12 @@ sources:
       - name: latest_top_project_repos_prod
         identifier: latest_top_project_repos
         description: "latest_top_project_repos for prod"
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: latest_ranked_organizations_by_project_prod
+        identifier: latest_ranked_organizations_by_project
+        description: "latest_ranked_organizations_by_project for prod"
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}

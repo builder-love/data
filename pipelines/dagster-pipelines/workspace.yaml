@@ -1,2 +1,10 @@
 load_from:
-  - python_package: dagster_pipelines
+  - python_module:
+      module_name: dagster_pipelines.definitions
+      attribute: prod_specific_defs
+      location_name: prod_workspace 
+
+  - python_module:
+      module_name: dagster_pipelines.definitions
+      attribute: stg_specific_defs
+      location_name: stg_workspace  
