@@ -1,12 +1,21 @@
 dbt_pipelines:
+  target: stg
   outputs:
+    stg:
+      dbname: "{{ env_var('cloud_sql_postgres_db')  }}"
+      host: "{{ env_var('cloud_sql_postgres_host') }}" # Same host as production
+      password: "{{ env_var('cloud_sql_password')  }}"
+      port: 5432
+      schema: clean_stg # Default schema for models if not overridden
+      threads: 4
+      type: postgres
+      user: "{{ env_var('cloud_sql_user')  }}" # same user as production
     prod:
-      dbname: "postgres"
+      dbname: "{{ env_var('cloud_sql_postgres_db')  }}"
       host: "{{ env_var('cloud_sql_postgres_host') }}"
-      pass: "{{ env_var('cloud_sql_password')  }}"
+      password: "{{ env_var('cloud_sql_password')  }}"
       port: 5432
       schema: clean
       threads: 4
-      type: "{{ env_var('cloud_sql_postgres_db')  }}"
+      type: postgres
       user: "{{ env_var('cloud_sql_user')  }}"
-  target: prod

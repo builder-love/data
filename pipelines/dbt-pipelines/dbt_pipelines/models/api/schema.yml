@@ -297,3 +297,26 @@ models:
     tests:
       - unique_combination_of_columns:
           column_names: [project_title, repo, latest_data_timestamp]
+  - name: top_5_organizations_by_project
+    columns:
+      - name: project_title
+        tests:
+          - not_null
+      - name: project_organization_url
+      - name: latest_data_timestamp
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
+      - name: org_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: integer
+      - name: org_rank_category
+      - name: weighted_score_index
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+    tests:
+      - unique_combination_of_columns:
+          column_names: [project_title, project_organization_url, latest_data_timestamp]
+          

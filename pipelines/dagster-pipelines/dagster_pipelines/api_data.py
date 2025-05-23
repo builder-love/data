@@ -5,65 +5,77 @@ import os
 import json
 
 # dbt test op 
-@op(required_resource_keys={"dbt_resource"}, out={"dbt_test_results": Out()})
-def test_dbt_api_views(context, _) -> DbtCliInvocation:
-    """Runs dbt tests against the API schema."""
-    context.log.info("Running dbt tests on API schema.")
+@op(
+    required_resource_keys={"active_dbt_runner"}, 
+    out={"dbt_test_results": Out()}
+    )
+def test_dbt_api_views(context: OpExecutionContext, previous_op_output=None) -> DbtCliInvocation:
+    """
+    Runs dbt tests against the API models using the active dbt target (prod or stg).
+    Outputs True if tests pass, False otherwise.
+    """
+    active_dbt_runner = context.resources.active_dbt_runner
+    target_name = active_dbt_runner.target
+    context.log.info(f"Running dbt tests on API models (path:models/api/) for dbt target: {target_name}.")
+
     try:
         # Run tests specifically on the api models
-        invocation: DbtCliInvocation = context.resources.dbt_resource.cli(
-            ["test", "--select", "path:models/api/"], context=context
+        invocation: DbtCliInvocation = active_dbt_runner.cli(
+            ["test", "--select", "path:models/api/"], 
+            context=context
         ).wait()
+
         if invocation.process.returncode == 0:
-            context.log.info("dbt tests on API schema passed.")
+            context.log.info(f"dbt tests on API models (target: {target_name}) passed.")
             yield Output(True, output_name="dbt_test_results")
         else:
-            context.log.error(f"dbt tests on API schema failed: {invocation.raw_logs}")
+            context.log.error(f"dbt tests on API models (target: {target_name}) failed: {invocation.raw_logs}")
             yield Output(False, output_name="dbt_test_results")
     except Exception as e:
-        context.log.error(f"Error running dbt tests: {e}")
+        context.log.error(f"Error running dbt tests for API models (target: {target_name}): {e}", exc_info=True)
         yield Output(False, output_name="dbt_test_results")
 
 # Op to manage view creations in `api` schema
-@op(required_resource_keys={"dbt_resource"}, out={"dbt_run_results": Out()})
-def create_dbt_api_views(context, start_after=None) -> DbtCliInvocation:
-    """Runs dbt to create/update views in the 'api' schema."""
-    context.log.info("Running dbt to create/update views in 'api' schema.")
+@op(
+    required_resource_keys={"active_dbt_runner"}, 
+    out={"dbt_run_results": Out()}
+    )
+def create_dbt_api_views(context: OpExecutionContext, start_after=None) -> DbtCliInvocation:
+    """
+    Runs dbt to create/update views in the target API schema (e.g., 'api' or 'api_stg')
+    using the active dbt target. Outputs True if run is successful, False otherwise.
+    """
+    active_dbt_runner = context.resources.active_dbt_runner
+    target_name = active_dbt_runner.target
+
+    context.log.info(f"Running dbt to create/update views in target API schema for dbt target: {target_name} (models: path:models/api/).")
+    
     try:
-        invocation: DbtCliInvocation = context.resources.dbt_resource.cli(
+        invocation: DbtCliInvocation = active_dbt_runner.cli(
             ["run", "--select", "path:models/api/"], context=context # select the api models
         ).wait()
 
         # print the models found in the path and their exection status
-        executed_model_names = []
+        # Log executed models (optional but good for debugging)
         try:
-            # Access the structured results from the run
             run_results = invocation.get_artifact("run_results.json")
-            context.log.debug(f"dbt run results: {run_results}") 
-
+            executed_model_names = []
             for result in run_results.get("results", []):
-                # Check if the node is a model and if it completed successfully (or just ran)
-                node_type = result.get("node", {}).get("resource_type")
-                node_status = result.get("status")
-                unique_id = result.get("unique_id", "unknown.id")
-
-                if node_type == "model":
-                    model_name = unique_id.split('.')[-1] # Get model name from unique_id
+                if result.get("node", {}).get("resource_type") == "model":
+                    model_name = result.get("unique_id", "unknown.id").split('.')[-1]
                     executed_model_names.append(model_name)
-                    context.log.info(f"Model processed: {model_name} (Status: {node_status})")
-
+                    context.log.info(f"Model processed (target: {target_name}): {model_name} (Status: {result.get('status')})")
         except Exception as e:
-            context.log.warning(f"Could not parse run_results.json to log executed models: {e}. Raw logs might contain info.")
-            context.log.warning(f"Raw dbt logs:\n{invocation.get_all_logs()}")
+            context.log.warning(f"Could not parse run_results.json (target: {target_name}): {e}. Raw logs: {invocation.get_all_logs()}")
 
         if invocation.process.returncode == 0:
-            context.log.info("dbt run for 'api' schema successful.")
+            context.log.info(f"dbt run for target API schema (target: {target_name}) successful.")
             yield Output(True, output_name="dbt_run_results")
         else:
-            context.log.error(f"dbt run for 'api' schema failed: {invocation.raw_logs}")
+            context.log.error(f"dbt run for target API schema (target: {target_name}) failed.")
             yield Output(False, output_name="dbt_run_results")
     except Exception as e:
-        context.log.error(f"Error running dbt for 'api' schema: {e}")
+        context.log.error(f"Error running dbt for target API schema (target: {target_name}): {e}", exc_info=True)
         yield Output(False, output_name="dbt_run_results")
 
 @job(
@@ -75,4 +87,12 @@ def refresh_api_schema():
     test_results = test_dbt_api_views(run_result) # Pass the results of the run op
 
     if not run_result or not test_results:
-        raise Exception("dbt run or test for API schema failed. API views not updated. Check stdout/stderr for more details.")
+        # Construct a more informative message based on which step failed
+        failure_message = []
+        if not run_result:
+            failure_message.append("dbt run for API schema failed.")
+        if not test_results:
+            failure_message.append("dbt tests for API schema failed.")
+        
+        # Use dg.Failure to make it a clear Dagster failure
+        raise dg.Failure(description=" ".join(failure_message) + " API views not updated. Check logs.")

@@ -63,7 +63,16 @@ WHERE LOWER(project_title) NOT IN (
     'solana virtual machine stack',
     'svm layer 1 and layer 2s',
     'svm layer 1s',
-    'open source cryptography'
+    'open source cryptography',
+    'multichain infrastructure',
+    'evm multichain dapps',
+    'wallet (category)',
+    'bridges & interoperability (category)',
+    'oracles, data feeds, data providers (category)',
+    'oracles (category)',
+    'evm compatible application',
+    'zero knowledge cryptography',
+    'bridge (category)'
     )
 and report_date >= (CURRENT_DATE - INTERVAL '52 weeks')
 ),

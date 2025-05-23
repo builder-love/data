@@ -1,3 +1,4 @@
+-- dbt-pipelines/dbt_pipelines/models/clean/latest_project_repos_languages.sql
 -- create a view that shows the latest project repos and their language makeup
 
 {{ config(

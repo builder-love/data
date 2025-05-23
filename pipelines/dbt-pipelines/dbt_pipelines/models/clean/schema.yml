@@ -959,7 +959,7 @@ models:
       - name: org_rank
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
-              column_type: bigint
+              column_type: integer
       - name: quartile_bucket
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
@@ -970,6 +970,31 @@ models:
     tests:
       - unique_combination_of_columns:
           column_names: [project_organization_url, data_timestamp]
+  - name: latest_ranked_organizations_by_project
+    columns:
+      - name: project_title
+        tests:
+          - not_null
+      - name: project_organization_url
+        tests:
+          - not_null
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+      - name: org_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: integer
+      - name: org_rank_category
+      - name: weighted_score_index
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+    tests:
+      - unique_combination_of_columns:
+          column_names: [project_title, project_organization_url, data_timestamp]
   - name: latest_top_projects
     columns:
       - name: project_title
@@ -1085,11 +1110,11 @@ models:
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: text
-      - name: latest_data_timestamp
+      - name: data_timestamp
         tests:
           - not_null
           - dbt_expectations.expect_column_values_to_be_of_type:
-              column_type: text
+              column_type: timestamp without time zone
       - name: repo
         tests:
           - not_null
@@ -1124,7 +1149,7 @@ models:
           - not_null
     tests:
       - unique_combination_of_columns:
-          column_names: [project_title, repo, latest_data_timestamp]
+          column_names: [project_title, repo, data_timestamp]
   - name: latest_top_contributors
     columns:
       - name: contributor_login
