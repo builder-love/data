@@ -72,7 +72,8 @@ WHERE LOWER(project_title) NOT IN (
     'oracles (category)',
     'evm compatible application',
     'zero knowledge cryptography',
-    'bridge (category)'
+    'bridge (category)',
+    'cosmos network stack'
     )
 and report_date >= (CURRENT_DATE - INTERVAL '52 weeks')
 ),
