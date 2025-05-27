@@ -251,7 +251,7 @@ models:
     tests:
       - unique_combination_of_columns:
           column_names: [project_title, latest_data_timestamp]
-  - name: top_project_repos
+  - name: top_projects_repos
     columns:
       - name: project_title
         tests:
@@ -319,4 +319,132 @@ models:
     tests:
       - unique_combination_of_columns:
           column_names: [project_title, project_organization_url, latest_data_timestamp]
+  - name: top_projects_trend
+    columns:
+      - name: project_title
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
+      - name: report_date
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
+      - name: latest_data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
+      - name: repo_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: fork_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: stargaze_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: commit_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: contributor_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: watcher_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: is_not_fork_ratio
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: commit_count_pct_change_over_4_weeks
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: contributor_count_pct_change_over_4_weeks
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: fork_count_pct_change_over_4_weeks
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: stargaze_count_pct_change_over_4_weeks
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: watcher_count_pct_change_over_4_weeks
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: is_not_fork_ratio_pct_change_over_4_weeks
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: fork_count_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: stargaze_count_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: commit_count_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: contributor_count_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: watcher_count_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: is_not_fork_ratio_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: commit_count_pct_change_over_4_weeks_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: contributor_count_pct_change_over_4_weeks_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: fork_count_pct_change_over_4_weeks_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: stargaze_count_pct_change_over_4_weeks_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: watcher_count_pct_change_over_4_weeks_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: is_not_fork_ratio_pct_change_over_4_weeks_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: quartile_project_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: overall_project_rank
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+    tests:
+      - unique_combination_of_columns:
+          column_names: [project_title, report_date]
           
