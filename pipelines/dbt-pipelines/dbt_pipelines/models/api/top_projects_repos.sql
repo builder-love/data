@@ -1,4 +1,4 @@
--- models/api/top_repos.sql
+-- models/api/top_projects_repos.sql
 
 {{ 
     config(

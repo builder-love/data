@@ -16,6 +16,7 @@
 -- SVM Layer 1 and Layer 2s
 -- SVM Layer 1s
 -- Open Source Cryptography
+-- ....
 
 {{ config(
     materialized='table',
@@ -73,7 +74,8 @@ WHERE LOWER(project_title) NOT IN (
     'evm compatible application',
     'zero knowledge cryptography',
     'bridge (category)',
-    'cosmos network stack'
+    'cosmos network stack',
+    'polkadot network stack'
     )
 and report_date >= (CURRENT_DATE - INTERVAL '52 weeks')
 ),
