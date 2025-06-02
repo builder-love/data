@@ -1,5 +1,5 @@
 -- normalized_project_contributor_count.sql
--- create an incremental table in clean with data_timestamp intervals >25 days apart
+-- create an incremental table in clean with data_timestamp intervals >20 days apart
 -- project_repos_stargaze_count raw table
 -- 
 {{ config(
@@ -68,7 +68,7 @@
     load_timestamps AS (
         SELECT data_timestamp AS load_timestamps
         FROM raw_data_timestamps
-        where data_timestamp >= '{{ max_clean_timestamp }}'::timestamp + INTERVAL '25 days'
+        where data_timestamp >= '{{ max_clean_timestamp }}'::timestamp + INTERVAL '20 days'
         AND record_count <= ({{ mean_count }} * 1.5)
         AND record_count >= ({{ mean_count }} * 0.5)
     )
