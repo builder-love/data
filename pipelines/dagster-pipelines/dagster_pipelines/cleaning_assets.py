@@ -298,6 +298,7 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                     WHERE data_timestamp = (SELECT MAX(data_timestamp) FROM {raw_schema}.project_repos_contributors)
                     """
                 ))
+
                 rows = pd.DataFrame(result.fetchall(), columns=result.keys())
 
                 if rows.empty:
@@ -352,7 +353,6 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                                 "contributor_received_events_url": contributor.get('received_events_url'),
                                 "contributor_type": contributor.get('type'),
                                 "contributor_user_view_type": contributor.get('user_view_type'),
-                                "contributor_site_admin": contributor.get('site_admin'),
                                 "contributor_contributions": contributor.get('contributions'),
                                 "contributor_name": contributor.get('name'), # contributor.get('name') is not always present
                                 "contributor_email": contributor.get('email'), # contributor.get('email') is not always present,
@@ -379,7 +379,6 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                                 "contributor_received_events_url": None,
                                 "contributor_type": contributor.get('type'),
                                 "contributor_user_view_type": None,
-                                "contributor_site_admin": None,
                                 "contributor_contributions": contributor['contributions'],
                                 "contributor_name": contributor['name'],
                                 "contributor_email": contributor['email'],
@@ -399,8 +398,8 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
             # create two new dataframes from the contributors_df
             # one containing the columns: contributor_unique_id_builder_love, repo, contributor_contributions, data_timestamp
             latest_project_repos_contributors_columns = ['contributor_unique_id_builder_love', 'repo', 'contributor_contributions']
-            # one containing the columns: contributor_unique_id_builder_love, contributor_login, contributor_id, contributor_node_id, contributor_avatar_url, contributor_gravatar_id, contributor_url, contributor_html_url, contributor_followers_url, contributor_following_url, contributor_gists_url, contributor_starred_url, contributor_subscriptions_url, contributor_organizations_url, contributor_site_admin, contributor_repos_url, contributor_events_url, contributor_received_events_url, contributor_type, contributor_user_view_type, contributor_name, contributor_email, data_timestamp
-            latest_contributors_columns = ['contributor_unique_id_builder_love','contributor_login', 'contributor_id', 'contributor_node_id', 'contributor_avatar_url', 'contributor_gravatar_id', 'contributor_url', 'contributor_html_url', 'contributor_followers_url', 'contributor_following_url', 'contributor_gists_url', 'contributor_starred_url', 'contributor_subscriptions_url', 'contributor_organizations_url', 'contributor_site_admin', 'contributor_repos_url', 'contributor_events_url', 'contributor_received_events_url', 'contributor_type', 'contributor_user_view_type', 'contributor_name', 'contributor_email']
+            # one containing the columns: contributor_unique_id_builder_love, contributor_login, contributor_id, contributor_node_id, contributor_avatar_url, contributor_gravatar_id, contributor_url, contributor_html_url, contributor_followers_url, contributor_following_url, contributor_gists_url, contributor_starred_url, contributor_subscriptions_url, contributor_organizations_url, contributor_repos_url, contributor_events_url, contributor_received_events_url, contributor_type, contributor_user_view_type, contributor_name, contributor_email, data_timestamp
+            latest_contributors_columns = ['contributor_unique_id_builder_love','contributor_login', 'contributor_id', 'contributor_node_id', 'contributor_avatar_url', 'contributor_gravatar_id', 'contributor_url', 'contributor_html_url', 'contributor_followers_url', 'contributor_following_url', 'contributor_gists_url', 'contributor_starred_url', 'contributor_subscriptions_url', 'contributor_organizations_url', 'contributor_repos_url', 'contributor_events_url', 'contributor_received_events_url', 'contributor_type', 'contributor_user_view_type', 'contributor_name', 'contributor_email']
 
             # create the new dataframes
             latest_project_repos_contributors_df = contributors_df[latest_project_repos_contributors_columns]
