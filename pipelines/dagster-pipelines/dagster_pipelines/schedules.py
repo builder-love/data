@@ -38,7 +38,7 @@ def create_env_specific_schedule(
         execution_timezone=execution_timezone
     )
     def _dynamic_schedule_run_function(context): # Function name doesn't need to be globally unique if @schedule(name=...) is used
-        context.log.info(f"Schedule '{context.schedule_name}' for job '{env_specific_job.name}' initiated at {context.scheduled_execution_time}.")
+        context.log.info(f"Schedule '{context._schedule_name}' for job '{env_specific_job.name}' initiated at {context.scheduled_execution_time}.")
         # Your original schedule functions had simple logging.
         # If more complex, per-schedule logic is needed in the run function body,
         # this factory approach for the run function itself might need adjustment,
