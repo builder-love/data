@@ -721,6 +721,27 @@ models:
     tests:
       - unique_combination_of_columns:
           column_names: [repo, language_name, data_timestamp]
+  - name: normalized_contributor_dominant_language
+    columns:
+      - name: dominant_language
+        tests:
+          - not_null
+      - name: developer_count
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+    tests:
+      - unique_combination_of_columns:
+          column_names: [dominant_language, data_timestamp]
+      - check_row_count_stability:
+          lower_threshold_factor: 0.50 # New count should not be less than 50% of old count
+          upper_threshold_factor: 1.50 # New count should not be more than 150% of old count
+          min_rows_for_check: 100  
   - name: latest_project_repos_dominant_language
     columns:
       - name: repo

@@ -97,6 +97,10 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
+      - name: normalized_contributor_dominant_language
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
       - name: normalized_project_repos_commit_count
         loaded_at_field: data_timestamp
         freshness: 
@@ -242,7 +246,6 @@ sources:
           - name: contributor_unique_id_builder_love
             tests:
               - not_null
-          - name: contributor_site_admin
           - name: contributor_contributions
           - name: data_timestamp
             tests:
