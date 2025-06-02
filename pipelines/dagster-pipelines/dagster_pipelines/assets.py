@@ -2122,7 +2122,7 @@ def create_github_project_repos_commits_asset(env_prefix: str):
                         #     print(f"{key}: {value}")
                         time_since_start = time.time() - start_time
                         print(f"time_since_start: {time_since_start:.2f} seconds")
-                        time.sleep(1.2)  # Consistent delay
+                        time.sleep(1.7)  # Consistent delay
 
                         response.raise_for_status()
                         data = response.json()
