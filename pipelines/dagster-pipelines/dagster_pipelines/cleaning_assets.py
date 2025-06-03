@@ -10,7 +10,7 @@ import requests
 import json
 import random
 from dagster_dbt import DbtCliResource, DagsterDbtTranslator, dbt_assets, DbtCliInvocation
-from dagster import asset, AssetExecutionContext, AssetKey, op, Out, Output, job
+from dagster import asset, AssetExecutionContext, AssetKey, op, Out, Output, job, In, Nothing, AssetMaterialization, MetadataValue
 from dagster_pipelines.resources import dbt_stg_resource, dbt_prod_resource
 import gzip
 import psycopg2
@@ -559,40 +559,48 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
 ########################################################################################################################
 
 @op(
-    required_resource_keys={"active_dbt_runner"}, 
-    out={"dbt_test_results": Out(bool)}
-    )
-def run_dbt_tests_on_crypto_ecosystems_raw_file_staging(context) -> bool: #Correct return type
-    """
-    Runs dbt tests (path:tests/crypto_ecosystems/) using the active dbt target (prod or stg).
-    """
+    required_resource_keys={"active_dbt_runner"},
+    out={"dbt_tests_passed": Out(bool)}
+)
+def run_dbt_tests_on_crypto_ecosystems_raw_file_staging(context) -> bool:
     active_dbt_runner = context.resources.active_dbt_runner
-    target_name = active_dbt_runner.target # "prod" or "stg"
-
-    # tell the user what environment we are running in
+    target_name = active_dbt_runner.target
     context.log.info(f"----------************* Running in environment: {target_name} *************----------")
-
     context.log.info(f"Running dbt tests on path:tests/crypto_ecosystems/ for dbt target: {target_name}.")
 
+    invocation_obj = None
     try:
-        invocation: DbtCliInvocation = active_dbt_runner.cli(
+        invocation_obj = active_dbt_runner.cli(
             ["test", "--select", "path:tests/crypto_ecosystems/"], context=context
-        ).wait()
-        print(f"dbt test invocation stdout: {type(invocation)}")
-        print(f"dbt test invocation stdout: {invocation}")
-        print(f"the returncode is {invocation.process.returncode}")
-        if invocation.process.returncode == 0:  # Correct way to check for success
-            context.log.info(f"dbt tests on path:tests/crypto_ecosystems/ (target: {target_name}) passed.")
-            yield Output(True, output_name="dbt_test_results")
-        else:
-            context.log.error(f"dbt tests on path:tests/crypto_ecosystems/ (target: {target_name}) failed.")
-            context.log.info(f"dbt test invocation stdout: {invocation._stdout}")
-            context.log.error(f"dbt test invocation stdout: {invocation._error_messages}") #Correct way to get output
-            yield Output(False, output_name="dbt_test_results") # Still return a value
+        )
+        # The .wait() method from dagster-dbt is designed to raise an exception
+        # if the dbt command itself returns a non-zero exit code (i.e., fails).
+        invocation_obj.wait()
 
-    except Exception as e:
-        context.log.error(f"Error running dbt tests for path:tests/crypto_ecosystems/ (target: {target_name}): {e}", exc_info=True)
-        yield Output(False, output_name="dbt_test_results")  # Consistent return type
+        context.log.info(f"dbt tests on path:tests/crypto_ecosystems/ (target: {target_name}) reported success via CLI exit code.")
+        yield Output(True, output_name="dbt_tests_passed")
+        return True
+
+    except Exception as e: # Catch ANY exception from the .cli() or .wait() calls
+        context.log.error(
+            f"dbt test op for target {target_name} encountered an error: {str(e)}",
+            exc_info=True # This will log the full traceback of 'e'
+        )
+        
+        # Attempt to get dbt stdout if the exception 'e' might be a DbtCliTaskFailureError
+        # DbtCliTaskFailureError (even if we can't import its type) often has an 'invocation' attribute.
+        stdout_log = "N/A"
+        if hasattr(e, 'invocation') and e.invocation and hasattr(e.invocation, 'get_stdout'):
+            stdout_log = e.invocation.get_stdout()
+            context.log.info(f"dbt stdout from failure:\n{stdout_log}")
+        else:
+            context.log.info(f"Could not retrieve specific dbt stdout from exception of type {type(e)}.")
+
+        # Raise a new, generic Exception to ensure the Dagster op fails
+        # This will stop the Dagster job.
+        raise Exception(
+            f"dbt test operation failed for target {target_name}. Original error type: {type(e).__name__}. Message: {str(e)}. See logs for details and dbt stdout if available."
+        ) from e # Chain the original exception for better traceback
 
 # perform the DML work
 # load new data from crypto_ecosystems_raw_file_staging table into crypto_ecosystems_raw_file table, and archive any data that is not in staging table
@@ -675,17 +683,126 @@ def load_new_data_from_staging_to_final(context, previous_op_result):
     )
     yield Output(None) # Use yield
 
-@job()
-def update_crypto_ecosystems_raw_file_job():
-    """
-    Tests the staging data and then updates the crypto_ecosystems_raw_file table.
-    """
-    # Execute tests first. If this op raises an Exception (fails), the job stops.
-    test_results_passed = run_dbt_tests_on_crypto_ecosystems_raw_file_staging()
+######################################
+# maintain 'project' dimension records
+######################################
 
-    # Define that load_new_data depends on the test results.
-    # Pass the boolean result just for completeness or potential internal checks,
-    # but the main control flow comes from the dependency + potential failure in the test op.
-    load_new_data_from_staging_to_final(test_results_passed)
-    # Alternatively, use start_after for pure control flow:
-    # load_new_data_from_staging_to_final(start_after=test_results_passed)
+@op(
+    required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+    ins={"previous_op_result": In(Nothing)}, # Ensures it runs after the previous op
+)
+def update_projects_dimension_and_archive(context):
+    cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+    env_config = context.resources.active_env_config
+    
+    # Determine schema for target tables. Adjust if 'projects' tables are in a different schema.
+    # For this example, assuming they are in the same schema as the raw table.
+    target_schema = env_config["raw_schema"] 
+    
+    projects_table = f"{target_schema}.projects"
+    projects_archive_table = f"{target_schema}.projects_archive"
+    source_table = f"{env_config['raw_schema']}.crypto_ecosystems_raw_file" # Source of project_titles
+
+    sql_now = "NOW() AT TIME ZONE 'utc'" # Consistent timestamping
+
+    with cloud_sql_engine.connect() as conn:
+        with conn.begin(): # Start transaction
+            context.log.info(f"Updating {projects_table} and {projects_archive_table} from {source_table}...")
+
+            # Step 1: Create a temporary table of distinct, non-null project_titles currently in the source
+            conn.execute(text(f"""
+                CREATE TEMP TABLE tmp_current_active_project_titles AS
+                SELECT DISTINCT project_title
+                FROM {source_table}
+                WHERE project_title IS NOT NULL;
+            """))
+            context.log.info("Temporary table tmp_current_active_project_titles created.")
+
+            # Step 2: Upsert into the 'projects' table.
+            # - New project_titles are inserted. 'project_id' is auto-generated by BIGSERIAL.
+            #   'first_seen_timestamp' defaults to NOW() or is set here. 'last_seen_timestamp' is set. 'is_active' is TRUE.
+            # - Existing project_titles found in the source will have their 'last_seen_timestamp' updated
+            #   and 'is_active' set to TRUE (in case they were previously inactive).
+            #   'first_seen_timestamp' for existing projects is NOT updated by the ON CONFLICT clause.
+            upsert_sql = f"""
+                INSERT INTO {projects_table} (project_title, first_seen_timestamp, last_seen_timestamp, is_active)
+                SELECT
+                    capt.project_title,
+                    {sql_now}, -- This will be the first_seen_timestamp for NEW projects
+                    {sql_now}, -- last_seen_timestamp for new projects and those being updated
+                    TRUE      -- is_active for new projects and those being updated
+                FROM tmp_current_active_project_titles capt
+                ON CONFLICT (project_title) DO UPDATE
+                SET
+                    last_seen_timestamp = {sql_now},
+                    is_active = TRUE
+                WHERE {projects_table}.project_title = EXCLUDED.project_title; 
+                -- The WHERE clause in DO UPDATE is technically not needed if project_title is the conflict target
+                -- but can be kept for clarity or complex conditions.
+            """
+            result = conn.execute(text(upsert_sql))
+            context.log.info(f"{result.rowcount} rows affected by upsert into {projects_table}.")
+
+
+            # Step 3: Identify projects that were active but are no longer in the source table.
+            # These are candidates for archiving.
+            conn.execute(text(f"""
+                CREATE TEMP TABLE tmp_projects_to_archive AS
+                SELECT p.project_id, p.project_title, p.first_seen_timestamp, p.last_seen_timestamp AS last_seen_timestamp_while_active
+                FROM {projects_table} p
+                LEFT JOIN tmp_current_active_project_titles capt ON p.project_title = capt.project_title
+                WHERE p.is_active = TRUE AND capt.project_title IS NULL;
+            """))
+            context.log.info("Temporary table tmp_projects_to_archive created.")
+
+            # Step 4: Insert these projects into the 'projects_archive' table.
+            archive_sql = f"""
+                INSERT INTO {projects_archive_table} (project_id, project_title, first_seen_timestamp, last_seen_timestamp_while_active, archived_at)
+                SELECT
+                    pta.project_id,
+                    pta.project_title,
+                    pta.first_seen_timestamp,
+                    pta.last_seen_timestamp_while_active,
+                    {sql_now}
+                FROM tmp_projects_to_archive pta;
+            """
+            result = conn.execute(text(archive_sql))
+            context.log.info(f"{result.rowcount} projects moved to {projects_archive_table}.")
+
+            # Step 5: Mark the archived projects as inactive in the 'projects' table.
+            deactivate_sql = f"""
+                UPDATE {projects_table} p
+                SET is_active = FALSE
+                FROM tmp_projects_to_archive pta
+                WHERE p.project_id = pta.project_id;
+            """
+            result = conn.execute(text(deactivate_sql))
+            context.log.info(f"{result.rowcount} projects marked as inactive in {projects_table}.")
+
+            # Step 6: Clean up temporary tables
+            conn.execute(text("DROP TABLE IF EXISTS tmp_current_active_project_titles;"))
+            conn.execute(text("DROP TABLE IF EXISTS tmp_projects_to_archive;"))
+            context.log.info("Temporary tables dropped.")
+
+        # Transaction commits here if no exceptions were raised
+
+    # Materialize an asset event with metadata
+    # Fetch some counts or previews for metadata
+    with cloud_sql_engine.connect() as conn:
+        active_projects_count = conn.execute(text(f"SELECT COUNT(*) FROM {projects_table} WHERE is_active = TRUE;")).scalar_one()
+        archived_projects_count_total = conn.execute(text(f"SELECT COUNT(*) FROM {projects_archive_table};")).scalar_one()
+        
+        preview_df = pd.read_sql(f"SELECT * FROM {projects_table} ORDER BY last_seen_timestamp DESC NULLS LAST LIMIT 5", conn)
+
+    yield AssetMaterialization(
+        asset_key=AssetKey(["crypto_ecosystems", "projects_dimension"]),
+        description="Dimension table of unique project titles and their active status.",
+        metadata={
+            "active_projects_count": MetadataValue.int(active_projects_count),
+            "total_archived_projects_count": MetadataValue.int(archived_projects_count_total),
+            "preview": MetadataValue.md(preview_df.to_markdown(index=False) if not preview_df.empty else "No active projects found for preview."),
+            "projects_table_name": projects_table,
+            "projects_archive_table_name": projects_archive_table
+        }
+    )
+    yield Output(None)

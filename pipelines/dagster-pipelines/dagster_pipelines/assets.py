@@ -177,6 +177,7 @@ def create_crypto_ecosystems_project_json_asset(env_prefix: str):
         name="crypto_ecosystems_project_json",
         required_resource_keys={"electric_capital_ecosystems_repo", "cloud_sql_postgres_resource", "active_env_config"},
         group_name="ingestion",
+        description="This asset gets the list of projects and associated repos from the local crypto ecosystems data file, exports.jsonl and loads to the crypto_ecosystems_raw_file_staging table.",
     )
     def _crypto_ecosystems_project_json_env_specific(context) -> dg.MaterializeResult:
 

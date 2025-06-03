@@ -28,7 +28,6 @@ from dagster_pipelines.assets import ( # Adjust module path if they are in diffe
 from dagster_pipelines.cleaning_assets import ( 
     all_stg_dbt_assets, 
     all_prod_dbt_assets,
-    update_crypto_ecosystems_raw_file_job,
     create_process_compressed_contributors_data_asset
 )
 from dagster_pipelines.jobs import (
@@ -38,7 +37,8 @@ from dagster_pipelines.jobs import (
     stg_period_change_data_dbt_assets_job,
     prod_normalized_dbt_assets_job,
     prod_latest_dbt_assets_job,
-    prod_period_change_data_dbt_assets_job
+    prod_period_change_data_dbt_assets_job,
+    update_crypto_ecosystems_raw_file_job
 )
 from dagster_pipelines.schedules import (
     create_env_specific_schedule,
