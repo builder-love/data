@@ -1,4 +1,5 @@
 from dagster import job, define_asset_job, AssetSelection, AssetsDefinition
+from dagster_pipelines.cleaning_assets import run_dbt_tests_on_crypto_ecosystems_raw_file_staging, load_new_data_from_staging_to_final, update_projects_dimension_and_archive
 import dagster as dg
 
 # --- JOB FACTORY FOR COMMON PYTHON ASSETS ---
@@ -21,6 +22,26 @@ def create_env_specific_asset_job_from_prefixed(
         tags=tags if tags else {},
         description=f"[{env_prefix.upper()}] {base_description}"
     )
+
+## ------------------------------------- JOBS FOR CRYPTO ECOSYSTEMS ------------------------------------- ##
+# run the raw file job
+# if successful, run the projects dimension job
+@job()
+def update_crypto_ecosystems_raw_file_job():
+    """
+    Tests the staging data and then updates the crypto_ecosystems_raw_file table.
+    """
+    # Execute tests first. If this op raises an Exception (fails), the job stops.
+    test_results_passed = run_dbt_tests_on_crypto_ecosystems_raw_file_staging()
+
+    # Define that load_new_data depends on the test results.
+    # Pass the boolean result just for completeness or potential internal checks,
+    # but the main control flow comes from the dependency + potential failure in the test op.
+    main_data_updated_signal = load_new_data_from_staging_to_final(test_results_passed)
+
+    # run the projects dimension job
+    update_projects_dimension_and_archive(previous_op_result=main_data_updated_signal)
+## ------------------------------------- JOBS FOR CRYPTO ECOSYSTEMS ------------------------------------- ##
 
 ## ------------------------------------- JOBS FOR DBT ASSETS ------------------------------------- ##
 # these do not use the factory because they are already environment specific
