@@ -390,6 +390,9 @@ sources:
       - name: normalized_top_projects_prod
         identifier: normalized_top_projects
         description: "normalized_top_projects for prod"
+      - name: normalized_contributor_dominant_language_prod
+        identifier: normalized_contributor_dominant_language
+        description: "normalized_contributor_dominant_language for prod"
       - name: latest_top_projects_prod
         identifier: latest_top_projects
         description: "latest_top_projects for prod"
