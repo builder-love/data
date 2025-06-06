@@ -806,3 +806,116 @@ def update_projects_dimension_and_archive(context):
         }
     )
     yield Output(None)
+
+
+######################################
+# maintain 'repos' dimension records
+######################################
+
+@op(
+    required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+    ins={"after_projects_updated": In(Nothing)}, # Name this input to reflect dependency
+)
+def update_repos_dimension_and_archive(context): # Use the input name
+    cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+    env_config = context.resources.active_env_config
+    
+    target_schema = env_config["raw_schema"]  # Or your 'derived' schema
+    
+    repos_table = f"{target_schema}.repos"
+    repos_archive_table = f"{target_schema}.repos_archive"
+    source_table = f"{env_config['raw_schema']}.crypto_ecosystems_raw_file" # Source of repo URLs/identifiers
+
+    sql_now = "NOW() AT TIME ZONE 'utc'" # Consistent timestamping
+
+    with cloud_sql_engine.connect() as conn:
+        with conn.begin(): # Start transaction
+            context.log.info(f"Updating {repos_table} and {repos_archive_table} from {source_table}...")
+
+            # Step 1: Create a temporary table of distinct, non-null repo URLs/identifiers currently in the source
+            conn.execute(text(f"""
+                CREATE TEMP TABLE tmp_current_active_repos AS
+                SELECT DISTINCT repo -- Use 'repo' to match target table column
+                FROM {source_table}
+                WHERE repo IS NOT NULL;
+            """))
+            context.log.info("Temporary table tmp_current_active_repos created.")
+
+            # Step 2: Upsert into the 'repos' table.
+            upsert_sql = f"""
+                INSERT INTO {repos_table} (repo, first_seen_timestamp, last_seen_timestamp, is_active)
+                SELECT
+                    car.repo,
+                    {sql_now}, -- This will be the first_seen_timestamp for NEW repos
+                    {sql_now}, -- last_seen_timestamp for new repos and those being updated
+                    TRUE      -- is_active for new repos and those being updated
+                FROM tmp_current_active_repos car
+                ON CONFLICT (repo) DO UPDATE
+                SET
+                    last_seen_timestamp = {sql_now},
+                    is_active = TRUE;
+                -- No WHERE clause needed in DO UPDATE if conflict target is the only condition
+            """
+            result = conn.execute(text(upsert_sql))
+            context.log.info(f"{result.rowcount} rows affected by upsert into {repos_table}.")
+
+            # Step 3: Identify repos that were active but are no longer in the source table.
+            conn.execute(text(f"""
+                CREATE TEMP TABLE tmp_repos_to_archive AS
+                SELECT r.repo_id, r.repo, r.first_seen_timestamp, r.last_seen_timestamp AS last_seen_timestamp_while_active
+                FROM {repos_table} r
+                LEFT JOIN tmp_current_active_repos car ON r.repo = car.repo
+                WHERE r.is_active = TRUE AND car.repo IS NULL;
+            """))
+            context.log.info("Temporary table tmp_repos_to_archive created.")
+
+            # Step 4: Insert these repos into the 'repos_archive' table.
+            archive_sql = f"""
+                INSERT INTO {repos_archive_table} (repo_id, repo, first_seen_timestamp, last_seen_timestamp_while_active, archived_at)
+                SELECT
+                    rta.repo_id,
+                    rta.repo,
+                    rta.first_seen_timestamp,
+                    rta.last_seen_timestamp_while_active,
+                    {sql_now}
+                FROM tmp_repos_to_archive rta;
+            """
+            result = conn.execute(text(archive_sql))
+            context.log.info(f"{result.rowcount} repos moved to {repos_archive_table}.")
+
+            # Step 5: Mark the archived repos as inactive in the 'repos' table.
+            deactivate_sql = f"""
+                UPDATE {repos_table} r
+                SET is_active = FALSE
+                FROM tmp_repos_to_archive rta
+                WHERE r.repo_id = rta.repo_id;
+            """
+            result = conn.execute(text(deactivate_sql))
+            context.log.info(f"{result.rowcount} repos marked as inactive in {repos_table}.")
+
+            # Step 6: Clean up temporary tables
+            conn.execute(text("DROP TABLE IF EXISTS tmp_current_active_repos;"))
+            conn.execute(text("DROP TABLE IF EXISTS tmp_repos_to_archive;"))
+            context.log.info("Temporary tables dropped.")
+
+        # Transaction commits here if no exceptions were raised
+
+    # Materialize an asset event with metadata
+    with cloud_sql_engine.connect() as conn:
+        active_repos_count = conn.execute(text(f"SELECT COUNT(*) FROM {repos_table} WHERE is_active = TRUE;")).scalar_one()
+        archived_repos_count_total = conn.execute(text(f"SELECT COUNT(*) FROM {repos_archive_table};")).scalar_one()
+        
+        preview_df = pd.read_sql(f"SELECT * FROM {repos_table} ORDER BY last_seen_timestamp DESC NULLS LAST LIMIT 5", conn)
+
+    yield AssetMaterialization(
+        asset_key=AssetKey(["crypto_ecosystems", "repos_dimension"]), # New asset key
+        description="Dimension table of unique repository URLs/identifiers and their active status.",
+        metadata={
+            "active_repos_count": MetadataValue.int(active_repos_count),
+            "total_archived_repos_count": MetadataValue.int(archived_repos_count_total),
+            "preview": MetadataValue.md(preview_df.to_markdown(index=False) if not preview_df.empty else "No active repos found for preview."),
+            "repos_table_name": repos_table,
+            "repos_archive_table_name": repos_archive_table
+        }
+    )
+    yield Output(None)

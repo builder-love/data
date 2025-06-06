@@ -603,6 +603,7 @@ def create_latest_active_distinct_github_project_repos_asset(env_prefix: str):
 
     return _latest_active_distinct_github_project_repos_env_specific
 
+
 # define the asset that gets the stargaze count for a repo
 # to accomodate multiple environments, we will use a factory function
 def create_github_project_repos_stargaze_count_asset(env_prefix: str):
@@ -996,6 +997,7 @@ def create_github_project_repos_stargaze_count_asset(env_prefix: str):
         )
 
     return _github_project_repos_stargaze_count_env_specific # Return the decorated function
+
 
 # define the asset that gets the fork count for a repo
 # to accomodate multiple environments, we will use a factory function
@@ -3214,6 +3216,827 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
             )
 
     return _github_project_repos_is_fork_env_specific
+
+# define the asset that gets the repo description for a repo
+# to accomodate multiple environments, we will use a factory function
+def create_project_repos_description_asset(env_prefix: str):
+    """
+    Factory function to create the project_repos_description asset
+    with an environment-specific key_prefix.
+    """
+    @dg.asset(
+        key_prefix=env_prefix,  # <<< This is the key change for namespacing
+        name="project_repos_description", # This is the base name of the asset
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        group_name="ingestion", # Group name
+        tags={"github_api": "True"},
+    )
+    def _project_repos_description_env_specific(context) -> dg.MaterializeResult:
+        # Get the cloud sql postgres resource
+        cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+        env_config = context.resources.active_env_config  
+        raw_schema = env_config["raw_schema"]  
+        clean_schema = env_config["clean_schema"] 
+
+        # tell the user what environment they are running in
+        context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
+
+        # get the github personal access token
+        gh_pat = os.environ.get("go_blockchain_ecosystem")
+
+        def get_non_github_repo_description(repo_url, repo_source):
+
+            print(f"processing non-githubrepo: {repo_url}")
+
+            # add a 1 second delay to avoid rate limiting
+            # note: this is simplified solution but there are not many non-github repos
+            time.sleep(0.5)
+
+            if repo_source == "bitbucket":
+                # Extract owner and repo_slug from the URL
+                try:
+                    parts = repo_url.rstrip('/').split('/')
+                    owner = parts[-2]
+                    repo_slug = parts[-1]
+                    if '.' in repo_slug:
+                        repo_slug = repo_slug.split('.')[0]
+                except IndexError:
+                    print(f"Invalid Bitbucket URL format: {repo_url}")
+                    return None
+
+                try:
+                    # Construct the correct Bitbucket API endpoint
+                    api_url = f"https://api.bitbucket.org/2.0/repositories/{owner}/{repo_slug}"
+
+                    response = requests.get(api_url)
+
+                    # check if the response is successful
+                    response.raise_for_status()
+
+                    repo_description = response['description']
+
+                    # Get the repo description field
+                    return repo_description
+
+                except requests.exceptions.RequestException as e:
+                    print(f"Error fetching data from Bitbucket API: {e}")
+                    return None
+                except KeyError as e:
+                    print(f"Error: missing key in response.  Key: {e}")
+                    return None
+                except Exception as e:
+                    print(f"An unexpected error has occurred: {e}")
+                    return None
+
+            elif repo_source == "gitlab":
+                try:
+                    parts = repo_url.rstrip('/').split('/')
+                    project_path = "/".join(parts[3:])
+                    project_path_encoded = requests.utils.quote(project_path, safe='')
+                except IndexError:
+                    print(f"Invalid GitLab URL format: {repo_url}")
+                    return None
+
+                api_url = f"https://gitlab.com/api/v4/projects/{project_path_encoded}"  
+
+                try:
+                    response = requests.get(api_url)  # No headers needed for unauthenticated access
+                    response.raise_for_status()
+
+                    # return the description
+                    return response.json()['description']
+                except requests.exceptions.RequestException as e:
+                    print(f"Error fetching data from GitLab API: {e}")
+                    return None
+                except KeyError as e:
+                    print(f"Error: missing key in response.  Key: {e}") 
+                    return None
+                except Exception as e:
+                    print(f"An unexpected error has occurred: {e}")
+                    return None
+            else:
+                return None
+
+        def get_github_repo_description(repo_urls, gh_pat):
+            """
+            Queries the repo description for a GitHub repository using the GraphQL API.
+
+            Args:
+                repo_urls: A list of GitHub repository URLs.
+
+            Returns:
+                A dictionary mapping each repository URL to the repo description.
+            """
+
+            if not repo_urls:  # Handle empty input list
+                return [], 0
+
+            api_url = "https://api.github.com/graphql"
+            headers = {"Authorization": f"bearer {gh_pat}"}
+            results = {}  # Store results: {url: repo_description}
+            batch_size = 150  # Adjust as needed
+            cpu_time_used = 0
+            real_time_used = 0
+            real_time_window = 60
+            cpu_time_limit = 50
+            count_403_errors = 0
+            count_502_errors = 0
+            batch_time_history = []
+
+            for i in range(0, len(repo_urls), batch_size):
+                print(f"processing batch: {i} - {i + batch_size}")
+                # calculate the time it takes to process the batch
+                start_time = time.time()
+                batch = repo_urls[i:i + batch_size]
+                processed_in_batch = set()  # Track successfully processed repos *within this batch*
+                query = "query ("  # Start the query definition
+                variables = {}
+
+                # 1. Declare variables in the query definition
+                for j, repo_url in enumerate(batch):
+                    try:
+                        parts = repo_url.rstrip('/').split('/')
+                        owner = parts[-2]
+                        name = parts[-1]
+                    except IndexError:
+                        print(f"Invalid GitHub URL format: {repo_url}")
+                        # don't return here, return errors at end of batch
+                        continue
+
+                    query += f"$owner{j}: String!, $name{j}: String!,"  # Declare variables
+                    variables[f"owner{j}"] = owner
+                    variables[f"name{j}"] = name
+
+                query = query.rstrip(",")  # Remove trailing comma
+                query += ") {\n"  # Close the variable declaration
+
+                # 2. Construct the query body (using the declared variables)
+                for j, repo_url in enumerate(batch):
+                    query += f"""  repo{j}: repository(owner: $owner{j}, name: $name{j}) {{
+                        description
+                    }}\n"""
+
+                query += "}"
+
+                base_delay = 1
+                max_delay = 60
+                max_retries = 8
+
+                for attempt in range(max_retries):
+                    print(f"attempt: {attempt}")
+                    
+                    try:
+                        if cpu_time_used >= cpu_time_limit and real_time_used < real_time_window:
+                            extra_delay = (cpu_time_used - cpu_time_limit) / 2
+                            extra_delay = max(1, extra_delay)
+                            print(f"CPU time limit reached. Delaying for {extra_delay:.2f} seconds.")
+                            time.sleep(extra_delay)
+                            print(f"resetting cpu_time_used and real_time_used to 0")
+                            cpu_time_used = 0
+                            real_time_used = 0
+                            start_time = time.time()
+                        elif real_time_used >= real_time_window and cpu_time_used < cpu_time_limit:
+                            print(f"real time limit reached without CPU time limit reached. Resetting counts.")
+                            cpu_time_used = 0
+                            real_time_used = 0
+                        elif real_time_used >= real_time_window and cpu_time_used >= cpu_time_limit:
+                            print(f"real time limit reached. CPU time limit reached. Resetting counts.")
+                            cpu_time_used = 0
+                            real_time_used = 0
+                        elif real_time_used < real_time_window and cpu_time_used < cpu_time_limit:
+                            print('cpu time limit not reached. Continuing...')
+
+                        response = requests.post(api_url, json={'query': query, 'variables': variables}, headers=headers)
+
+                        time_since_start = time.time() - start_time
+                        print(f"time_since_start: {time_since_start:.2f} seconds")
+                        time.sleep(3)  # Consistent delay
+                        
+                        # use raise for status to catch errors
+                        response.raise_for_status()
+                        data = response.json()
+
+                        if 'errors' in data:
+                            print(f"Status Code: {response.status_code}")
+                            # Extract rate limit information from headers
+                            print(" \n resource usage tracking:")
+                            rate_limit_info = {
+                                'remaining': response.headers.get('x-ratelimit-remaining'),
+                                'used': response.headers.get('x-ratelimit-used'),
+                                'reset': response.headers.get('x-ratelimit-reset'),
+                                'retry_after': response.headers.get('retry-after')
+                            }
+                            print(f"Rate Limit Info: {rate_limit_info}\n")
+
+                            for error in data['errors']:
+                                if error['type'] == 'RATE_LIMITED':
+                                    reset_at = response.headers.get('X-RateLimit-Reset')
+                                    if reset_at:
+                                        delay = int(reset_at) - int(time.time()) + 1
+                                        delay = max(1, delay)
+                                        delay = min(delay, max_delay)
+                                        print(f"Rate limited.  Waiting for {delay} seconds...")
+                                        time.sleep(delay)
+                                        continue  # Retry the entire batch
+                                else:
+                                    print(f"GraphQL Error: {error}") #Print all the errors.
+
+                        # write the url and description to the database
+                        if 'data' in data:
+                            for j, repo_url in enumerate(batch):
+                                if repo_url in processed_in_batch:  # CRUCIAL CHECK
+                                    continue  # Skip if already processed
+
+                                repo_data = data['data'].get(f'repo{j}')
+                                if repo_data:
+                                    results[repo_url] = repo_data['description']
+                                    processed_in_batch.add(repo_url)  # Mark as processed
+                                else:
+                                    print(f"repo_data is empty for repo: {repo_url}\n")
+                                    # don't return here, return errors at end of batch
+                        break
+
+                    except requests.exceptions.RequestException as e:
+                        print(f"there was a request exception on attempt: {attempt}\n")
+                        print(f"procesing batch: {batch}\n")
+                        print(f"Status Code: {response.status_code}")
+
+                        # Extract rate limit information from headers
+                        print(" \n resource usage tracking:")
+                        rate_limit_info = {
+                            'remaining': response.headers.get('x-ratelimit-remaining'),
+                            'used': response.headers.get('x-ratelimit-used'),
+                            'reset': response.headers.get('x-ratelimit-reset'),
+                            'retry_after': response.headers.get('retry-after')
+                        }
+                        print(f"Rate Limit Info: {rate_limit_info}\n")
+
+                        print(f"the error is: {e}\n")
+                        if attempt == max_retries - 1:
+                            print(f"Max retries reached or unrecoverable error for batch. Giving up.")
+                            # don't return here, return errors at end of batch
+                            break
+
+                        # rate limit handling
+                        if isinstance(e, requests.exceptions.HTTPError):
+                            if e.response.status_code in (502, 504):
+                                count_502_errors += 1
+                                print(f"This process has generated {count_502_errors} 502/504 errors in total.")
+                                delay = 1
+                                print(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
+                                time.sleep(delay)
+                                continue
+                            elif e.response.status_code in (403, 429):
+                                count_403_errors += 1
+                                print(f"This process has generated {count_403_errors} 403/429 errors in total.")
+                                retry_after = e.response.headers.get('Retry-After')
+                                if retry_after:
+                                    delay = int(retry_after)
+                                    print(f"Rate limited (REST - Retry-After). Waiting for {delay} seconds...")
+                                    time.sleep(delay)
+                                    continue
+                                else:
+                                    delay = 1 * (2 ** attempt) + random.uniform(0, 1)
+                                    print(f"Rate limited (REST - Exponential Backoff). Waiting for {delay:.2f} seconds...")
+                                    time.sleep(delay)
+                                    continue
+                        else:
+                            delay = 1 * (2 ** attempt) + random.uniform(0, 1)
+                            print(f"Request failed: {e}. Waiting for {delay:.2f} seconds...")
+                            time.sleep(delay)
+
+                    except KeyError as e:
+                        print(f"KeyError: {e}. Response: {data}")
+                        # Don't append here; handle errors at the end
+                        break
+                    except Exception as e:
+                        print(f"An unexpected error occurred: {e}")
+                        # Don't append here; handle errors at the end
+                        break
+
+                # Handle any repos that failed *all* retries (or were invalid URLs)
+                for repo_url in batch:
+                    if repo_url not in processed_in_batch:
+                        results[repo_url] = None
+                        print(f"adding repo to results after max retries, or was invalid url: {repo_url}")
+
+                # calculate the time it takes to process the batch
+                end_time = time.time()
+                batch_time = end_time - start_time
+                cpu_time_used += time_since_start
+                real_time_used += batch_time
+                batch_time_history.append(batch_time)
+                if batch_time_history and len(batch_time_history) > 10:
+                    print(f"average batch time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
+                print(f"batch {i} - {i + batch_size} completed. Total repos to process: {len(repo_urls)}")
+                print(f"time taken to process batch {i}: {batch_time:.2f} seconds")
+                print(f"Total CPU time used: {cpu_time_used:.2f} seconds")
+                print(f"Total real time used: {real_time_used:.2f} seconds")
+
+            return results, {
+                'count_403_errors': count_403_errors,
+                'count_502_errors': count_502_errors
+            }
+
+        # Execute the query
+        with cloud_sql_engine.connect() as conn:
+
+            # query the latest_distinct_project_repos table to get the distinct repo list
+            result = conn.execute(
+                text(f"""select repo, repo_source from {clean_schema}.latest_active_distinct_project_repos where is_active = true""")
+                    )
+            repo_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+
+        # Filter for GitHub URLs
+        github_urls = repo_df[repo_df['repo_source'] == 'github']['repo'].tolist()
+
+        # get github pat
+        gh_pat = os.getenv('go_blockchain_ecosystem')
+
+        results = get_github_repo_description(github_urls, gh_pat)
+
+        github_results = results[0]
+        count_http_errors_github_api = results[1]
+
+        # write results to pandas dataframe
+        results_df = pd.DataFrame(github_results.items(), columns=['repo', 'description'])
+
+        # now get non-github repos urls
+        non_github_results_df = repo_df[repo_df['repo_source'] != 'github']
+
+        # if non_github_urls is not empty, get repo description
+        if not non_github_results_df.empty:
+            print("found non-github repos. Getting repo description...")
+            # apply distinct_repo_df['repo'] to get repo description
+            non_github_results_df['description'] = non_github_results_df.apply(
+                lambda row: get_non_github_repo_description(row['repo'], row['repo_source']), axis=1
+            )
+
+            # drop the repo_source column
+            non_github_results_df = non_github_results_df.drop(columns=['repo_source'])
+
+            # append non_github_urls to results_df
+            results_df = pd.concat([results_df, non_github_results_df])
+
+        # add unix datetime column
+        results_df['data_timestamp'] = pd.Timestamp.now()
+
+        # write results to database
+        results_df.to_sql('project_repos_description', cloud_sql_engine, if_exists='replace', index=False, schema=raw_schema)
+
+        with cloud_sql_engine.connect() as conn:
+            # capture asset metadata
+            preview_query = text(f"select count(*) from {raw_schema}.project_repos_description")
+            result = conn.execute(preview_query)
+            # Fetch all rows into a list of tuples
+            row_count = result.fetchone()[0]
+
+            preview_query = text(f"select * from {raw_schema}.project_repos_description limit 10")
+            result = conn.execute(preview_query)
+            result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+
+        return dg.MaterializeResult(
+            metadata={
+                "row_count": dg.MetadataValue.int(row_count),
+                "preview": dg.MetadataValue.md(result_df.to_markdown(index=False)),
+                "count_403_errors": dg.MetadataValue.int(count_http_errors_github_api['count_403_errors']),
+                "count_502_errors": dg.MetadataValue.int(count_http_errors_github_api['count_502_errors'])
+            }
+        )
+
+    return _project_repos_description_env_specific # Return the decorated function
+
+
+MAX_README_LENGTH = 50000  # Maximum characters to store for a README
+def create_project_repos_readmes_asset(env_prefix: str):
+    """
+    Factory function to create the project_repos_readmes asset
+    with an environment-specific key_prefix.
+    This asset fetches README files from various repository sources,
+    cleaning them of images/links and truncating if they exceed a defined maximum length.
+    """
+    @dg.asset(
+        key_prefix=env_prefix,
+        name="project_repos_readmes",
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        group_name="ingestion",
+        tags={"github_api": "True"},
+        description="""
+        This asset fetches README files from all active repositories,
+        cleaning them of images/links and truncating if they exceed a defined maximum length.
+        """
+    )
+    def _project_repos_readmes_env_specific(context: dg.OpExecutionContext) -> dg.MaterializeResult:
+        cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+        env_config = context.resources.active_env_config
+        raw_schema = env_config["raw_schema"]
+        clean_schema = env_config["clean_schema"]
+
+        context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
+
+        gh_pat = os.environ.get("go_blockchain_ecosystem")
+        if not gh_pat:
+            context.log.warning("GitHub Personal Access Token (go_blockchain_ecosystem) not found in environment variables.")
+
+        readme_filenames_to_try = ["README.md", "readme.md", "README.rst", "README.txt"]
+
+        def clean_readme_text(content: str) -> str:
+            """Removes images and simplifies links in README content."""
+            if not content:
+                return ""
+
+            # Remove NUL characters (\0x00)
+            content = content.replace('\x00', '')
+            
+            # Remove Markdown images: ![alt text](image_url)
+            # This regex handles various forms, including those with titles
+            content = re.sub(r'!\[.*?\]\(.*?\)', '', content)
+            
+            # Remove HTML img tags: <img src="..." ...>
+            content = re.sub(r'<img[^>]*>', '', content, flags=re.IGNORECASE)
+
+            # Convert Markdown links to just their text: [link text](url) -> link text
+            content = re.sub(r'\[([^\]]+)\]\(.*?\)', r'\1', content)
+            
+            # Attempt to simplify HTML links: <a href="...">link text</a> -> link text
+            # This is a basic version, more complex HTML might need a proper parser
+            content = re.sub(r'<a[^>]*>(.*?)<\/a>', r'\1', content, flags=re.IGNORECASE | re.DOTALL)
+
+            return content
+
+        def process_readme_content(content: str | None) -> tuple[str | None, bool]:
+            """Cleans, then truncates content if too long, and returns content and truncation status."""
+            if content is None:
+                return None, False
+            
+            cleaned_content = clean_readme_text(content)
+            
+            if len(cleaned_content) > MAX_README_LENGTH:
+                context.log.debug(f"Cleaned README content length {len(cleaned_content)} exceeds max {MAX_README_LENGTH}. Truncating.")
+                return cleaned_content[:MAX_README_LENGTH], True
+            return cleaned_content, False
+
+        def fetch_readme_content_via_get(url: str) -> str | None:
+            """Helper to fetch content from a direct URL."""
+            try:
+                time.sleep(0.2)
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()
+                return response.text
+            except requests.exceptions.RequestException as e:
+                context.log.warning(f"Failed to fetch {url}: {e}")
+                return None
+
+        def get_non_github_repo_readme(repo_url: str, repo_source: str) -> tuple[str | None, bool]:
+            """
+            Fetches README content for non-GitHub repositories.
+            Returns cleaned content and a boolean indicating if it was truncated.
+            """
+            context.log.info(f"Processing non-GitHub repo: {repo_url} (Source: {repo_source})")
+            time.sleep(0.5)
+
+            for filename in readme_filenames_to_try:
+                raw_content = None
+                if repo_source == "bitbucket":
+                    try:
+                        parts = repo_url.rstrip('/').split('/')
+                        owner = parts[-2]
+                        repo_slug = parts[-1].replace(".git", "")
+                        for branch in ["master", "main", "develop"]:
+                            api_url = f"https://api.bitbucket.org/2.0/repositories/{owner}/{repo_slug}/src/{branch}/{filename}"
+                            # context.log.debug(f"Trying Bitbucket URL: {api_url}")
+                            raw_content = fetch_readme_content_via_get(api_url)
+                            if raw_content:
+                                context.log.debug(f"Found {filename} for Bitbucket repo {repo_url} on branch {branch}")
+                                return process_readme_content(raw_content)
+                    except IndexError:
+                        context.log.warning(f"Invalid Bitbucket URL format: {repo_url}")
+                        continue
+                    except Exception as e:
+                        context.log.warning(f"Unexpected error for Bitbucket repo {repo_url} with {filename}: {e}")
+                        continue
+                elif repo_source == "gitlab":
+                    try:
+                        parts = repo_url.rstrip('/').split('/')
+                        project_path = "/".join(parts[3:]).replace(".git", "")
+                        project_path_encoded = requests.utils.quote(project_path, safe='')
+                        for branch in ["master", "main", "develop"]:
+                            api_url = f"https://gitlab.com/api/v4/projects/{project_path_encoded}/repository/files/{requests.utils.quote(filename, safe='')}/raw?ref={branch}"
+                            # context.log.debug(f"Trying GitLab URL: {api_url}")
+                            raw_content = fetch_readme_content_via_get(api_url)
+                            if raw_content:
+                                context.log.debug(f"Found {filename} for GitLab repo {repo_url} on branch {branch}")
+                                return process_readme_content(raw_content)
+                    except IndexError:
+                        context.log.warning(f"Invalid GitLab URL format: {repo_url}")
+                        continue
+                    except Exception as e:
+                        context.log.warning(f"Unexpected error for GitLab repo {repo_url} with {filename}: {e}")
+                        continue
+            
+            context.log.info(f"No README found for {repo_source} repo: {repo_url} after trying {readme_filenames_to_try}")
+            return None, False
+
+
+        def get_github_repo_readme(repo_urls: list[str], gh_pat_token: str | None) -> tuple[dict[str, tuple[str | None, bool]], dict]:
+            """
+            Queries the README file content for GitHub repositories using the GraphQL API.
+            Returns:
+                A dictionary mapping repo URL to a tuple of (cleaned README content, is_truncated).
+                A dictionary with error counts.
+            """
+            if not repo_urls:
+                return {}, {'count_403_errors': 0, 'count_502_errors': 0}
+            
+            if not gh_pat_token:
+                context.log.error("GitHub PAT is missing. Cannot fetch GitHub READMEs.")
+                return {url: (None, False) for url in repo_urls}, {'count_403_errors': 0, 'count_502_errors': 0}
+
+            api_url = "https://api.github.com/graphql"
+            headers = {"Authorization": f"bearer {gh_pat_token}"}
+            results: dict[str, tuple[str | None, bool]] = {} 
+            batch_size = 50 
+            
+            count_403_errors = 0
+            count_502_errors = 0
+            
+            context.log.info(f"Starting GitHub README fetch for {len(repo_urls)} URLs.")
+
+            for i in range(0, len(repo_urls), batch_size):
+                batch_start_time = time.time()
+                batch = repo_urls[i:i + batch_size]
+                processed_in_batch = set() 
+                
+                variables = {}
+                final_query_parts = []
+                repo_url_to_query_idx_map = {} 
+                current_query_idx = 0
+
+                for repo_url_original in batch:
+                    try:
+                        parts = repo_url_original.rstrip('/').split('/')
+                        owner = parts[-2]
+                        name = parts[-1].replace(".git", "")
+                    except IndexError:
+                        context.log.warning(f"Invalid GitHub URL format, skipping: {repo_url_original}")
+                        results[repo_url_original] = (None, False) 
+                        processed_in_batch.add(repo_url_original)
+                        continue
+                    
+                    var_owner = f"owner{current_query_idx}"
+                    var_name = f"name{current_query_idx}"
+                    variables[var_owner] = owner
+                    variables[var_name] = name
+                    
+                    repo_url_to_query_idx_map[repo_url_original] = current_query_idx
+
+                    final_query_parts.append(f"""
+                    repo{current_query_idx}: repository(owner: ${var_owner}, name: ${var_name}) {{
+                        readmeMD: object(expression: "HEAD:README.md") {{ ... on Blob {{ text }} }}
+                        readmemd: object(expression: "HEAD:readme.md") {{ ... on Blob {{ text }} }}
+                        readmeRST: object(expression: "HEAD:README.rst") {{ ... on Blob {{ text }} }}
+                        readmeTXT: object(expression: "HEAD:README.txt") {{ ... on Blob {{ text }} }}
+                    }}""")
+                    current_query_idx += 1
+                
+                if not final_query_parts: 
+                    context.log.debug("No valid query parts for this GitHub batch.")
+                    continue
+
+                query_variable_definitions = ", ".join([f"$owner{k}: String!, $name{k}: String!" for k in range(current_query_idx)])
+                full_query = f"query ({query_variable_definitions}) {{\n" + "\n".join(final_query_parts) + "\n}"
+                
+                context.log.info(f"Executing GitHub GraphQL batch query for {len(final_query_parts)} repos.")
+
+                max_retries = 5
+                base_delay = 2
+
+                for attempt in range(max_retries):
+                    try:
+                        response = requests.post(api_url, json={'query': full_query, 'variables': variables}, headers=headers, timeout=30)
+                        response.raise_for_status()
+                        data = response.json()
+
+                        if 'errors' in data and data['errors']:
+                            is_rate_limited = False
+                            for error in data['errors']:
+                                context.log.warning(f"GitHub GraphQL Error: {error.get('message', str(error))}")
+                                if error.get('type') == 'RATE_LIMITED':
+                                    is_rate_limited = True
+                                    count_403_errors +=1 
+                                    delay_duration = response.headers.get('Retry-After', base_delay * (2 ** attempt) + random.uniform(0,1))
+                                    delay_duration = min(float(delay_duration), 60) 
+                                    context.log.debug(f"Rate limited by GitHub. Retrying in {delay_duration:.2f}s (Attempt {attempt+1}/{max_retries})")
+                                    time.sleep(float(delay_duration))
+                                    break 
+                            if is_rate_limited:
+                                continue 
+                            else: 
+                                # NEW, SIMPLER LOGIC: Identify and log the URLs in the failing batch
+                                failing_urls = list(repo_url_to_query_idx_map.keys())
+                                context.log.warning(f"Non-retryable GraphQL error for batch. Repos in this batch were: {failing_urls}")
+                                for repo_url_original, query_idx in repo_url_to_query_idx_map.items():
+                                     if repo_url_original not in processed_in_batch: 
+                                        results[repo_url_original] = (None, False)
+                                        processed_in_batch.add(repo_url_original)
+                                break 
+
+
+                        if 'data' in data:
+                            for repo_url_original, query_idx in repo_url_to_query_idx_map.items():
+                                if repo_url_original in processed_in_batch:
+                                    continue 
+
+                                repo_key = f'repo{query_idx}'
+                                repo_api_data = data['data'].get(repo_key)
+                                raw_readme_content = None
+
+                                if repo_api_data:
+                                    if repo_api_data.get('readmeMD') and repo_api_data['readmeMD'].get('text') is not None:
+                                        raw_readme_content = repo_api_data['readmeMD']['text']
+                                    elif repo_api_data.get('readmemd') and repo_api_data['readmemd'].get('text') is not None:
+                                        raw_readme_content = repo_api_data['readmemd']['text']
+                                    elif repo_api_data.get('readmeRST') and repo_api_data['readmeRST'].get('text') is not None:
+                                        raw_readme_content = repo_api_data['readmeRST']['text']
+                                    elif repo_api_data.get('readmeTXT') and repo_api_data['readmeTXT'].get('text') is not None:
+                                        raw_readme_content = repo_api_data['readmeTXT']['text']
+                                    
+                                    content, is_truncated = process_readme_content(raw_readme_content) # Processing happens here
+                                    results[repo_url_original] = (content, is_truncated)
+                                    
+                                    if content is None: # After cleaning, content could become None/empty if it was only images/links
+                                        context.log.debug(f"No textual README content found for GitHub repo: {repo_url_original} after cleaning.")
+                                    else:
+                                        log_msg = f"Fetched and processed README for GitHub repo: {repo_url_original} (length: {len(content)})"
+                                        if is_truncated:
+                                            log_msg += " (truncated)"
+                                        context.log.debug(log_msg)
+                                else:
+                                    context.log.debug(f"No data returned for GitHub repo {repo_url_original} in batch response. Storing None.")
+                                    results[repo_url_original] = (None, False)
+                                processed_in_batch.add(repo_url_original)
+                            break 
+
+                    except requests.exceptions.HTTPError as e:
+                        context.log.debug(f"HTTPError on attempt {attempt+1} for GitHub batch: {e}. Status: {e.response.status_code}")
+                        if e.response.status_code in (502, 504):
+                            count_502_errors += 1
+                            delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                            context.log.warning(f"GitHub API 502/504 error. Retrying in {delay:.2f}s...")
+                            time.sleep(delay)
+                        elif e.response.status_code in (403, 429):
+                            count_403_errors += 1
+                            retry_after = e.response.headers.get('Retry-After')
+                            delay = float(retry_after) if retry_after else (base_delay * (2 ** attempt) + random.uniform(0, 1))
+                            delay = min(delay, 60)
+                            context.log.warning(f"GitHub API 403/429 error. Retrying in {delay:.2f}s...")
+                            time.sleep(delay)
+                        else:
+                            context.log.debug(f"Unhandled HTTPError for GitHub batch, not retrying this batch. Error: {e}")
+                            for repo_url_original in repo_url_to_query_idx_map.keys(): 
+                                 if repo_url_original not in processed_in_batch:
+                                    results[repo_url_original] = (None, False)
+                                    processed_in_batch.add(repo_url_original)
+                            break 
+                    except requests.exceptions.RequestException as e:
+                        context.log.debug(f"RequestException on attempt {attempt+1} for GitHub batch: {e}. Not retrying this batch.")
+                        for repo_url_original in repo_url_to_query_idx_map.keys():
+                             if repo_url_original not in processed_in_batch:
+                                results[repo_url_original] = (None, False)
+                                processed_in_batch.add(repo_url_original)
+                        break 
+                    except Exception as e:
+                        context.log.debug(f"Unexpected error during GitHub API call on attempt {attempt+1}: {e}. Not retrying this batch.")
+                        for repo_url_original in repo_url_to_query_idx_map.keys():
+                             if repo_url_original not in processed_in_batch:
+                                results[repo_url_original] = (None, False)
+                                processed_in_batch.add(repo_url_original)
+                        break
+                
+                for repo_url_original in batch: 
+                    if repo_url_original not in processed_in_batch: 
+                        context.log.debug(f"GitHub repo {repo_url_original} failed all attempts or was invalid. Storing (None, False) for README.")
+                        results[repo_url_original] = (None, False)
+
+                batch_duration = time.time() - batch_start_time
+                context.log.infor(f"GitHub batch {i//batch_size + 1} processed in {batch_duration:.2f}s. Total results accumulated: {len(results)}/{len(repo_urls)}")
+                time.sleep(1)
+
+            return results, {'count_403_errors': count_403_errors, 'count_502_errors': count_502_errors}
+
+        # Main asset logic
+        with cloud_sql_engine.connect() as conn:
+            query_text = f"""
+                SELECT repo, repo_source 
+                FROM {clean_schema}.latest_active_distinct_project_repos 
+                WHERE is_active = true
+            """
+            result = conn.execute(text(query_text))
+            repo_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+
+        if repo_df.empty:
+            context.log.info("No active repositories found to process.")
+            return dg.MaterializeResult(
+                metadata={
+                    "row_count": 0, "preview": dg.MetadataValue.md("No active repositories found."),
+                    "github_api_403_errors": 0, "github_api_502_errors": 0
+                }
+            )
+
+        github_urls = repo_df[repo_df['repo_source'] == 'github']['repo'].tolist()
+        github_readmes_data, github_errors = {}, {'count_403_errors': 0, 'count_502_errors': 0}
+        if github_urls:
+            github_readmes_data, github_errors = get_github_repo_readme(github_urls, gh_pat)
+        
+        all_results_list = []
+
+        for repo_url, (content, is_truncated) in github_readmes_data.items():
+            all_results_list.append({'repo': repo_url, 'readme_content': content, 'is_truncated': is_truncated})
+
+        non_github_df = repo_df[repo_df['repo_source'] != 'github']
+        if not non_github_df.empty:
+            context.log.info(f"Processing {len(non_github_df)} non-GitHub repositories for READMEs...")
+            for _, row in non_github_df.iterrows():
+                repo_url = row['repo']
+                repo_source = row['repo_source']
+                if repo_url not in github_readmes_data: 
+                    content, is_truncated = get_non_github_repo_readme(repo_url, repo_source)
+                    all_results_list.append({'repo': repo_url, 'readme_content': content, 'is_truncated': is_truncated})
+        
+        results_df = pd.DataFrame(all_results_list)
+        
+        if results_df.empty:
+            context.log.info("No README content was fetched for any repository.")
+            results_df = pd.DataFrame(columns=['repo', 'readme_content', 'is_truncated', 'data_timestamp'])
+        else:
+            results_df['is_truncated'] = results_df['is_truncated'].astype(bool)
+
+
+        results_df['data_timestamp'] = pd.Timestamp.now(tz='UTC')
+        results_df = results_df.drop_duplicates(subset=['repo'], keep='first')
+
+        target_table_name = "project_repos_readmes" 
+        try:
+            dtype_mapping = {
+                'readme_content': sqlalchemy.types.Text,
+                'is_truncated': sqlalchemy.types.Boolean,
+                'data_timestamp': sqlalchemy.types.TIMESTAMP(timezone=True) 
+            }
+            if 'repo' in results_df.columns: 
+                 dtype_mapping['repo'] = sqlalchemy.types.String(255) 
+
+            results_df.to_sql(
+                target_table_name,
+                cloud_sql_engine,
+                if_exists='replace', 
+                index=False,
+                schema=raw_schema,
+                dtype=dtype_mapping
+            )
+            context.log.info(f"Successfully wrote {len(results_df)} READMEs to {raw_schema}.{target_table_name}")
+        except Exception as e:
+            context.log.error(f"Error writing READMEs to database: {e}")
+            context.log.error(f"DataFrame info before to_sql: {results_df.info()}")
+
+
+        row_count = 0
+        preview_df_md = "Could not generate preview or table is empty."
+        try:
+            with cloud_sql_engine.connect() as conn:
+                count_query = text(f"SELECT COUNT(*) FROM {raw_schema}.{target_table_name}")
+                db_row_count_result = conn.execute(count_query).scalar_one_or_none()
+                row_count = db_row_count_result if db_row_count_result is not None else 0
+
+                if row_count > 0:
+                    preview_query_text = f"""
+                        SELECT repo, 
+                               CASE 
+                                   WHEN readme_content IS NULL THEN 0 
+                                   ELSE LENGTH(readme_content) 
+                               END as readme_length, 
+                               is_truncated,
+                               data_timestamp 
+                        FROM {raw_schema}.{target_table_name} LIMIT 10
+                    """
+                    preview_result = conn.execute(text(preview_query_text))
+                    preview_df = pd.DataFrame(preview_result.fetchall(), columns=preview_result.keys())
+                    preview_df_md = preview_df.to_markdown(index=False)
+                else:
+                     preview_df_md = "Table is empty after write attempt or does not exist."
+        except Exception as e:
+            context.log.error(f"Failed to generate metadata from database: {e}")
+            preview_df_md = f"Error generating preview: {e}"
+
+        return dg.MaterializeResult(
+            metadata={
+                "row_count": dg.MetadataValue.int(row_count),
+                "preview": dg.MetadataValue.md(preview_df_md),
+                "github_api_403_errors": dg.MetadataValue.int(github_errors.get('count_403_errors',0)),
+                "github_api_502_errors": dg.MetadataValue.int(github_errors.get('count_502_errors',0)),
+                "max_readme_length": dg.MetadataValue.int(MAX_README_LENGTH)
+            }
+        )
+    return _project_repos_readmes_env_specific
 
 
 # define the asset that gets the contributors for a repo

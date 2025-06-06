@@ -1,5 +1,10 @@
 from dagster import job, define_asset_job, AssetSelection, AssetsDefinition
-from dagster_pipelines.cleaning_assets import run_dbt_tests_on_crypto_ecosystems_raw_file_staging, load_new_data_from_staging_to_final, update_projects_dimension_and_archive
+from dagster_pipelines.cleaning_assets import (
+    run_dbt_tests_on_crypto_ecosystems_raw_file_staging, 
+    load_new_data_from_staging_to_final, 
+    update_projects_dimension_and_archive,
+    update_repos_dimension_and_archive
+)
 import dagster as dg
 
 # --- JOB FACTORY FOR COMMON PYTHON ASSETS ---
@@ -40,7 +45,10 @@ def update_crypto_ecosystems_raw_file_job():
     main_data_updated_signal = load_new_data_from_staging_to_final(test_results_passed)
 
     # run the projects dimension job
-    update_projects_dimension_and_archive(previous_op_result=main_data_updated_signal)
+    projects_dimension_updated_signal = update_projects_dimension_and_archive(previous_op_result=main_data_updated_signal)
+
+    # run the repos dimension job
+    update_repos_dimension_and_archive(after_projects_updated=projects_dimension_updated_signal)
 ## ------------------------------------- JOBS FOR CRYPTO ECOSYSTEMS ------------------------------------- ##
 
 ## ------------------------------------- JOBS FOR DBT ASSETS ------------------------------------- ##
