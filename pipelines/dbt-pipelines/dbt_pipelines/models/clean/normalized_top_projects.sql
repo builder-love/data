@@ -75,7 +75,8 @@ WHERE LOWER(project_title) NOT IN (
     'zero knowledge cryptography',
     'bridge (category)',
     'cosmos network stack',
-    'polkadot network stack'
+    'polkadot network stack',
+    'evm toolkit'
     )
 and report_date >= (CURRENT_DATE - INTERVAL '52 weeks')
 ),
