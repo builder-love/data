@@ -13,7 +13,7 @@ KEYWORD_FEATURE_MAP = {
     "is_awesome_curated": ["awesome", "curated"],
     "has_benchmark": ["benchmark", "benchmarking"],
     "is_block_explorer": ["block explorer"],
-    "is_boilerplate_scaffold_template": ["boilerplate", "scaffold", "template"],
+    "is_boilerplate_scaffold_template": ["boilerplate", "scaffold", "template", "One-line setup", "One line setup"],
     "is_bootcamp": ["bootcamp"],
     "is_bot": ["bot"],
     "has_bounty_program": ["bounty", "bounty program"],
@@ -21,9 +21,9 @@ KEYWORD_FEATURE_MAP = {
     "is_cli_tool": ["cli", "cli tool"],
     "is_library": ["client library", "javascript library", "libraries", "library", "python library"],
     "is_course": ["course"],
-    "is_demo": ["demo", "this repo demonstrates"],
+    "is_demo": ["demo", "this repo demonstrates", "This project demonstrates"],
     "has_docs": ["docs", "documentation", "documentation site", "documents"],
-    "is_education_related": ["educate"],
+    "is_education_related": ["educate", "education", "education purposes"],
     "is_eip_erc": ["eip", "erc"],
     "has_examples": ["example", "examples"],
     "is_feature_description": ["feature description"],
@@ -39,13 +39,15 @@ KEYWORD_FEATURE_MAP = {
     "is_sample_project": ["sample", "sample application", "sample project", "simple example"],
     "is_sdk": ["sdk"],
     "is_security_related": ["security", "exploit", "vulnerability", "honeypot contract", "honeypot"],
-    "has_tests_testing": ["test", "testing suite", "tests"],
+    "has_tests_testing": ["test", "testing suite", "tests", "test environment", "test environment setup"],
     "has_tips": ["tips"],
     "is_tooling": ["tool", "toolbox", "toolkit", "tools"],
     "is_tutorial": ["tutorial"],
     "is_whitepaper": ["whitepaper"],
     "is_workshop": ["workshop"],
-    "is_wrapper": ["wrapper"]
+    "is_wrapper": ["wrapper"],
+    "is_experiment": ["experiment", "experiments", "this is an experiment"],
+    "is_research": ["research", "research paper", "research project", "research related", "researching", "researching project", "research project related", "Bachelor thesis", "Master thesis", "PhD thesis", "thesis project", "thesis related", "thesis researching", "thesis project related"]
 }
 
 REPO_NAME_FEATURE_MAP = {
@@ -88,7 +90,7 @@ def create_project_repos_description_features_asset(env_prefix: str):
         env_config = context.resources.active_env_config
         clean_schema = env_config["clean_schema"]
 
-        active_repos_table = "latest_active_distinct_project_repos"
+        active_repos_table = "latest_active_distinct_project_repos_with_code"
         description_table = "latest_project_repos_description"
         readme_table = "latest_project_repos_readmes"
         output_table_name = "project_repos_features"
@@ -108,8 +110,6 @@ def create_project_repos_description_features_asset(env_prefix: str):
                     FROM {clean_schema}.{active_repos_table} AS a
                     LEFT JOIN {clean_schema}.{description_table} AS d ON a.repo = d.repo
                     LEFT JOIN {clean_schema}.{readme_table} AS r ON a.repo = r.repo
-                    where a.is_active = true 
-                    -- and a.is_archived <> true
                 """)
                 features_df = pd.read_sql_query(query, conn)
             context.log.info(f"Successfully read {len(features_df)} rows from '{active_repos_table}'.")
@@ -131,7 +131,7 @@ def create_project_repos_description_features_asset(env_prefix: str):
 
         # Fill NaN descriptions and readmes with empty strings to avoid errors
         features_df['description'] = features_df['description'].fillna('')
-        features_df['readme'] = features_df['readme_content'].fillna('')
+        features_df['readme_content'] = features_df['readme_content'].fillna('')
 
         # generate boolean features from repo name
         for feature_name, keywords in REPO_NAME_FEATURE_MAP.items():
