@@ -25,7 +25,8 @@ from dagster_pipelines.assets import ( # Adjust module path if they are in diffe
     create_latest_contributor_following_count_asset,
     create_latest_contributor_activity_asset,
     create_project_repos_description_asset,
-    create_project_repos_readmes_asset
+    create_project_repos_readmes_asset,
+    create_project_repos_package_files_asset
 )
 from dagster_pipelines.features import (
     create_project_repos_description_features_asset
@@ -94,6 +95,7 @@ common_asset_creators = {
     "github_project_repos_contributors": create_github_project_repos_contributors_asset,
     "project_repos_description": create_project_repos_description_asset,
     "project_repos_readmes": create_project_repos_readmes_asset,
+    "project_repos_package_files": create_project_repos_package_files_asset,
     "project_repos_description_features": create_project_repos_description_features_asset,
     "latest_contributor_data": create_latest_contributor_data_asset,
     "contributor_follower_count": create_contributor_follower_count_asset,
@@ -140,6 +142,7 @@ asset_job_schedule_params_map = {
     "github_project_repos_contributors": {"base_job_name": "project_repos_contributors_refresh", "base_job_desc": "Gets the contributors...", "job_tags": {"github_api": "True"}, "cron_str": "0 0 20 * *", "base_schedule_name": "project_repos_contributors_schedule"},
     "project_repos_description": {"base_job_name": "project_repos_description_refresh", "base_job_desc": "Gets the repo description...", "job_tags": {"github_api": "True"}, "cron_str": "0 0 26 * *", "base_schedule_name": "project_repos_description_schedule"},
     "project_repos_readmes": {"base_job_name": "project_repos_readmes_refresh", "base_job_desc": "Gets the repo readmes...", "job_tags": {"github_api": "True"}, "cron_str": "0 0 27 * *", "base_schedule_name": "project_repos_readmes_schedule"},
+    "project_repos_package_files": {"base_job_name": "project_repos_package_files_refresh", "base_job_desc": "Gets the repo package files...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 8,24 * *", "base_schedule_name": "project_repos_package_files_schedule"},
     "project_repos_description_features": {"base_job_name": "project_repos_description_features_refresh", "base_job_desc": "Gets the repo description features...", "job_tags": {"github_api": "True"}, "cron_str": "0 0 28 * *", "base_schedule_name": "project_repos_description_features_schedule"},
     "process_compressed_contributors_data": {"base_job_name": "process_compressed_contributors_data_refresh", "base_job_desc": "Extracts, decompresses, and inserts data...", "job_tags": {"github_api": "True"}, "cron_str": "0 3 * * *", "base_schedule_name": "process_compressed_contributors_data_schedule"},
     "latest_contributor_data": {"base_job_name": "latest_contributor_data_refresh", "base_job_desc": "Queries the latest list of contributors...", "job_tags": {"github_api": "True"}, "cron_str": "0 10 8,22 * *", "base_schedule_name": "latest_contributor_data_schedule"},
