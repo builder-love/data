@@ -375,6 +375,52 @@ models:
     tests:
       - unique_combination_of_columns:
           column_names: [repo, data_timestamp]
+  - name: latest_project_repos_readmes
+    columns:
+      - name: repo
+        tests:
+          - not_null
+      - name: readme_content
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
+      - name: is_truncated
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: boolean
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+    tests:
+      - unique_combination_of_columns:
+          column_names: [repo, data_timestamp]
+      - check_row_count_stability:
+          lower_threshold_factor: 0.50 # New count should not be less than 50% of old count
+          upper_threshold_factor: 1.50 # New count should not be more than 150% of old count
+          min_rows_for_check: 100 
+  - name: latest_project_repos_description
+    columns:
+      - name: repo
+        tests:
+          - not_null
+      - name: description
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+    tests:
+      - unique_combination_of_columns:
+          column_names: [repo, data_timestamp]
+      - check_row_count_stability:
+          lower_threshold_factor: 0.50 # New count should not be less than 50% of old count
+          upper_threshold_factor: 1.50 # New count should not be more than 150% of old count
+          min_rows_for_check: 100 
   - name: latest_project_organizations
     columns:
       - name: project_organization_url
@@ -455,6 +501,45 @@ models:
           - not_null
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: boolean
+      - name: is_archived
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: boolean
+      - name: repo_source
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+    tests:
+      - unique_combination_of_columns:
+          column_names: [repo, data_timestamp]
+      - check_row_count_stability:
+          lower_threshold_factor: 0.50 # New count should not be less than 50% of old count
+          upper_threshold_factor: 1.50 # New count should not be more than 150% of old count
+          min_rows_for_check: 100 
+  - name: latest_project_repos_no_code
+    columns:
+      - name: repo
+        tests:
+          - not_null
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+    tests:
+      - unique_combination_of_columns:
+          column_names: [repo, data_timestamp]
+      - check_row_count_stability:
+          lower_threshold_factor: 0.50 # New count should not be less than 50% of old count
+          upper_threshold_factor: 1.50 # New count should not be more than 150% of old count
+          min_rows_for_check: 100 
+  - name: latest_active_distinct_project_repos_with_code
+    columns:
+      - name: repo
+        tests:
+          - not_null
       - name: repo_source
       - name: data_timestamp
         tests:
@@ -1519,3 +1604,32 @@ models:
     tests:
       - unique_combination_of_columns:
           column_names: [repo, data_timestamp]
+  - name: latest_project_repos_package_files
+    columns:
+      - name: repo
+        tests:
+          - not_null
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+      - name: package_manager
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
+      - name: file_name
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
+      - name: file_content
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
+    tests:
+      - unique_combination_of_columns:
+          column_names: [repo, file_name, data_timestamp]
+      - check_row_count_stability:
+          lower_threshold_factor: 0.50 # New count should not be less than 50% of old count
+          upper_threshold_factor: 1.50 # New count should not be more than 150% of old count
+          min_rows_for_check: 100  

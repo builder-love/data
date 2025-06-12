@@ -69,6 +69,18 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
+      - name: latest_project_repos_readmes
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: latest_project_repos_description
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: latest_project_repos_package_files
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
   - name: clean_schema
     database: "{{ env_var('cloud_sql_postgres_db', 'postgres') }}"
     schema: "{{ 'clean_stg' if target.name == 'stg' else 'clean' }}"
@@ -311,6 +323,10 @@ sources:
         freshness: 
           warn_after: {count: 32, period: day}
       - name: latest_contributor_dominant_language
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: latest_project_repos_no_code
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
