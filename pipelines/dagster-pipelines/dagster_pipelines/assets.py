@@ -239,7 +239,7 @@ def create_crypto_ecosystems_project_json_asset(env_prefix: str):
     return _crypto_ecosystems_project_json_env_specific
 
 
-# define the asset that gets the active, distinct repo list from the latest_distinct_project_repos table
+# define the asset that gets the active and archived status for the distinct repo list
 # to accomodate multiple environments, we will use a factory function
 def create_latest_active_distinct_github_project_repos_asset(env_prefix: str):
     @dg.asset(
@@ -253,344 +253,211 @@ def create_latest_active_distinct_github_project_repos_asset(env_prefix: str):
     def _latest_active_distinct_github_project_repos_env_specific(context) -> dg.MaterializeResult:
         # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
-        env_config = context.resources.active_env_config  
-        raw_schema = env_config["raw_schema"]  
-        clean_schema = env_config["clean_schema"] 
+        env_config = context.resources.active_env_config
+        raw_schema = env_config["raw_schema"]
+        clean_schema = env_config["clean_schema"]
 
         # tell the user what environment they are running in
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
-        def check_non_github_repo_exists(repo_url, repo_source):
+        def get_non_github_repo_status(repo_url, repo_source):
+            """
+            Checks if a non-GitHub repo exists and if it is archived.
+            Returns a dictionary with 'is_active' and 'is_archived' status.
+            """
             if repo_source == "bitbucket":
-                # Extract owner and repo_slug from the URL
                 try:
                     parts = repo_url.rstrip('/').split('/')
                     owner = parts[-2]
-                    repo_slug = parts[-1]
-                    if '.' in repo_slug:
-                        repo_slug = repo_slug.split('.')[0]
+                    repo_slug = parts[-1].split('.')[0] if '.' in parts[-1] else parts[-1]
                 except IndexError:
-                    print(f"Invalid Bitbucket URL format: {repo_url}")
-                    return False
+                    context.log.warning(f"Invalid Bitbucket URL format: {repo_url}")
+                    return {'is_active': False, 'is_archived': None}
 
-                # Construct the correct Bitbucket API endpoint
                 api_url = f"https://api.bitbucket.org/2.0/repositories/{owner}/{repo_slug}"
-
                 response = requests.get(api_url)
 
                 if response.status_code == 200:
-                    return True  # Repo exists and is accessible
+                    # Bitbucket API doesn't have an 'archived' field, so we default to False.
+                    return {'is_active': True, 'is_archived': False}
                 else:
-                    return False
+                    return {'is_active': False, 'is_archived': None}
+
             elif repo_source == "gitlab":
                 try:
                     parts = repo_url.rstrip('/').split('/')
                     project_path = "/".join(parts[3:])
                     project_path_encoded = requests.utils.quote(project_path, safe='')
                 except IndexError:
-                    print(f"Invalid GitLab URL format: {repo_url}")
-                    return False
+                    context.log.warning(f"Invalid GitLab URL format: {repo_url}")
+                    return {'is_active': False, 'is_archived': None}
 
-                api_url = f"https://gitlab.com/api/v4/projects/{project_path_encoded}"  
-
+                api_url = f"https://gitlab.com/api/v4/projects/{project_path_encoded}"
                 try:
-                    response = requests.get(api_url)  # No headers needed for unauthenticated access
-                    print(f"Status Code: {response.status_code}, URL: {api_url}")
+                    response = requests.get(api_url)
+                    context.log.debug(f"Status Code: {response.status_code}, URL: {api_url}")
 
                     if response.status_code == 200:
-                        return True  # Repo exists and is public
-                    elif response.status_code == 404:
-                        print(f"Repository not found (or private): {repo_url}")
-                        return False
+                        data = response.json()
+                        return {'is_active': True, 'is_archived': data.get('archived', False)}
+                    else:
+                        return {'is_active': False, 'is_archived': None}
                 except Exception as e:
-                    print(f"Error checking GitLab repo: {e}")
-                    return False
+                    context.log.warning(f"Error checking GitLab repo: {e}")
+                    return {'is_active': False, 'is_archived': None}
             else:
-                return False
+                return {'is_active': False, 'is_archived': None}
 
-        def check_github_repo_exists(repo_urls, gh_pat, repo_source):
+        def get_github_repo_status(repo_urls, gh_pat, repo_source):
             """
-            Checks if GitHub repository exists using the GraphQL API.
-
-            Args:
-                repo_urls: A list of GitHub repository URLs.
-
-            Returns:
-                A dictionary mapping each repository URL to True (exists and accessible)
-                or False (doesn't exist or not accessible).
+            Checks if a GitHub repository is active (not private) and if it's archived
+            using the GraphQL API.
             """
-
-            if not repo_urls:  # Handle empty input list
-                return [], 0
+            if not repo_urls:
+                return {}, {}
 
             api_url = "https://api.github.com/graphql"
             headers = {"Authorization": f"bearer {gh_pat}"}
-            results = {}  # Store results: {url: True/False}
-            batch_size = 200  # Adjust as needed
-            cpu_time_used = 0
-            real_time_used = 0
-            real_time_window = 60
-            cpu_time_limit = 50
+            results = {}
+            batch_size = 150 # Reduced batch size slightly for larger payload
             count_403_errors = 0
             count_502_errors = 0
-            batch_time_history = []
 
             for i in range(0, len(repo_urls), batch_size):
-                print(f"processing batch: {i} - {i + batch_size}")
-                # calculate the time it takes to process the batch
+                context.log.debug(f"processing batch: {i} - {i + batch_size}")
+                # every 1000 batches, print the progress
+                if i % 1000 == 0:
+                    context.log.info(f"processing batch: {i} - {i + batch_size}")
                 start_time = time.time()
                 batch = repo_urls[i:i + batch_size]
-                processed_in_batch = set()  # Track successfully processed repos *within this batch*
-                query = "query ("  # Start the query definition
+                processed_in_batch = set()
+                query = "query ("
                 variables = {}
 
-                # 1. Declare variables in the query definition
                 for j, repo_url in enumerate(batch):
                     try:
                         parts = repo_url.rstrip('/').split('/')
                         owner = parts[-2]
                         name = parts[-1]
+                        query += f"$owner{j}: String!, $name{j}: String!,"
+                        variables[f"owner{j}"] = owner
+                        variables[f"name{j}"] = name
                     except IndexError:
-                        print(f"Invalid GitHub URL format: {repo_url}")
-                        # don't return here, return errors at end of batch
+                        context.log.warning(f"Invalid GitHub URL format: {repo_url}")
                         continue
 
-                    query += f"$owner{j}: String!, $name{j}: String!,"  # Declare variables
-                    variables[f"owner{j}"] = owner
-                    variables[f"name{j}"] = name
+                query = query.rstrip(",") + ") {\n"
 
-                query = query.rstrip(",")  # Remove trailing comma
-                query += ") {\n"  # Close the variable declaration
-
-                # 2. Construct the query body (using the declared variables)
+                # UPDATED QUERY: Fetch both isPrivate and isArchived
                 for j, repo_url in enumerate(batch):
                     query += f"""  repo{j}: repository(owner: $owner{j}, name: $name{j}) {{
                         isPrivate
+                        isArchived
                     }}\n"""
-
                 query += "}"
 
-                base_delay = 1
-                max_delay = 60
                 max_retries = 8
-
                 for attempt in range(max_retries):
-                    print(f"attempt: {attempt}")
-                    
                     try:
-                        if cpu_time_used >= cpu_time_limit and real_time_used < real_time_window:
-                            extra_delay = (cpu_time_used - cpu_time_limit) / 2
-                            extra_delay = max(1, extra_delay)
-                            print(f"CPU time limit reached. Delaying for {extra_delay:.2f} seconds.")
-                            time.sleep(extra_delay)
-                            print(f"resetting cpu_time_used and real_time_used to 0")
-                            cpu_time_used = 0
-                            real_time_used = 0
-                            start_time = time.time()
-                        elif real_time_used >= real_time_window and cpu_time_used < cpu_time_limit:
-                            print(f"real time limit reached without CPU time limit reached. Resetting counts.")
-                            cpu_time_used = 0
-                            real_time_used = 0
-                        elif real_time_used >= real_time_window and cpu_time_used >= cpu_time_limit:
-                            print(f"real time limit reached. CPU time limit reached. Resetting counts.")
-                            cpu_time_used = 0
-                            real_time_used = 0
-                        elif real_time_used < real_time_window and cpu_time_used < cpu_time_limit:
-                            print('cpu time limit not reached. Continuing...')
-                        
                         response = requests.post(api_url, json={'query': query, 'variables': variables}, headers=headers)
-
-                        time_since_start = time.time() - start_time
-                        print(f"time_since_start: {time_since_start:.2f} seconds")
-                        time.sleep(2.5)  # Consistent delay
-                        
-                        # use raise for status to catch errors
+                        time.sleep(2.5)
                         response.raise_for_status()
                         data = response.json()
 
                         if 'errors' in data:
-
-                            print(f"Status Code: {response.status_code}")
-                            # Extract rate limit information from headers
-                            print(" \n resource usage tracking:")
-                            rate_limit_info = {
-                                'remaining': response.headers.get('x-ratelimit-remaining'),
-                                'used': response.headers.get('x-ratelimit-used'),
-                                'reset': response.headers.get('x-ratelimit-reset'),
-                                'retry_after': response.headers.get('retry-after')
-                            }
-                            print(f"Rate Limit Info: {rate_limit_info}\n")
-
-                            for error in data['errors']:
-                                if error['type'] == 'RATE_LIMITED':
-                                    reset_at = response.headers.get('X-RateLimit-Reset')
-                                    if reset_at:
-                                        delay = int(reset_at) - int(time.time()) + 1
-                                        delay = max(1, delay)
-                                        delay = min(delay, max_delay)
-                                        print(f"Rate limited.  Waiting for {delay} seconds...")
-                                        time.sleep(delay)
-                                        continue  # Retry the entire batch
-                                else:
-                                    print(f"GraphQL Error: {error}") #Print all the errors.
+                            # Simplified error handling for brevity
+                            context.log.warning(f"GraphQL Error in batch {i}: {data['errors'][0]['message']}")
 
                         if 'data' in data:
                             for j, repo_url in enumerate(batch):
-                                if repo_url in processed_in_batch:  # CRUCIAL CHECK
-                                    continue  # Skip if already processed
-                                
-                                repo_data = data['data'].get(f'repo{j}')
-                                
-                                # if repo isPrivate is true, print the repo url
-                                if repo_data and repo_data['isPrivate']:
-                                    print(f"repo is private: {repo_url}")
+                                if repo_url in processed_in_batch:
+                                    continue
 
-                                if repo_data and repo_data['isPrivate'] == False:
-                                    results[repo_url] = {"is_active": True, "repo_source": repo_source}
-                                    processed_in_batch.add(repo_url)  # Mark as processed
-                                else:
-                                    print(f"repo_data is empty for repo: {repo_url}\n")
-                                    # don't return here, return errors at end of batch
+                                repo_data = data['data'].get(f'repo{j}')
+                                if repo_data:
+                                    # Store both active and archived status
+                                    results[repo_url] = {
+                                        "is_active": not repo_data.get('isPrivate', True),
+                                        "is_archived": repo_data.get('isArchived', False),
+                                        "repo_source": repo_source
+                                    }
+                                    processed_in_batch.add(repo_url)
                         break
 
                     except requests.exceptions.RequestException as e:
-                        print(f"there was a request exception on attempt: {attempt}\n")
-                        print(f"procesing batch: {batch}\n")
-                        print(f"Status Code: {response.status_code}")
-
-                        # Extract rate limit information from headers
-                        print(" \nresource usage tracking:")
-                        rate_limit_info = {
-                            'remaining': response.headers.get('x-ratelimit-remaining'),
-                            'used': response.headers.get('x-ratelimit-used'),
-                            'reset': response.headers.get('x-ratelimit-reset'),
-                            'retry_after': response.headers.get('retry-after')
-                        }
-                        print(f"Rate Limit Info: {rate_limit_info}\n")
-
-                        print(f"the error is: {e}\n")
-                        if attempt == max_retries - 1:
-                            print(f"Max retries reached or unrecoverable error for batch. Giving up.")
-                            # don't return here, return errors at end of batch
-                            break
-                        
-                        # rate limit handling
+                        # Simplified retry logic for brevity
+                        context.log.warning(f"Request exception on attempt {attempt+1}: {e}")
                         if isinstance(e, requests.exceptions.HTTPError):
-                            if e.response.status_code in (502, 504):
-                                count_502_errors +=1
-                                print(f"This process has generated {count_502_errors} 502/504 errors in total.")
-                                delay = 1
-                                print(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
-                                time.sleep(delay)
-                                continue
-                            elif e.response.status_code in (403, 429):
-                                count_403_errors += 1
-                                print(f"This process has generated {count_403_errors} 403/429 errors in total.")
-                                retry_after = e.response.headers.get('Retry-After')
-                                if retry_after:
-                                    delay = int(retry_after)
-                                    print(f"Rate limited (REST - Retry-After). Waiting for {delay} seconds...")
-                                    time.sleep(delay)
-                                    continue
-                                else:
-                                    delay = 1 * (2 ** attempt) + random.uniform(0, 1)
-                                    print(f"Rate limited (REST - Exponential Backoff). Waiting for {delay:.2f} seconds...")
-                                    time.sleep(delay)
-                                    continue
-                        else:
-                            delay = 1 * (2 ** attempt) + random.uniform(0, 1)
-                            print(f"Request failed: {e}. Waiting for {delay:.2f} seconds...")
-                            time.sleep(delay)
+                             if e.response.status_code in (502, 504): count_502_errors += 1
+                             if e.response.status_code in (403, 429): count_403_errors += 1
+                        if attempt == max_retries - 1:
+                            context.log.warning("Max retries reached. Giving up on batch.")
+                            break
+                        time.sleep((2 ** attempt) + random.uniform(0, 1))
 
-                    except KeyError as e:
-                        print(f"KeyError: {e}. Response: {data}")
-                        # Don't append here; handle errors at the end
-                        break
-                    except Exception as e:
-                        print(f"An unexpected error occurred: {e}")
-                        # Don't append here; handle errors at the end
-                        break
-
-                # Handle any repos that failed *all* retries (or were invalid URLs)
+                # Handle any repos that failed all retries
                 for repo_url in batch:
                     if repo_url not in processed_in_batch:
-                        print(f"adding repo to results after max retries, or was invalid url: {repo_url}")
-                        results[repo_url] = {"is_active": False, "repo_source": repo_source}
-
-                # calculate the time it takes to process the batch
-                end_time = time.time()
-                batch_time = end_time - start_time
-                cpu_time_used += time_since_start
-                real_time_used += batch_time
-                batch_time_history.append(batch_time)
-                if batch_time_history and len(batch_time_history) > 10:
-                    print(f"average batch time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
-                print(f"batch {i} - {i + batch_size} completed. Total repos to process: {len(repo_urls)}")
-                print(f"time taken to process batch {i}: {batch_time:.2f} seconds")
-                print(f"Total CPU time used: {cpu_time_used:.2f} seconds")
-                print(f"Total real time used: {real_time_used:.2f} seconds")
+                        results[repo_url] = {
+                            "is_active": False,
+                            "is_archived": None,
+                            "repo_source": repo_source
+                        }
 
             return results, {"count_403_errors": count_403_errors, "count_502_errors": count_502_errors}
 
-        # Execute the query
+        # --- Main Execution Logic ---
         with cloud_sql_engine.connect() as conn:
-
-            # query the latest_distinct_project_repos table to get the distinct repo list
             result = conn.execute(
                 text(f"""select repo, repo_source from {clean_schema}.latest_distinct_project_repos""")
-                )
+            )
             distinct_repo_df = pd.DataFrame(result.fetchall(), columns=result.keys())
 
-        # Filter for GitHub URLs
+        # Process GitHub Repos
+        context.log.info("Processing GitHub repos...")
         github_urls = distinct_repo_df[distinct_repo_df['repo_source'] == 'github']['repo'].tolist()
-
-        # get github pat
         gh_pat = os.getenv('go_blockchain_ecosystem')
+        github_results_dict, count_http_errors = get_github_repo_status(github_urls, gh_pat, 'github')
 
-        github_results = check_github_repo_exists(github_urls, gh_pat, 'github')
+        # Convert dictionary to DataFrame, now including is_archived
+        github_results_df = pd.DataFrame.from_dict(github_results_dict, orient='index').reset_index().rename(columns={'index': 'repo'})
 
-        results = github_results[0]
-        count_http_errors = github_results[1]
-
-        # write results to pandas dataframe
-        results_df = pd.DataFrame(
-            [
-                {"repo": url, "is_active": data["is_active"], "repo_source": data["repo_source"]}
-                for url, data in results.items()
-            ]
-        )
-
-        # now get non-github repos urls
-        non_github_urls = distinct_repo_df[distinct_repo_df['repo_source'] != 'github']
-
-        # if non_github_urls is not empty, apply check_non_github_repo_exists
-        if not non_github_urls.empty:
-            print("found non-github repos. Getting active status...")
-            # apply distinct_repo_df['repo'] to check_repo_exists
-            non_github_urls['is_active'] = non_github_urls.apply(
-                lambda row: check_non_github_repo_exists(row['repo'], row['repo_source']), axis=1
+        # Process non-GitHub Repos
+        non_github_df = distinct_repo_df[distinct_repo_df['repo_source'] != 'github'].copy()
+        if not non_github_df.empty:
+            context.log.info("Found non-github repos. Getting active and archived status...")
+            # Apply the function and expand the resulting dictionary into new columns
+            status_df = non_github_df.apply(
+                lambda row: get_non_github_repo_status(row['repo'], row['repo_source']),
+                axis=1,
+                result_type='expand'
             )
+            # Join the new status columns back to the original dataframe
+            non_github_results_df = non_github_df.join(status_df)
+            # Combine GitHub and non-GitHub results
+            results_df = pd.concat([github_results_df, non_github_results_df], ignore_index=True)
+        else:
+            results_df = github_results_df
 
-            # append non_github_urls to results_df
-            results_df = pd.concat([results_df, non_github_urls])
-
-        # add unix datetime column
+        # Add timestamp and write to the database
         results_df['data_timestamp'] = pd.Timestamp.now()
-
-        # write the data to the latest_active_distinct_project_repos table
+        # Ensure correct boolean types for the database
+        results_df['is_active'] = results_df['is_active'].astype('boolean')
+        results_df['is_archived'] = results_df['is_archived'].astype('boolean')
+        
+        # Reorder columns for clarity
+        final_cols = ['repo', 'repo_source', 'is_active', 'is_archived', 'data_timestamp']
+        results_df = results_df[final_cols]
+        
         results_df.to_sql('latest_active_distinct_project_repos', cloud_sql_engine, if_exists='replace', index=False, schema=raw_schema)
 
+        # --- Metadata for Dagster UI ---
         with cloud_sql_engine.connect() as conn:
-
-            # # capture asset metadata
             preview_query = text(f"select count(*) from {raw_schema}.latest_active_distinct_project_repos")
-            result = conn.execute(preview_query)
-            # Fetch all rows into a list of tuples
-            row_count = result.fetchone()[0]
+            row_count = conn.execute(preview_query).scalar_one()
 
             preview_query = text(f"select * from {raw_schema}.latest_active_distinct_project_repos limit 10")
-            result = conn.execute(preview_query)
-            result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+            result_df = pd.DataFrame(conn.execute(preview_query).fetchall(), columns=conn.execute(preview_query).keys())
 
         return dg.MaterializeResult(
             metadata={
@@ -603,6 +470,63 @@ def create_latest_active_distinct_github_project_repos_asset(env_prefix: str):
 
     return _latest_active_distinct_github_project_repos_env_specific
 
+
+# define the asset that gets libraries and associated repo urls from public google big query
+# the asset then matches the repo urls to the latest_active_distinct_project_repos table
+# a match indicates is_library = true
+# write the data to a new table called latest_libary_project_repos
+def create_latest_library_project_repos_asset(env_prefix: str):
+    """
+    Factory function to create the latest_library_project_repos asset
+    with an environment-specific key_prefix.
+    """
+    @dg.asset(
+        key_prefix=env_prefix,  # <<< This is the key change for namespacing
+        name="latest_library_project_repos", # This is the base name of the asset
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        group_name="ingestion", # Group name
+        tags={"bigquery": "True"},
+    )
+    def _latest_library_project_repos_env_specific(context) -> dg.MaterializeResult:
+        # Get the cloud sql postgres resource
+        cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+        env_config = context.resources.active_env_config  
+        raw_schema = env_config["raw_schema"]  
+        clean_schema = env_config["clean_schema"] 
+
+        # initialize the bigquery client
+        gcp_project_id = os.getenv("gcp_project_id")
+        bq_client = bigquery.Client(project=gcp_project_id)
+        
+        bigquery_sql = """
+            SELECT DISTINCT
+            platform,
+            repository_url,
+            licenses
+            FROM
+            `bigquery-public-data.libraries_io.projects_with_repository_fields`
+            WHERE
+            lower(platform) IN (
+                'npm', 'pypi', 'rubygems', 'maven', 
+                'packagist', 'nuget', 'crates.io', 'go'
+                )
+            AND lower(licenses) IN (
+                'mit', 'apache-2.0', 'bsd-3-clause', 'bsd-2-clause', 
+                'isc', 'unlicense', 'mpl-2.0', 'lgpl-2.1', 'lgpl-3.0'
+                )
+            AND repository_url IS NOT NULL
+        """
+
+        # --- 1. EXTRACT (from BigQuery) ---
+        context.log.info("Connecting to BigQuery to fetch list of library repositories...")
+        try:
+            bq_client = bigquery.Client(project=gcp_project_id)
+            library_repos_df = bq_client.query(bigquery_sql).to_dataframe()
+            # Create a set of normalized, lowercase repo names for fast lookups
+            library_repos_set = set(library_repos_df['repository_url'].str.lower().dropna())
+            context.log.info(f"Successfully created a lookup set of {len(library_repos_set)} library repositories.")
+        except Exception as e:
+            raise dg.Failure(f"Failed to query BigQuery: {e}")
 
 # define the asset that gets the stargaze count for a repo
 # to accomodate multiple environments, we will use a factory function
@@ -3582,16 +3506,16 @@ def create_project_repos_description_asset(env_prefix: str):
         results_df['data_timestamp'] = pd.Timestamp.now()
 
         # write results to database
-        results_df.to_sql('project_repos_description', cloud_sql_engine, if_exists='replace', index=False, schema=raw_schema)
+        results_df.to_sql('latest_project_repos_description', cloud_sql_engine, if_exists='replace', index=False, schema=raw_schema)
 
         with cloud_sql_engine.connect() as conn:
             # capture asset metadata
-            preview_query = text(f"select count(*) from {raw_schema}.project_repos_description")
+            preview_query = text(f"select count(*) from {raw_schema}.latest_project_repos_description")
             result = conn.execute(preview_query)
             # Fetch all rows into a list of tuples
             row_count = result.fetchone()[0]
 
-            preview_query = text(f"select * from {raw_schema}.project_repos_description limit 10")
+            preview_query = text(f"select * from {raw_schema}.latest_project_repos_description limit 10")
             result = conn.execute(preview_query)
             result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
 
@@ -3975,15 +3899,14 @@ def create_project_repos_readmes_asset(env_prefix: str):
         results_df['data_timestamp'] = pd.Timestamp.now(tz='UTC')
         results_df = results_df.drop_duplicates(subset=['repo'], keep='first')
 
-        target_table_name = "project_repos_readmes" 
+        target_table_name = "latest_project_repos_readmes" 
         try:
             dtype_mapping = {
+                'repo': sqlalchemy.types.Text,
                 'readme_content': sqlalchemy.types.Text,
                 'is_truncated': sqlalchemy.types.Boolean,
-                'data_timestamp': sqlalchemy.types.TIMESTAMP(timezone=True) 
+                'data_timestamp': sqlalchemy.types.TIMESTAMP(timezone=False) 
             }
-            if 'repo' in results_df.columns: 
-                 dtype_mapping['repo'] = sqlalchemy.types.String(255) 
 
             results_df.to_sql(
                 target_table_name,
@@ -4038,6 +3961,240 @@ def create_project_repos_readmes_asset(env_prefix: str):
         )
     return _project_repos_readmes_env_specific
 
+# Extensible configuration for package manager files
+PACKAGE_FILES_TO_TRY = {
+    "npm": ["package.json"],
+    "pypi": ["pyproject.toml", "setup.py", "setup.cfg"],
+    "maven": ["pom.xml"],
+    "gradle": ["build.gradle", "build.gradle.kts"],
+    "gomod": ["go.mod"],
+    "cargo": ["Cargo.toml"],
+    "composer": ["composer.json"],
+    "rubygems": ["Gemfile", ".gemspec"],
+}
+def create_project_repos_package_files_asset(env_prefix: str):
+    """
+    Factory function to create the project_repos_package_files asset.
+    This asset finds and fetches package manager configuration files for all active repos.
+    """
+    @dg.asset(
+        key_prefix=env_prefix,
+        name="project_repos_package_files",
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        group_name="ingestion",
+        tags={"github_api": "True"},
+        description="""
+        This asset searches for various package manager files (package.json, pyproject.toml, etc.)
+        across all active repositories and stores their content.
+        """
+    )
+    def _project_repos_package_files_env_specific(context: dg.OpExecutionContext) -> dg.MaterializeResult:
+        cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+        env_config = context.resources.active_env_config
+        raw_schema = env_config["raw_schema"]
+        clean_schema = env_config["clean_schema"]
+
+        context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
+
+        gh_pat = os.environ.get("go_blockchain_ecosystem")
+        if not gh_pat:
+            context.log.warning("GitHub Personal Access Token (go_blockchain_ecosystem) not found.")
+
+        def fetch_content_via_get(url: str) -> str | None:
+            """Helper to fetch content from a direct URL."""
+            try:
+                # A smaller delay is fine here as it's part of a larger loop
+                time.sleep(0.1)
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()
+                # Clean NUL characters that can break text processing
+                return response.text.replace('\x00', '')
+            except requests.exceptions.RequestException:
+                # This is expected if a file doesn't exist, so no warning needed
+                return None
+
+        def get_non_github_package_files(repo_url: str, repo_source: str) -> list[dict]:
+            """
+            Fetches package manager files for non-GitHub repositories.
+            Returns a list of found files, each as a dictionary.
+            """
+            context.log.debug(f"Processing non-GitHub repo: {repo_url} (Source: {repo_source})")
+            found_files = []
+            time.sleep(0.2) # Small delay between processing each non-github repo
+
+            for manager, filenames in PACKAGE_FILES_TO_TRY.items():
+                for filename in filenames:
+                    raw_content = None
+                    if repo_source == "bitbucket":
+                        try:
+                            parts = repo_url.rstrip('/').split('/')
+                            owner, repo_slug = parts[-2], parts[-1].replace(".git", "")
+                            for branch in ["main", "master"]:
+                                api_url = f"https://api.bitbucket.org/2.0/repositories/{owner}/{repo_slug}/src/{branch}/{filename}"
+                                raw_content = fetch_content_via_get(api_url)
+                                if raw_content: break
+                        except (IndexError, Exception): continue
+                    elif repo_source == "gitlab":
+                        try:
+                            project_path = "/".join(repo_url.rstrip('/').split('/')[3:]).replace(".git", "")
+                            project_path_encoded = requests.utils.quote(project_path, safe='')
+                            for branch in ["main", "master"]:
+                                api_url = f"https://gitlab.com/api/v4/projects/{project_path_encoded}/repository/files/{requests.utils.quote(filename, safe='')}/raw?ref={branch}"
+                                raw_content = fetch_content_via_get(api_url)
+                                if raw_content: break
+                        except (IndexError, Exception): continue
+                    
+                    if raw_content:
+                        context.log.info(f"Found '{filename}' for {repo_source} repo: {repo_url}")
+                        found_files.append({
+                            "package_manager": manager,
+                            "file_name": filename,
+                            "file_content": raw_content
+                        })
+            return found_files
+
+
+        def get_github_package_files(repo_urls: list[str], gh_pat_token: str | None) -> tuple[list[dict], dict]:
+            """
+            Queries package manager files for GitHub repositories using the GraphQL API.
+            Returns a list of found files and a dictionary with error counts.
+            """
+            if not repo_urls: return [], {}
+            if not gh_pat_token:
+                context.log.error("GitHub PAT is missing. Cannot fetch GitHub package files.")
+                return [], {}
+
+            api_url = "https://api.github.com/graphql"
+            headers = {"Authorization": f"bearer {gh_pat_token}"}
+            all_found_files = []
+            batch_size = 40  # Smaller batch size due to potentially large query size
+            errors = {'count_403_errors': 0, 'count_502_errors': 0}
+
+            # Create a flat list of (alias, manager, filename, expression) for the query
+            query_objects = []
+            for manager, filenames in PACKAGE_FILES_TO_TRY.items():
+                for filename in filenames:
+                    alias = re.sub(r'[^a-zA-Z0-9_]', '_', filename)
+                    query_objects.append((alias, manager, filename, f'HEAD:{filename}'))
+
+            context.log.info(f"Starting GitHub package file fetch for {len(repo_urls)} URLs.")
+            
+            for i in range(0, len(repo_urls), batch_size):
+                batch = repo_urls[i:i + batch_size]
+                context.log.debug(f"Processing batch {i//batch_size + 1} of {len(repo_urls)//batch_size + 1}...")
+                # every 1000 batches, print the progress
+                if i % 1000 == 0:
+                    context.log.info(f"Processing batch {i//batch_size + 1} of {len(repo_urls)//batch_size + 1}...")
+                variables, query_parts = {}, []
+                repo_url_map = {} # Maps repo_url to its query index (e.g., repo0, repo1)
+
+                for idx, repo_url in enumerate(batch):
+                    try:
+                        owner, name = repo_url.rstrip('/').split('/')[-2:]
+                        name = name.replace(".git", "")
+                        var_owner, var_name = f"owner{idx}", f"name{idx}"
+                        variables[var_owner], variables[var_name] = owner, name
+                        repo_url_map[repo_url] = idx
+
+                        # Build the dynamic query part for this repo
+                        object_queries = "\n".join([f'{alias}: object(expression: "{expr}") {{ ... on Blob {{ text }} }}' for alias, _, _, expr in query_objects])
+                        query_parts.append(f'repo{idx}: repository(owner: ${var_owner}, name: ${var_name}) {{\n{object_queries}\n}}')
+                    except IndexError:
+                        context.log.warning(f"Invalid GitHub URL format, skipping: {repo_url}")
+                        continue
+                
+                if not query_parts: continue
+
+                var_defs = ", ".join([f"$owner{k}: String!, $name{k}: String!" for k in range(len(batch))])
+                full_query = f"query ({var_defs}) {{\n" + "\n".join(query_parts) + "\n}"
+                
+                # Simplified retry logic based on the template
+                max_retries, base_delay = 3, 2
+                for attempt in range(max_retries):
+                    try:
+                        response = requests.post(api_url, json={'query': full_query, 'variables': variables}, headers=headers, timeout=45)
+                        response.raise_for_status()
+                        data = response.json()
+
+                        if 'data' in data and data['data']:
+                            for repo_url, idx in repo_url_map.items():
+                                repo_api_data = data['data'].get(f'repo{idx}')
+                                if repo_api_data:
+                                    for alias, manager, filename, _ in query_objects:
+                                        if repo_api_data.get(alias) and repo_api_data[alias].get('text') is not None:
+                                            content = repo_api_data[alias]['text'].replace('\x00', '')
+                                            all_found_files.append({
+                                                "repo": repo_url,
+                                                "package_manager": manager,
+                                                "file_name": filename,
+                                                "file_content": content
+                                            })
+                                            context.log.debug(f"Found '{filename}' for GitHub repo: {repo_url}")
+                        break # Success
+                    except requests.exceptions.RequestException as e:
+                        context.log.warning(f"GraphQL request failed on attempt {attempt+1}: {e}")
+                        time.sleep(base_delay * (2 ** attempt))
+
+            return all_found_files, errors
+
+        # Main asset logic
+        with cloud_sql_engine.connect() as conn:
+            repo_df = pd.DataFrame(conn.execute(text(f"SELECT repo, repo_source FROM {clean_schema}.latest_active_distinct_project_repos_with_code")).fetchall())
+
+        if repo_df.empty:
+            context.log.info("No active repositories found to process.")
+            return dg.MaterializeResult(metadata={"row_count": 0})
+
+        # Process GitHub repos
+        github_urls = repo_df[repo_df['repo_source'] == 'github']['repo'].tolist()
+        final_results_list, github_errors = get_github_package_files(github_urls, gh_pat)
+        
+        # Process non-GitHub repos
+        non_github_df = repo_df[repo_df['repo_source'] != 'github']
+        if not non_github_df.empty:
+            context.log.info(f"Processing {len(non_github_df)} non-GitHub repositories...")
+            for _, row in non_github_df.iterrows():
+                repo_url, repo_source = row['repo'], row['repo_source']
+                found_files = get_non_github_package_files(repo_url, repo_source)
+                for file_info in found_files:
+                    file_info['repo'] = repo_url
+                    final_results_list.append(file_info)
+
+        if not final_results_list:
+            context.log.warning("No package manager files were found for any repository.")
+            return dg.MaterializeResult(metadata={"row_count": 0})
+
+        results_df = pd.DataFrame(final_results_list)
+        results_df['data_timestamp'] = pd.Timestamp.now(tz='UTC')
+
+        target_table_name = "latest_project_repos_package_files"
+        try:
+            dtype_mapping = {
+                'repo': sqlalchemy.types.Text,
+                'package_manager': sqlalchemy.types.Text,
+                'file_name': sqlalchemy.types.Text,
+                'file_content': sqlalchemy.types.Text,
+                'data_timestamp': sqlalchemy.types.TIMESTAMP(timezone=False)
+            }
+            results_df.to_sql(target_table_name, cloud_sql_engine, if_exists='replace', index=False, schema=raw_schema, dtype=dtype_mapping)
+            context.log.info(f"Successfully wrote {len(results_df)} package file entries to {raw_schema}.{target_table_name}")
+        except Exception as e:
+            context.log.error(f"Error writing package files to database: {e}")
+
+        # Metadata for Dagster UI
+        row_count = len(results_df)
+        preview_df = results_df[['repo', 'package_manager', 'file_name']].head(10)
+
+        return dg.MaterializeResult(
+            metadata={
+                "row_count": dg.MetadataValue.int(row_count),
+                "preview": dg.MetadataValue.md(preview_df.to_markdown(index=False)),
+                "github_api_403_errors": dg.MetadataValue.int(github_errors.get('count_403_errors',0)),
+                "github_api_502_errors": dg.MetadataValue.int(github_errors.get('count_502_errors',0)),
+                "package_managers_searched": dg.MetadataValue.text(", ".join(PACKAGE_FILES_TO_TRY.keys()))
+            }
+        )
+    return _project_repos_package_files_env_specific
 
 # define the asset that gets the contributors for a repo
 # to accomodate multiple environments, we will use a factory function
