@@ -9,7 +9,7 @@ import sqlalchemy
 # Define the keyword groups and their corresponding feature column names
 KEYWORD_FEATURE_MAP = {
     "is_collection_of_learnings": ["a collection of learnings"],
-    "has_app_application": ["app", "application"],
+    "has_app_application": ["app", "application", "dapp", "decentralized app", "decentralized application"],
     "is_awesome_curated": ["awesome", "curated"],
     "has_benchmark": ["benchmark", "benchmarking"],
     "is_block_explorer": ["block explorer"],
@@ -36,7 +36,7 @@ KEYWORD_FEATURE_MAP = {
     "is_learning_material": ["learn solidity", "learning"],
     "is_mcp_server": ["mcp server"],
     "is_plugin": ["plug-in", "plugin"],
-    "is_sample_project": ["sample", "sample application", "sample project", "simple example"],
+    "is_sample_project": ["sample", "sample application", "sample project", "simple example", "Sample Hardhat Project"],
     "is_sdk": ["sdk"],
     "is_security_related": ["security", "exploit", "vulnerability", "honeypot contract", "honeypot"],
     "has_tests_testing": ["test", "testing suite", "tests", "test environment", "test environment setup"],
@@ -70,6 +70,120 @@ REPO_NAME_FEATURE_MAP = {
     "name_is_interview": ["interview"],
 }
 
+# A comprehensive map for various package manager files.
+# This relies on string/regex matching within the file content.
+PACKAGE_MANAGER_FEATURE_MAP_BY_FILE = {
+    "package.json": { # NPM/Yarn (JSON)
+        "pm_has_main_entrypoint": ['"main":'],
+        "pm_has_bin_script": ['"bin":'],
+        "pm_has_dependencies": ['"dependencies":'],
+        "pm_has_version_control": ['"version":'],
+        "pm_has_author_cited": ["author", "authors", "contributor", "contributors"],
+        "pm_has_license": ['"license":', '"licenses":'],
+        "pm_has_repository": ['"repository":', '"repositorie":', '"repo":', '"repos":']
+    },
+    "Cargo.toml": { # Rust (TOML)
+        "pm_has_main_entrypoint": ['[lib]'],
+        "pm_has_bin_script": ['[[bin]]'],
+        "pm_has_dependencies": ['[dependencies]'],
+        "pm_has_version_control": ['version ='], # Typically under [package]
+        "pm_has_author_cited": ['authors ='],
+        "pm_has_license": ['license ='],
+        "pm_has_repository": ['repository =']
+    },
+    "pom.xml": { # Java Maven (XML)
+        "pm_has_main_entrypoint": ['<mainClass>'],
+        "pm_has_bin_script": ['maven-assembly-plugin', 'maven-shade-plugin'], # Heuristic for executable jars
+        "pm_has_dependencies": ['<dependencies>'],
+        "pm_has_version_control": ['<version>'], # This tag is used for both project and dependency versions
+        "pm_has_author_cited": ['<developer>', '<contributor>'],
+        "pm_has_license": ['<licenses>'],
+        "pm_has_repository": ['<scm>'] # Source Control Management
+    },
+    "pyproject.toml": { # Python (TOML)
+        "pm_has_main_entrypoint": ['[project.scripts]', '[project.gui-scripts]'],
+        "pm_has_bin_script": ['[project.scripts]', '[project.gui-scripts]'],
+        "pm_has_dependencies": ['[project.dependencies]', '[tool.poetry.dependencies]'],
+        "pm_has_version_control": ['version ='], # Under [project] or [tool.poetry]
+        "pm_has_author_cited": ['authors =', '[project.authors]'],
+        "pm_has_license": ['license ='],
+        "pm_has_repository": ['[project.urls]', 'repository =', 'homepage =']
+    },
+    "composer.json": { # PHP (JSON)
+        "pm_has_main_entrypoint": ['"autoload"'],
+        "pm_has_bin_script": ['"bin"'],
+        "pm_has_dependencies": ['"require"'],
+        "pm_has_version_control": ['"version":'],
+        "pm_has_author_cited": ['"authors":'],
+        "pm_has_license": ['"license":'],
+        "pm_has_repository": ['"support":', '"homepage":']
+    },
+    "Gemfile": { # Ruby
+        "pm_has_main_entrypoint": [], # Not specified in Gemfile
+        "pm_has_bin_script": [], # Not specified in Gemfile
+        "pm_has_dependencies": ['gem '],
+        "pm_has_version_control": [], # Not specified in Gemfile
+        "pm_has_author_cited": [], # Not specified in Gemfile
+        "pm_has_license": [], # Not specified in Gemfile
+        "pm_has_repository": ['git_source', 'github']
+    },
+    # This captures metadata for RubyGems
+    ".gemspec": {
+        "pm_has_main_entrypoint": ['spec.require_paths'],
+        "pm_has_bin_script": ['spec.executables'],
+        "pm_has_dependencies": ['spec.add_dependency'],
+        "pm_has_version_control": ['spec.version'],
+        "pm_has_author_cited": ['spec.authors'],
+        "pm_has_license": ['spec.license'],
+        "pm_has_repository": ['spec.homepage', "spec.metadata['source_code_uri']"]
+    },
+    "build.gradle": { # Groovy Gradle
+        "pm_has_main_entrypoint": ["mainClassName"],
+        "pm_has_bin_script": ["application"], # The application plugin creates start scripts
+        "pm_has_dependencies": ["dependencies {", "implementation ", "api "],
+        "pm_has_version_control": ["version ="],
+        "pm_has_author_cited": [], # Not a standard field
+        "pm_has_license": ["licenses {"], # From publishing plugin
+        "pm_has_repository": ["scm {"] # From publishing plugin
+    },
+    "build.gradle.kts": { # Kotlin Gradle
+        "pm_has_main_entrypoint": ["mainClass.set("],
+        "pm_has_bin_script": ["application"],
+        "pm_has_dependencies": ["dependencies {", "implementation("],
+        "pm_has_version_control": ["version ="],
+        "pm_has_author_cited": [],
+        "pm_has_license": ["licenses {"],
+        "pm_has_repository": ["scm {"]
+    },
+    "go.mod": { # Go
+        "pm_has_main_entrypoint": [], # Not specified in go.mod
+        "pm_has_bin_script": [], # Not specified in go.mod
+        "pm_has_dependencies": ["require (", "require "],
+        "pm_has_version_control": [], # Not specified in go.mod
+        "pm_has_author_cited": [], # Not specified in go.mod
+        "pm_has_license": [], # Not specified in go.mod
+        "pm_has_repository": ["module "] # The module path is the repository
+    },
+    "setup.py": { # Python Legacy
+        "pm_has_main_entrypoint": ["entry_points"],
+        "pm_has_bin_script": ["console_scripts"],
+        "pm_has_dependencies": ["install_requires"],
+        "pm_has_version_control": ["version="],
+        "pm_has_author_cited": ["author="],
+        "pm_has_license": ["license="],
+        "pm_has_repository": ["url="]
+    },
+     "setup.cfg": { # Python Legacy
+        "pm_has_main_entrypoint": ["entry_points"],
+        "pm_has_bin_script": ["console_scripts"],
+        "pm_has_dependencies": ["install_requires"],
+        "pm_has_version_control": ["version ="],
+        "pm_has_author_cited": ["author ="],
+        "pm_has_license": ["license ="],
+        "pm_has_repository": ["url ="]
+    },
+}
+
 def create_project_repos_description_features_asset(env_prefix: str):
     """
     Factory function to create an asset that generates boolean features
@@ -93,6 +207,8 @@ def create_project_repos_description_features_asset(env_prefix: str):
         active_repos_table = "latest_active_distinct_project_repos_with_code"
         description_table = "latest_project_repos_description"
         readme_table = "latest_project_repos_readmes"
+        package_files_table = "latest_project_repos_package_files"
+        is_fork_table = "latest_project_repos_is_fork"
         output_table_name = "project_repos_features"
 
         context.log.info(f"Process is running in {env_config['env']} environment.")
@@ -106,10 +222,15 @@ def create_project_repos_description_features_asset(env_prefix: str):
                         a.repo,
                         a.data_timestamp,
                         d.description,
-                        r.readme_content
+                        r.readme_content,
+                        p.file_name,
+                        p.file_content,
+                        f.is_fork
                     FROM {clean_schema}.{active_repos_table} AS a
                     LEFT JOIN {clean_schema}.{description_table} AS d ON a.repo = d.repo
                     LEFT JOIN {clean_schema}.{readme_table} AS r ON a.repo = r.repo
+                    LEFT JOIN {clean_schema}.{package_files_table} AS p ON a.repo = p.repo
+                    LEFT JOIN {clean_schema}.{is_fork_table} AS f ON a.repo = f.repo
                 """)
                 features_df = pd.read_sql_query(query, conn)
             context.log.info(f"Successfully read {len(features_df)} rows from '{active_repos_table}'.")
@@ -126,63 +247,116 @@ def create_project_repos_description_features_asset(env_prefix: str):
                 }
             )
 
-        # Create the has_readme feature BEFORE filling NaNs
+        # prepare data and initialize all feature columns
         features_df['has_readme'] = features_df['readme_content'].notna()
+        features_df['has_description'] = features_df['description'].notna()
+        features_df['has_package_file'] = features_df['file_content'].notna()
+        features_df['is_fork'].fillna(False, inplace=True)
 
-        # Fill NaN descriptions and readmes with empty strings to avoid errors
-        features_df['description'] = features_df['description'].fillna('')
-        features_df['readme_content'] = features_df['readme_content'].fillna('')
-
-        # generate boolean features from repo name
-        for feature_name, keywords in REPO_NAME_FEATURE_MAP.items():
-            context.log.debug(f"Generating feature: {feature_name} using keywords: {keywords}")
-            pattern = r"\b(" + "|".join(re.escape(kw) for kw in keywords) + r")\b"
-            features_df[feature_name] = features_df['repo'].str.contains(pattern, case=False, regex=True, na=False)
+        features_df.fillna({
+            'description': '',
+            'readme_content': '',
+            'file_name': '',
+            'file_content': ''
+        }, inplace=True)
         
-        context.log.info(f"Generated {len(REPO_NAME_FEATURE_MAP)} boolean feature columns.")
+        # Initialize ALL boolean feature columns to False beforehand
+        all_feature_names = set(KEYWORD_FEATURE_MAP.keys()) | set(REPO_NAME_FEATURE_MAP.keys())
+        pm_feature_names = set()
+        for file_map in PACKAGE_MANAGER_FEATURE_MAP_BY_FILE.values():
+            pm_feature_names.update(file_map.keys())
+        all_feature_names.update(pm_feature_names)
 
-        # Generate boolean features by checking both description and readme
-        for feature_name, keywords in KEYWORD_FEATURE_MAP.items():
-            context.log.debug(f"Generating feature: {feature_name} using keywords: {keywords}")
+        for feature in all_feature_names:
+            features_df[feature] = False
+        
+        context.log.info(f"Initialized {len(all_feature_names)} total feature columns.")
+
+        # generate all features on the un-aggregated dataframe
+        
+        # Generate features from Repo Name
+        context.log.info("Generating features from repository name...")
+        for feature_name, keywords in REPO_NAME_FEATURE_MAP.items():
             pattern = r"\b(" + "|".join(re.escape(kw) for kw in keywords) + r")\b"
-            
-            in_description = features_df['description'].str.contains(pattern, case=False, regex=True, na=False)
-            in_readme = features_df['readme_content'].str.contains(pattern, case=False, regex=True, na=False)
-            
+            features_df[feature_name] = features_df['repo'].str.contains(pattern, case=False, regex=True)
+        context.log.info(f"Generated {len(REPO_NAME_FEATURE_MAP)} boolean feature columns from repo name.")
+
+        # Generate features from Description and README
+        context.log.info("Generating features from description and README...")
+        for feature_name, keywords in KEYWORD_FEATURE_MAP.items():
+            pattern = r"\b(" + "|".join(re.escape(kw) for kw in keywords) + r")\b"
+            in_description = features_df['description'].str.contains(pattern, case=False, regex=True)
+            in_readme = features_df['readme_content'].str.contains(pattern, case=False, regex=True)
             features_df[feature_name] = in_description | in_readme
+        context.log.info(f"Generated {len(KEYWORD_FEATURE_MAP)} boolean feature columns from description and readme.")
 
-        context.log.info(f"Generated {len(KEYWORD_FEATURE_MAP)} boolean feature columns.")
+        # Generate features from Package Manager Files
+        context.log.info("Generating features from package manager files...")
+        for file_pattern, mappings in PACKAGE_MANAGER_FEATURE_MAP_BY_FILE.items():
+            mask = features_df['file_name'].str.endswith(file_pattern, na=False)
+            if not mask.any():
+                continue
+            
+            context.log.info(f"Processing {mask.sum()} files matching '{file_pattern}'...")
+            for feature_name, keywords in mappings.items():
+                if not keywords:
+                    continue
+                pattern = "|".join(re.escape(kw) for kw in keywords)
+                matches = features_df.loc[mask, 'file_content'].str.contains(pattern, case=False, regex=True)
+                features_df.loc[mask & matches, feature_name] = True
+        context.log.info(f"Generated {len(pm_feature_names)} unique boolean feature columns from package manager files.")
 
-        # Drop the original text columns as they are no longer needed
-        features_df = features_df.drop(columns=['description', 'readme_content'])
+        # aggregate results to one row per repo
+        context.log.info("Aggregating feature data to one row per repository.")
+        
+        # Define aggregation functions. 'any' acts as a logical OR for boolean columns.
+        agg_funcs = { 'data_timestamp': 'first', 'is_fork': 'first' }
+        feature_and_flag_cols = list(all_feature_names) + ['has_readme', 'has_description', 'has_package_file']
+        for col in feature_and_flag_cols:
+             agg_funcs[col] = 'any'
+        
+        # Select only the columns needed for aggregation
+        cols_to_agg = ['repo', 'data_timestamp', 'is_fork'] + feature_and_flag_cols
+        final_features_df = features_df[cols_to_agg].groupby('repo').agg(agg_funcs).reset_index()
+
+        context.log.info(f"Aggregation complete. Result has {len(final_features_df)} unique repos.")
 
         # Define dtypes for the output table
         output_dtype_mapping = {
             'repo': sqlalchemy.types.Text,
             'data_timestamp': sqlalchemy.types.TIMESTAMP(timezone=False),
-            'has_readme': sqlalchemy.types.Boolean
         }
-        for feature_name in KEYWORD_FEATURE_MAP.keys():
-            output_dtype_mapping[feature_name] = sqlalchemy.types.Boolean
+        for col in final_features_df.columns:
+            if col not in output_dtype_mapping and final_features_df[col].dtype == 'bool':
+                output_dtype_mapping[col] = sqlalchemy.types.Boolean
 
         # Write the augmented DataFrame to the new table
         try:
-            features_df.to_sql(
-                output_table_name,
-                cloud_sql_engine,
-                schema=clean_schema,
-                if_exists='replace',
-                index=False,
-                dtype=output_dtype_mapping
-            )
-            context.log.info(f"Successfully wrote {len(features_df)} rows with features to {clean_schema}.{output_table_name}")
+            # perform database operations in a transaction
+            with cloud_sql_engine.begin() as conn:
+                # replace existing table
+                final_features_df.to_sql(
+                    output_table_name,
+                    conn,
+                    schema=clean_schema,
+                    if_exists='replace',
+                    index=False,
+                    dtype=output_dtype_mapping
+                )
+                context.log.info(f"Successfully wrote {len(final_features_df)} rows with features to {clean_schema}.{output_table_name}")
+
+                # add placeholder columns for prediction fields
+                conn.execute(text(f"ALTER TABLE {clean_schema}.{output_table_name} ADD COLUMN predicted_is_scaffold boolean"))
+                conn.execute(text(f"ALTER TABLE {clean_schema}.{output_table_name} ADD COLUMN predicted_is_educational boolean"))
+                conn.execute(text(f"ALTER TABLE {clean_schema}.{output_table_name} ADD COLUMN predicted_is_dev_tooling boolean"))
+
         except Exception as e:
             context.log.error(f"Failed to write features to {clean_schema}.{output_table_name}: {e}")
             raise
 
         # Metadata for Dagster UI
-        row_count = len(features_df)
-        preview_df = features_df.head(10)
+        row_count = len(final_features_df)
+        preview_df = final_features_df.head(10)
         
         preview_columns = ['repo', 'has_readme'] + list(KEYWORD_FEATURE_MAP.keys())[:4]
         actual_preview_columns = [col for col in preview_columns if col in preview_df.columns]
