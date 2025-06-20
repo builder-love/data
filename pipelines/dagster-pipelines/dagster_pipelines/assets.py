@@ -471,63 +471,6 @@ def create_latest_active_distinct_github_project_repos_asset(env_prefix: str):
     return _latest_active_distinct_github_project_repos_env_specific
 
 
-# define the asset that gets libraries and associated repo urls from public google big query
-# the asset then matches the repo urls to the latest_active_distinct_project_repos table
-# a match indicates is_library = true
-# write the data to a new table called latest_libary_project_repos
-def create_latest_library_project_repos_asset(env_prefix: str):
-    """
-    Factory function to create the latest_library_project_repos asset
-    with an environment-specific key_prefix.
-    """
-    @dg.asset(
-        key_prefix=env_prefix,  # <<< This is the key change for namespacing
-        name="latest_library_project_repos", # This is the base name of the asset
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
-        group_name="ingestion", # Group name
-        tags={"bigquery": "True"},
-    )
-    def _latest_library_project_repos_env_specific(context) -> dg.MaterializeResult:
-        # Get the cloud sql postgres resource
-        cloud_sql_engine = context.resources.cloud_sql_postgres_resource
-        env_config = context.resources.active_env_config  
-        raw_schema = env_config["raw_schema"]  
-        clean_schema = env_config["clean_schema"] 
-
-        # initialize the bigquery client
-        gcp_project_id = os.getenv("gcp_project_id")
-        bq_client = bigquery.Client(project=gcp_project_id)
-        
-        bigquery_sql = """
-            SELECT DISTINCT
-            platform,
-            repository_url,
-            licenses
-            FROM
-            `bigquery-public-data.libraries_io.projects_with_repository_fields`
-            WHERE
-            lower(platform) IN (
-                'npm', 'pypi', 'rubygems', 'maven', 
-                'packagist', 'nuget', 'crates.io', 'go'
-                )
-            AND lower(licenses) IN (
-                'mit', 'apache-2.0', 'bsd-3-clause', 'bsd-2-clause', 
-                'isc', 'unlicense', 'mpl-2.0', 'lgpl-2.1', 'lgpl-3.0'
-                )
-            AND repository_url IS NOT NULL
-        """
-
-        # --- 1. EXTRACT (from BigQuery) ---
-        context.log.info("Connecting to BigQuery to fetch list of library repositories...")
-        try:
-            bq_client = bigquery.Client(project=gcp_project_id)
-            library_repos_df = bq_client.query(bigquery_sql).to_dataframe()
-            # Create a set of normalized, lowercase repo names for fast lookups
-            library_repos_set = set(library_repos_df['repository_url'].str.lower().dropna())
-            context.log.info(f"Successfully created a lookup set of {len(library_repos_set)} library repositories.")
-        except Exception as e:
-            raise dg.Failure(f"Failed to query BigQuery: {e}")
-
 # define the asset that gets the stargaze count for a repo
 # to accomodate multiple environments, we will use a factory function
 def create_github_project_repos_stargaze_count_asset(env_prefix: str):
@@ -4195,6 +4138,456 @@ def create_project_repos_package_files_asset(env_prefix: str):
             }
         )
     return _project_repos_package_files_env_specific
+
+
+# Define the dictionary of contract application developmentframework config files to search for
+CONFIG_FILES_TO_TRY = {
+    "hardhat": ["hardhat.config.ts", "hardhat.config.js", "hardhat.config.cjs", "hardhat.config.mjs"],
+    "foundry": ["foundry.toml"],
+    "truffle": ["truffle-config.js", "truffle-config.json", "truffle-config.yaml", "truffle-config.yml"],
+    "brownie": ["brownie-config.yaml", "brownie-config.yml"],
+    "anchor": ["Anchor.toml"],
+}
+
+def create_project_repos_app_dev_framework_files_asset(env_prefix: str):
+    """
+    Factory function to create the project_repos_framework_files asset.
+    This asset finds and fetches smart contract framework configuration files for all active repos.
+    """
+    @dg.asset(
+        key_prefix=env_prefix,
+        name="project_repos_app_dev_framework_files",
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        group_name="ingestion",
+        tags={"github_api": "True"},
+        description="""
+        This asset searches for various smart contract framework config files (hardhat.config.js, foundry.toml, etc.)
+        across all active repositories and stores their content.
+        """
+    )
+    def _project_repos_app_dev_framework_files_env_specific(context: dg.OpExecutionContext) -> dg.MaterializeResult:
+        cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+        env_config = context.resources.active_env_config
+        raw_schema = env_config["raw_schema"]
+        clean_schema = env_config["clean_schema"]
+
+        context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
+
+        gh_pat = os.environ.get("go_blockchain_ecosystem")
+        if not gh_pat:
+            context.log.warning("GitHub Personal Access Token (go_blockchain_ecosystem) not found.")
+
+        def fetch_content_via_get(url: str) -> str | None:
+            """Helper to fetch content from a direct URL."""
+            try:
+                time.sleep(0.1)
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()
+                return response.text.replace('\x00', '')
+            except requests.exceptions.RequestException:
+                return None
+
+        def get_non_github_framework_files(repo_url: str, repo_source: str) -> list[dict]:
+            """
+            Fetches framework config files for non-GitHub repositories.
+            Returns a list of found files, each as a dictionary.
+            """
+            context.log.debug(f"Processing non-GitHub repo: {repo_url} (Source: {repo_source})")
+            found_files = []
+            time.sleep(0.2)
+
+            # Use the CONFIG_FILES_TO_TRY dictionary
+            for framework, filenames in CONFIG_FILES_TO_TRY.items():
+                for filename in filenames:
+                    raw_content = None
+                    if repo_source == "bitbucket":
+                        try:
+                            parts = repo_url.rstrip('/').split('/')
+                            owner, repo_slug = parts[-2], parts[-1].replace(".git", "")
+                            for branch in ["main", "master"]:
+                                api_url = f"https://api.bitbucket.org/2.0/repositories/{owner}/{repo_slug}/src/{branch}/{filename}"
+                                raw_content = fetch_content_via_get(api_url)
+                                if raw_content: break
+                        except (IndexError, Exception): continue
+                    elif repo_source == "gitlab":
+                        try:
+                            project_path = "/".join(repo_url.rstrip('/').split('/')[3:]).replace(".git", "")
+                            project_path_encoded = requests.utils.quote(project_path, safe='')
+                            for branch in ["main", "master"]:
+                                api_url = f"https://gitlab.com/api/v4/projects/{project_path_encoded}/repository/files/{requests.utils.quote(filename, safe='')}/raw?ref={branch}"
+                                raw_content = fetch_content_via_get(api_url)
+                                if raw_content: break
+                        except (IndexError, Exception): continue
+                    
+                    if raw_content:
+                        context.log.info(f"Found '{filename}' for {repo_source} repo: {repo_url}")
+                        found_files.append({
+                            "framework_name": framework, 
+                            "file_name": filename,
+                            "file_content": raw_content
+                        })
+            return found_files
+
+
+        def get_github_framework_files(repo_urls: list[str], gh_pat_token: str | None) -> tuple[list[dict], dict]:
+            """
+            Queries framework config files for GitHub repositories using the GraphQL API.
+            Returns a list of found files and a dictionary with error counts.
+            """
+            if not repo_urls: return [], {}
+            if not gh_pat_token:
+                context.log.error("GitHub PAT is missing. Cannot fetch GitHub framework files.")
+                return [], {}
+
+            api_url = "https://api.github.com/graphql"
+            headers = {"Authorization": f"bearer {gh_pat_token}"}
+            all_found_files = []
+            batch_size = 40
+            errors = {'count_403_errors': 0, 'count_502_errors': 0}
+
+            query_objects = []
+            # Use the CONFIG_FILES_TO_TRY dictionary
+            for framework, filenames in CONFIG_FILES_TO_TRY.items():
+                for filename in filenames:
+                    alias = re.sub(r'[^a-zA-Z0-9_]', '_', filename)
+                    query_objects.append((alias, framework, filename, f'HEAD:{filename}'))
+
+            context.log.info(f"Starting GitHub framework file fetch for {len(repo_urls)} URLs.")
+            
+            for i in range(0, len(repo_urls), batch_size):
+                batch = repo_urls[i:i + batch_size]
+                if i % 1000 == 0:
+                    context.log.info(f"Processing batch {i//batch_size + 1} of {len(repo_urls)//batch_size + 1}...")
+
+                variables, query_parts, repo_url_map = {}, [], {}
+                for idx, repo_url in enumerate(batch):
+                    try:
+                        owner, name = repo_url.rstrip('/').split('/')[-2:]
+                        name = name.replace(".git", "")
+                        variables[f"owner{idx}"], variables[f"name{idx}"] = owner, name
+                        repo_url_map[repo_url] = idx
+                        object_queries = "\n".join([f'{alias}: object(expression: "{expr}") {{ ... on Blob {{ text }} }}' for alias, _, _, expr in query_objects])
+                        query_parts.append(f'repo{idx}: repository(owner: $owner{idx}, name: $name{idx}) {{\n{object_queries}\n}}')
+                    except IndexError:
+                        context.log.warning(f"Invalid GitHub URL format, skipping: {repo_url}")
+                        continue
+                
+                if not query_parts: continue
+                var_defs = ", ".join([f"$owner{k}: String!, $name{k}: String!" for k in range(len(batch))])
+                full_query = f"query ({var_defs}) {{\n" + "\n".join(query_parts) + "\n}"
+                
+                max_retries, base_delay = 7, 2
+                for attempt in range(max_retries):
+                    try:
+                        response = requests.post(api_url, json={'query': full_query, 'variables': variables}, headers=headers, timeout=45)
+                        response.raise_for_status()
+                        data = response.json()
+                        if 'data' in data and data['data']:
+                            for repo_url, idx in repo_url_map.items():
+                                repo_api_data = data['data'].get(f'repo{idx}')
+                                if repo_api_data:
+                                    for alias, framework, filename, _ in query_objects:
+                                        if repo_api_data.get(alias) and repo_api_data[alias].get('text') is not None:
+                                            content = repo_api_data[alias]['text'].replace('\x00', '')
+                                            all_found_files.append({
+                                                "repo": repo_url,
+                                                "framework_name": framework, 
+                                                "file_name": filename,
+                                                "file_content": content
+                                            })
+                                            context.log.debug(f"Found '{filename}' for GitHub repo: {repo_url}")
+                        break 
+                    except requests.exceptions.RequestException as e:
+                        context.log.warning(f"GraphQL request failed on attempt {attempt+1}: {e}")
+                        time.sleep(base_delay * (2 ** attempt))
+
+                # delay for 1 second to avoid rate limiting
+                time.sleep(1)
+
+            return all_found_files, errors
+
+        # Main asset logic
+        with cloud_sql_engine.connect() as conn:
+            repo_df = pd.DataFrame(conn.execute(text(f"SELECT repo, repo_source FROM {clean_schema}.latest_active_distinct_project_repos_with_code")).fetchall())
+
+        if repo_df.empty:
+            context.log.info("No active repositories found to process.")
+            return dg.MaterializeResult(metadata={"row_count": 0})
+
+        github_urls = repo_df[repo_df['repo_source'] == 'github']['repo'].tolist()
+        final_results_list, github_errors = get_github_framework_files(github_urls, gh_pat)
+        
+        non_github_df = repo_df[repo_df['repo_source'] != 'github']
+        if not non_github_df.empty:
+            context.log.info(f"Processing {len(non_github_df)} non-GitHub repositories...")
+            for _, row in non_github_df.iterrows():
+                repo_url, repo_source = row['repo'], row['repo_source']
+                found_files = get_non_github_framework_files(repo_url, repo_source)
+                for file_info in found_files:
+                    file_info['repo'] = repo_url
+                    final_results_list.append(file_info)
+
+        if not final_results_list:
+            context.log.warning("No framework config files were found for any repository.")
+            return dg.MaterializeResult(metadata={"row_count": 0})
+
+        results_df = pd.DataFrame(final_results_list)
+        results_df['data_timestamp'] = pd.Timestamp.now(tz='UTC')
+
+        target_table_name = "latest_project_repos_framework_files" 
+        try:
+            dtype_mapping = {
+                'repo': sqlalchemy.types.Text,
+                'framework_name': sqlalchemy.types.Text, 
+                'file_name': sqlalchemy.types.Text,
+                'file_content': sqlalchemy.types.Text,
+                'data_timestamp': sqlalchemy.types.TIMESTAMP(timezone=False)
+            }
+            results_df.to_sql(target_table_name, cloud_sql_engine, if_exists='replace', index=False, schema=raw_schema, dtype=dtype_mapping)
+            context.log.info(f"Successfully wrote {len(results_df)} framework file entries to {raw_schema}.{target_table_name}")
+        except Exception as e:
+            context.log.error(f"Error writing framework files to database: {e}")
+            raise
+
+        row_count = len(results_df)
+        preview_df = results_df[['repo', 'framework_name', 'file_name']].head(10)
+
+        return dg.MaterializeResult(
+            metadata={
+                "row_count": dg.MetadataValue.int(row_count),
+                "preview": dg.MetadataValue.md(preview_df.to_markdown(index=False)),
+                "github_api_403_errors": dg.MetadataValue.int(github_errors.get('count_403_errors',0)),
+                "github_api_502_errors": dg.MetadataValue.int(github_errors.get('count_502_errors',0)),
+                "frameworks_searched": dg.MetadataValue.text(", ".join(CONFIG_FILES_TO_TRY.keys()))
+            }
+        )
+    return _project_repos_app_dev_framework_files_env_specific
+
+# Define the dictionary of front-end development framework config files to search for
+FRONTEND_CONFIG_FILES_TO_TRY = {
+    # "webpack": ["webpack.common.js", "webpack.common.ts"],
+    "vite": ["vite.config.ts", "vite.config.js"],
+    "tailwind": ["tailwind.config.js", "tailwind.config.ts"],
+    "vue": ["vue.config.js"],
+    "next": ["next.config.js", "next.config.ts"],
+    "nuxt": ["nuxt.config.ts", "nuxt.config.js"],
+    "angular": ["angular.json"],
+    # "svelte": ["svelte.config.js", "svelte.config.ts"],
+    # "remix": ["remix.config.js", "remix.config.ts"],
+}
+def create_project_repos_frontend_framework_files_asset(env_prefix: str):
+    """
+    Factory function to create the project_repos_frontend_framework_files asset.
+    This asset finds and fetches front-end framework configuration files for all active repos.
+    """
+    @dg.asset(
+        key_prefix=env_prefix,
+        name="project_repos_frontend_framework_files",
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        group_name="ingestion",
+        tags={"github_api": "True"},
+        description="""
+        This asset searches for various front-end framework config files (webpack.config.js, vite.config.ts, etc.)
+        across all active repositories and stores their content.
+        """
+    )
+    def _project_repos_frontend_framework_files_env_specific(context: dg.OpExecutionContext) -> dg.MaterializeResult:
+        cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+        env_config = context.resources.active_env_config
+        raw_schema = env_config["raw_schema"]
+        clean_schema = env_config["clean_schema"]
+
+        context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
+
+        gh_pat = os.environ.get("go_blockchain_ecosystem")
+        if not gh_pat:
+            context.log.warning("GitHub Personal Access Token (go_blockchain_ecosystem) not found.")
+
+        def fetch_content_via_get(url: str) -> str | None:
+            """Helper to fetch content from a direct URL."""
+            try:
+                time.sleep(0.1)
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()
+                return response.text.replace('\x00', '')
+            except requests.exceptions.RequestException:
+                return None
+
+        def get_non_github_framework_files(repo_url: str, repo_source: str) -> list[dict]:
+            """
+            Fetches framework config files for non-GitHub repositories.
+            Returns a list of found files, each as a dictionary.
+            """
+            context.log.debug(f"Processing non-GitHub repo: {repo_url} (Source: {repo_source})")
+            found_files = []
+            time.sleep(0.2)
+
+            # Use the new FRONTEND_CONFIG_FILES_TO_TRY dictionary
+            for framework, filenames in FRONTEND_CONFIG_FILES_TO_TRY.items():
+                for filename in filenames:
+                    raw_content = None
+                    if repo_source == "bitbucket":
+                        try:
+                            parts = repo_url.rstrip('/').split('/')
+                            owner, repo_slug = parts[-2], parts[-1].replace(".git", "")
+                            for branch in ["main", "master"]:
+                                api_url = f"https://api.bitbucket.org/2.0/repositories/{owner}/{repo_slug}/src/{branch}/{filename}"
+                                raw_content = fetch_content_via_get(api_url)
+                                if raw_content: break
+                        except (IndexError, Exception): continue
+                    elif repo_source == "gitlab":
+                        try:
+                            project_path = "/".join(repo_url.rstrip('/').split('/')[3:]).replace(".git", "")
+                            project_path_encoded = requests.utils.quote(project_path, safe='')
+                            for branch in ["main", "master"]:
+                                api_url = f"https://gitlab.com/api/v4/projects/{project_path_encoded}/repository/files/{requests.utils.quote(filename, safe='')}/raw?ref={branch}"
+                                raw_content = fetch_content_via_get(api_url)
+                                if raw_content: break
+                        except (IndexError, Exception): continue
+                    
+                    if raw_content:
+                        context.log.info(f"Found '{filename}' for {repo_source} repo: {repo_url}")
+                        found_files.append({
+                            "framework_name": framework, 
+                            "file_name": filename,
+                            "file_content": raw_content
+                        })
+            return found_files
+
+
+        def get_github_framework_files(repo_urls: list[str], gh_pat_token: str | None) -> tuple[list[dict], dict]:
+            """
+            Queries framework config files for GitHub repositories using the GraphQL API.
+            Returns a list of found files and a dictionary with error counts.
+            """
+            if not repo_urls: return [], {}
+            if not gh_pat_token:
+                context.log.error("GitHub PAT is missing. Cannot fetch GitHub framework files.")
+                return [], {}
+
+            api_url = "https://api.github.com/graphql"
+            headers = {"Authorization": f"bearer {gh_pat_token}"}
+            all_found_files = []
+            batch_size = 50
+            errors = {'count_403_errors': 0, 'count_502_errors': 0}
+
+            query_objects = []
+            # Use the new FRONTEND_CONFIG_FILES_TO_TRY dictionary
+            for framework, filenames in FRONTEND_CONFIG_FILES_TO_TRY.items():
+                for filename in filenames:
+                    alias = re.sub(r'[^a-zA-Z0-9_]', '_', filename)
+                    query_objects.append((alias, framework, filename, f'HEAD:{filename}'))
+
+            context.log.info(f"Starting GitHub front-end framework file fetch for {len(repo_urls)} URLs.")
+            
+            for i in range(0, len(repo_urls), batch_size):
+                batch = repo_urls[i:i + batch_size]
+                if i % 1000 == 0:
+                    context.log.info(f"Processing batch {i//batch_size + 1} of {len(repo_urls)//batch_size + 1}...")
+
+                variables, query_parts, repo_url_map = {}, [], {}
+                for idx, repo_url in enumerate(batch):
+                    try:
+                        owner, name = repo_url.rstrip('/').split('/')[-2:]
+                        name = name.replace(".git", "")
+                        variables[f"owner{idx}"], variables[f"name{idx}"] = owner, name
+                        repo_url_map[repo_url] = idx
+                        object_queries = "\n".join([f'{alias}: object(expression: "{expr}") {{ ... on Blob {{ text }} }}' for alias, _, _, expr in query_objects])
+                        query_parts.append(f'repo{idx}: repository(owner: $owner{idx}, name: $name{idx}) {{\n{object_queries}\n}}')
+                    except IndexError:
+                        context.log.warning(f"Invalid GitHub URL format, skipping: {repo_url}")
+                        continue
+                
+                if not query_parts: continue
+                var_defs = ", ".join([f"$owner{k}: String!, $name{k}: String!" for k in range(len(batch))])
+                full_query = f"query ({var_defs}) {{\n" + "\n".join(query_parts) + "\n}"
+                
+                max_retries, base_delay = 7, 2
+                for attempt in range(max_retries):
+                    try:
+                        response = requests.post(api_url, json={'query': full_query, 'variables': variables}, headers=headers, timeout=45)
+                        response.raise_for_status()
+                        data = response.json()
+                        if 'data' in data and data['data']:
+                            for repo_url, idx in repo_url_map.items():
+                                repo_api_data = data['data'].get(f'repo{idx}')
+                                if repo_api_data:
+                                    for alias, framework, filename, _ in query_objects:
+                                        if repo_api_data.get(alias) and repo_api_data[alias].get('text') is not None:
+                                            content = repo_api_data[alias]['text'].replace('\x00', '')
+                                            all_found_files.append({
+                                                "repo": repo_url,
+                                                "framework_name": framework, 
+                                                "file_name": filename,
+                                                "file_content": content
+                                            })
+                                            context.log.debug(f"Found '{filename}' for GitHub repo: {repo_url}")
+                        break 
+                    except requests.exceptions.RequestException as e:
+                        context.log.warning(f"GraphQL request failed on attempt {attempt+1}: {e}")
+                        time.sleep(base_delay * (2 ** attempt))
+                
+                time.sleep(1)
+
+            return all_found_files, errors
+
+        # Main asset logic
+        with cloud_sql_engine.connect() as conn:
+            repo_df = pd.DataFrame(conn.execute(text(f"SELECT repo, repo_source FROM {clean_schema}.latest_active_distinct_project_repos_with_code")).fetchall())
+
+        if repo_df.empty:
+            context.log.info("No active repositories found to process.")
+            return dg.MaterializeResult(metadata={"row_count": 0})
+
+        github_urls = repo_df[repo_df['repo_source'] == 'github']['repo'].tolist()
+        final_results_list, github_errors = get_github_framework_files(github_urls, gh_pat)
+        
+        non_github_df = repo_df[repo_df['repo_source'] != 'github']
+        if not non_github_df.empty:
+            context.log.info(f"Processing {len(non_github_df)} non-GitHub repositories...")
+            for _, row in non_github_df.iterrows():
+                repo_url, repo_source = row['repo'], row['repo_source']
+                found_files = get_non_github_framework_files(repo_url, repo_source)
+                for file_info in found_files:
+                    file_info['repo'] = repo_url
+                    final_results_list.append(file_info)
+
+        if not final_results_list:
+            context.log.warning("No front-end framework config files were found for any repository.")
+            return dg.MaterializeResult(metadata={"row_count": 0})
+
+        results_df = pd.DataFrame(final_results_list)
+        results_df['data_timestamp'] = pd.Timestamp.now(tz='UTC')
+
+        # write to target table in raw schema
+        target_table_name = "latest_project_repos_frontend_framework_files" 
+        try:
+            dtype_mapping = {
+                'repo': sqlalchemy.types.Text,
+                'framework_name': sqlalchemy.types.Text, 
+                'file_name': sqlalchemy.types.Text,
+                'file_content': sqlalchemy.types.Text,
+                'data_timestamp': sqlalchemy.types.TIMESTAMP(timezone=False)
+            }
+            results_df.to_sql(target_table_name, cloud_sql_engine, if_exists='replace', index=False, schema=raw_schema, dtype=dtype_mapping)
+            context.log.info(f"Successfully wrote {len(results_df)} front-end framework file entries to {raw_schema}.{target_table_name}")
+        except Exception as e:
+            context.log.error(f"Error writing front-end framework files to database: {e}")
+            raise
+
+        row_count = len(results_df)
+        preview_df = results_df[['repo', 'framework_name', 'file_name']].head(10)
+
+        return dg.MaterializeResult(
+            metadata={
+                "row_count": dg.MetadataValue.int(row_count),
+                "preview": dg.MetadataValue.md(preview_df.to_markdown(index=False)),
+                "github_api_403_errors": dg.MetadataValue.int(github_errors.get('count_403_errors',0)),
+                "github_api_502_errors": dg.MetadataValue.int(github_errors.get('count_502_errors',0)),
+                "frameworks_searched": dg.MetadataValue.text(", ".join(FRONTEND_CONFIG_FILES_TO_TRY.keys())) # Updated metadata
+            }
+        )
+    return _project_repos_frontend_framework_files_env_specific
 
 # define the asset that gets the contributors for a repo
 # to accomodate multiple environments, we will use a factory function

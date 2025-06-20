@@ -9,7 +9,7 @@ from dagster_pipelines.resources import (
     active_env_config_resource,
     electric_capital_ecosystems_repo
 )
-
+# import assets from assets.py
 from dagster_pipelines.assets import ( # Adjust module path if they are in different files
     create_crypto_ecosystems_project_json_asset,
     create_latest_active_distinct_github_project_repos_asset,
@@ -26,10 +26,19 @@ from dagster_pipelines.assets import ( # Adjust module path if they are in diffe
     create_latest_contributor_activity_asset,
     create_project_repos_description_asset,
     create_project_repos_readmes_asset,
-    create_project_repos_package_files_asset
+    create_project_repos_package_files_asset,
+    create_project_repos_app_dev_framework_files_asset,
+    create_project_repos_frontend_framework_files_asset
 )
+# import assets from features.py
 from dagster_pipelines.features import (
     create_project_repos_description_features_asset
+)
+# import assets from models.py
+from dagster_pipelines.models import (
+    create_education_model_predictions_asset,
+    create_scaffold_model_predictions_asset,
+    create_developer_tooling_model_predictions_asset
 )
 from dagster_pipelines.cleaning_assets import ( 
     all_stg_dbt_assets, 
@@ -44,7 +53,9 @@ from dagster_pipelines.jobs import (
     prod_normalized_dbt_assets_job,
     prod_latest_dbt_assets_job,
     prod_period_change_data_dbt_assets_job,
-    update_crypto_ecosystems_raw_file_job
+    update_crypto_ecosystems_raw_file_job,
+    prod_ml_pipeline_job,
+    stg_ml_pipeline_job
 )
 from dagster_pipelines.schedules import (
     create_env_specific_schedule,
@@ -56,7 +67,9 @@ from dagster_pipelines.schedules import (
     stg_period_change_data_dbt_assets_schedule,
     prod_normalized_dbt_assets_schedule,
     prod_latest_dbt_assets_schedule,
-    prod_period_change_data_dbt_assets_schedule
+    prod_period_change_data_dbt_assets_schedule,
+    prod_ml_pipeline_schedule,
+    stg_ml_pipeline_schedule
 )
 from dagster_pipelines.load_data_jobs import (
     refresh_prod_schema, 
@@ -96,7 +109,12 @@ common_asset_creators = {
     "project_repos_description": create_project_repos_description_asset,
     "project_repos_readmes": create_project_repos_readmes_asset,
     "project_repos_package_files": create_project_repos_package_files_asset,
+    "project_repos_app_dev_framework_files": create_project_repos_app_dev_framework_files_asset,
+    "project_repos_frontend_framework_files": create_project_repos_frontend_framework_files_asset,
     "project_repos_description_features": create_project_repos_description_features_asset,
+    "education_model_predictions": create_education_model_predictions_asset,
+    "scaffold_model_predictions": create_scaffold_model_predictions_asset,
+    "developer_tooling_model_predictions": create_developer_tooling_model_predictions_asset,
     "latest_contributor_data": create_latest_contributor_data_asset,
     "contributor_follower_count": create_contributor_follower_count_asset,
     "latest_contributor_following_count": create_latest_contributor_following_count_asset,
@@ -142,8 +160,9 @@ asset_job_schedule_params_map = {
     "github_project_repos_contributors": {"base_job_name": "project_repos_contributors_refresh", "base_job_desc": "Gets the contributors...", "job_tags": {"github_api": "True"}, "cron_str": "0 0 20 * *", "base_schedule_name": "project_repos_contributors_schedule"},
     "project_repos_description": {"base_job_name": "project_repos_description_refresh", "base_job_desc": "Gets the repo description...", "job_tags": {"github_api": "True"}, "cron_str": "0 0 26 * *", "base_schedule_name": "project_repos_description_schedule"},
     "project_repos_readmes": {"base_job_name": "project_repos_readmes_refresh", "base_job_desc": "Gets the repo readmes...", "job_tags": {"github_api": "True"}, "cron_str": "0 0 27 * *", "base_schedule_name": "project_repos_readmes_schedule"},
-    "project_repos_package_files": {"base_job_name": "project_repos_package_files_refresh", "base_job_desc": "Gets the repo package files...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 8,24 * *", "base_schedule_name": "project_repos_package_files_schedule"},
-    "project_repos_description_features": {"base_job_name": "project_repos_description_features_refresh", "base_job_desc": "Gets the repo description features...", "job_tags": {"github_api": "True"}, "cron_str": "0 0 28 * *", "base_schedule_name": "project_repos_description_features_schedule"},
+    "project_repos_package_files": {"base_job_name": "project_repos_package_files_refresh", "base_job_desc": "Gets the repo package files...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 24 * *", "base_schedule_name": "project_repos_package_files_schedule"},
+    "project_repos_app_dev_framework_files": {"base_job_name": "project_repos_app_dev_framework_files_refresh", "base_job_desc": "Gets the repo app dev framework files...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 25 * *", "base_schedule_name": "project_repos_app_dev_framework_files_schedule"},
+    "project_repos_frontend_framework_files": {"base_job_name": "project_repos_frontend_framework_files_refresh", "base_job_desc": "Gets the repo frontend framework files...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 26 * *", "base_schedule_name": "project_repos_frontend_framework_files_schedule"},
     "process_compressed_contributors_data": {"base_job_name": "process_compressed_contributors_data_refresh", "base_job_desc": "Extracts, decompresses, and inserts data...", "job_tags": {"github_api": "True"}, "cron_str": "0 3 * * *", "base_schedule_name": "process_compressed_contributors_data_schedule"},
     "latest_contributor_data": {"base_job_name": "latest_contributor_data_refresh", "base_job_desc": "Queries the latest list of contributors...", "job_tags": {"github_api": "True"}, "cron_str": "0 10 8,22 * *", "base_schedule_name": "latest_contributor_data_schedule"},
     "contributor_follower_count": {"base_job_name": "contributor_follower_count_refresh", "base_job_desc": "Queries follower count...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 9 * *", "base_schedule_name": "contributor_follower_count_schedule"},
@@ -154,8 +173,8 @@ asset_job_schedule_params_map = {
 
 ## ------------------------------------------ create jobs and schedules for each environment --------------------------------- ##
 # --- Generate Staging Jobs and Schedules ---
-stg_jobs_list = [stg_normalized_dbt_assets_job, stg_latest_dbt_assets_job, stg_period_change_data_dbt_assets_job]
-stg_schedules_list = [stg_normalized_dbt_assets_schedule, stg_latest_dbt_assets_schedule, stg_period_change_data_dbt_assets_schedule]
+stg_jobs_list = [stg_normalized_dbt_assets_job, stg_latest_dbt_assets_job, stg_period_change_data_dbt_assets_job, stg_ml_pipeline_job]
+stg_schedules_list = [stg_normalized_dbt_assets_schedule, stg_latest_dbt_assets_schedule, stg_period_change_data_dbt_assets_schedule, stg_ml_pipeline_schedule]
 
 for base_name, params in asset_job_schedule_params_map.items():
     if base_name in stg_assets_by_base_name:
@@ -187,8 +206,8 @@ if 'refresh_api_schema' in globals() and isinstance(refresh_api_schema, JobDefin
 
 
 # --- Generate Production Jobs and Schedules ---
-prod_jobs_list = [prod_normalized_dbt_assets_job, prod_latest_dbt_assets_job, prod_period_change_data_dbt_assets_job]
-prod_schedules_list = [prod_normalized_dbt_assets_schedule, prod_latest_dbt_assets_schedule, prod_period_change_data_dbt_assets_schedule]
+prod_jobs_list = [prod_normalized_dbt_assets_job, prod_latest_dbt_assets_job, prod_period_change_data_dbt_assets_job, prod_ml_pipeline_job]
+prod_schedules_list = [prod_normalized_dbt_assets_schedule, prod_latest_dbt_assets_schedule, prod_period_change_data_dbt_assets_schedule, prod_ml_pipeline_schedule]
 
 for base_name, params in asset_job_schedule_params_map.items():
     if base_name in prod_assets_by_base_name:
