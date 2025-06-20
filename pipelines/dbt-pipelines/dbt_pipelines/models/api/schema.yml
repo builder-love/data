@@ -294,6 +294,26 @@ models:
       - name: repo_rank_category
         tests:
           - not_null
+      - name: predicted_is_dev_tooling
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: boolean
+      - name: predicted_is_educational
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: boolean
+      - name: predicted_is_scaffold
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: boolean
+      - name: predicted_is_app
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: boolean
+      - name: predicted_is_infrastructure
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: boolean
     tests:
       - unique_combination_of_columns:
           column_names: [project_title, repo, latest_data_timestamp]
