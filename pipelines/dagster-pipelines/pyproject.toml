@@ -8,6 +8,10 @@ dependencies = [
     "dagster",
     "dagster-cloud",
     "dagster-dbt",
+    "pandas",
+    "sqlalchemy",
+    "psycopg2-binary",
+    "scikit-learn"
 ]
 
 [project.optional-dependencies]
