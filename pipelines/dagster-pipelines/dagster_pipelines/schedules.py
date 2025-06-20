@@ -7,7 +7,9 @@ from dagster_pipelines.jobs import (
     prod_normalized_dbt_assets_job,
     prod_latest_dbt_assets_job,
     prod_period_change_data_dbt_assets_job,
-    update_crypto_ecosystems_raw_file_job
+    update_crypto_ecosystems_raw_file_job,
+    prod_ml_pipeline_job,
+    stg_ml_pipeline_job
 )
 from dagster_pipelines.cleaning_assets import all_stg_dbt_assets, all_prod_dbt_assets
 from dagster_pipelines.load_data_jobs import refresh_prod_schema
@@ -167,6 +169,22 @@ def refresh_api_schema_schedule(context):
     context.log.info(f"refresh_api_schema_schedule job duration: {end_time - start_time}")
 
     return {}
+
+## ------------------------------------- SCHEDULES FOR ML PIPELINE ------------------------------------- ##
+# prod
+prod_ml_pipeline_schedule = ScheduleDefinition(
+    job=prod_ml_pipeline_job,
+    cron_schedule="0 0 28 * *",  # At 12:00 AM on day 28 of the month
+    execution_timezone="America/New_York",
+    name="prod_full_ml_pipeline_schedule"
+)
+# stg
+stg_ml_pipeline_schedule = ScheduleDefinition(
+    job=stg_ml_pipeline_job,
+    cron_schedule="0 0 28 * *",  # At 12:00 AM on day 28 of the month
+    execution_timezone="America/New_York",
+    name="stg_full_ml_pipeline_schedule"
+)
 
 ## ------------------------------------- old method of creating schedules ------------------------------------- ##
 # replaced with factory above

@@ -1,9 +1,19 @@
-from dagster import job, define_asset_job, AssetSelection, AssetsDefinition
+from dagster import job, define_asset_job, AssetSelection, AssetsDefinition, AssetKey
 from dagster_pipelines.cleaning_assets import (
     run_dbt_tests_on_crypto_ecosystems_raw_file_staging, 
     load_new_data_from_staging_to_final, 
     update_projects_dimension_and_archive,
     update_repos_dimension_and_archive
+)
+# import assets from features.py
+from dagster_pipelines.features import (
+    create_project_repos_description_features_asset
+)
+# import assets from models.py
+from dagster_pipelines.models import (
+    create_education_model_predictions_asset,
+    create_scaffold_model_predictions_asset,
+    create_developer_tooling_model_predictions_asset
 )
 import dagster as dg
 
@@ -95,7 +105,40 @@ prod_period_change_data_dbt_assets_job = define_asset_job(
     description="Runs PROD dbt models for period change data with tag 'period_change_data'."
 )
 
+## ------------------------------------- JOB FOR THE FULL ML PIPELINE ------------------------------------- ##
+# This job materializes the feature asset and all downstream model assets.
+# It's defined once and can be used in both stg and prod definitions.
+ML_PIPELINE_UPSTREAM_ASSET_NAME = "project_repos_description_features"
 
+# This selection is for the PRODUCTION environment
+prod_asset_key = AssetKey(["prod", ML_PIPELINE_UPSTREAM_ASSET_NAME])
+prod_ml_pipeline_selection = (
+    AssetSelection.assets(prod_asset_key) | # select the root
+    AssetSelection.assets(prod_asset_key).downstream(depth=2) # select downstream to all depths
+)
+
+# This defines the job for the PRODUCTION environment
+prod_ml_pipeline_job = define_asset_job(
+    name="prod_full_ml_pipeline_job",
+    selection=prod_ml_pipeline_selection, # Use the prod-specific selection
+    description="Refreshes features and runs all downstream ML models for PROD."
+)
+
+# This selection is for the STAGING environment
+stg_asset_key = AssetKey(["stg", ML_PIPELINE_UPSTREAM_ASSET_NAME])
+stg_ml_pipeline_selection = (
+    AssetSelection.assets(stg_asset_key) | # select the root
+    AssetSelection.assets(stg_asset_key).downstream(depth=2) # select downstream to all depths
+)
+
+# This defines the job for the STAGING environment
+stg_ml_pipeline_job = define_asset_job(
+    name="stg_full_ml_pipeline_job",
+    selection=stg_ml_pipeline_selection, # Use the stg-specific selection
+    description="Refreshes features and runs all downstream ML models for STG."
+)
+
+## ------------------------------------- JOB FOR THE FULL ML PIPELINE ------------------------------------- ##
 
 
 
