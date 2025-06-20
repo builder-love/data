@@ -7,6 +7,10 @@ setup(
         "dagster",
         "dagster-cloud",
         "dagster_dbt",
+        "pandas",
+        "psycopg2-binary",
+        "sqlalchemy",
+        "scikit-learn",
     ],
     extras_require={"dev": ["dagster-webserver", "pytest"]},
 )
