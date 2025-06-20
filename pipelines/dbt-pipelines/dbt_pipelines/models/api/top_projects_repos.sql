@@ -18,6 +18,11 @@ select
   weighted_score_index,
   repo_rank,
   quartile_bucket,
-  repo_rank_category
+  repo_rank_category,
+  predicted_is_dev_tooling,
+  predicted_is_educational,
+  predicted_is_scaffold,
+  predicted_is_app,
+  predicted_is_infrastructure
 
 from {{ source('prod_schema', 'latest_top_project_repos_prod') }}

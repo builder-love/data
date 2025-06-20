@@ -16,10 +16,16 @@ select
   ltr.weighted_score_index,
   ltr.repo_rank,
   ltr.quartile_bucket,
-  ltr.repo_rank_category
+  ltr.repo_rank_category,
+  lprf.predicted_is_dev_tooling,
+  lprf.predicted_is_educational,
+  lprf.predicted_is_scaffold,
+  lprf.predicted_is_app,
+  lprf.predicted_is_infrastructure
 
 from {{ ref('latest_top_repos') }} ltr left join {{ ref('latest_project_repos') }} lpr
-  on ltr.repo = lpr.repo
+  on ltr.repo = lpr.repo left join {{ ref('latest_project_repos_features') }} lprf
+  on ltr.repo = lprf.repo
 
 where LOWER(lpr.project_title) NOT IN (
     'general',
@@ -41,7 +47,10 @@ where LOWER(lpr.project_title) NOT IN (
     'oracles (category)',
     'evm compatible application',
     'zero knowledge cryptography',
-    'bridge (category)'
+    'bridge (category)',
+    'cosmos network stack',
+    'polkadot network stack',
+    'evm toolkit'
     )
 
 order by ltr.weighted_score_index desc

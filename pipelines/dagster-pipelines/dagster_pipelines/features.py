@@ -32,11 +32,11 @@ KEYWORD_FEATURE_MAP = {
     "is_hackathon_project": ["hackathon"],
     "is_hello_world": ["hello-world", "hello world"],
     "uses_json_rpc": ["json-rpc", "json rpc"],
-    "is_interview_related": ["interview"],
+    "is_interview_related": ["interview", "hiring test", "hiring exercise"],
     "is_learning_material": ["learn solidity", "learning"],
     "is_mcp_server": ["mcp server"],
     "is_plugin": ["plug-in", "plugin"],
-    "is_sample_project": ["sample", "sample application", "sample project", "simple example", "Sample Hardhat Project"],
+    "is_sample_project": ["sample", "sample application", "sample project", "simple example", "Sample Hardhat Project", "advanced sample hardhat project"],
     "is_sdk": ["sdk"],
     "is_security_related": ["security", "exploit", "vulnerability", "honeypot contract", "honeypot"],
     "has_tests_testing": ["test", "testing suite", "tests", "test environment", "test environment setup"],
@@ -47,11 +47,16 @@ KEYWORD_FEATURE_MAP = {
     "is_workshop": ["workshop"],
     "is_wrapper": ["wrapper"],
     "is_experiment": ["experiment", "experiments", "this is an experiment"],
-    "is_research": ["research", "research paper", "research project", "research related", "researching", "researching project", "research project related", "Bachelor thesis", "Master thesis", "PhD thesis", "thesis project", "thesis related", "thesis researching", "thesis project related"]
+    "is_research": ["research", "research paper", "research project", "research related", "researching", "researching project", "research project related", "Bachelor thesis", "Master thesis", "PhD thesis", "thesis project", "thesis related", "thesis researching", "thesis project related"],
+    "has_mainnet": ["mainnet"],
+    "has_testnet": ["testnet"],
+    "is_blockchain": ["blockchain"],
+    "is_monorepo": ["monorepo"],
 }
 
 REPO_NAME_FEATURE_MAP = {
     "name_is_example": ["example"],
+    "name_is_demo": ["demo"],
     "name_is_hello_world": ["hello-world"],
     "name_is_whitepaper": ["whitepaper"],
     "name_is_tutorial": ["tutorial"],
@@ -67,7 +72,8 @@ REPO_NAME_FEATURE_MAP = {
     "name_is_bootcamp": ["bootcamp"],
     "name_is_course": ["course"],
     "name_is_workshop": ["workshop"],
-    "name_is_interview": ["interview"],
+    "name_is_interview": ["interview", "task", "exercise"],
+    "name_is_monorepo": ["monorepo"],
 }
 
 # A comprehensive map for various package manager files.
@@ -80,7 +86,32 @@ PACKAGE_MANAGER_FEATURE_MAP_BY_FILE = {
         "pm_has_version_control": ['"version":'],
         "pm_has_author_cited": ["author", "authors", "contributor", "contributors"],
         "pm_has_license": ['"license":', '"licenses":'],
-        "pm_has_repository": ['"repository":', '"repositorie":', '"repo":', '"repos":']
+        "pm_has_repository": ['"repository":', '"repositorie":', '"repo":', '"repos":'],
+        "pm_has_fontend_dependencies": [
+            # UI Frameworks/Libraries (main packages and common sub-packages)
+            '"vue":', '"react":', '"svelte":', '"preact":', '"lit"', 
+            '"react-dom"', 
+            '"@angular/core"', '"@angular/common"', '"@angular/platform-browser"', 
+            '"vue-loader"', '"svelte-loader"', '"react-router-dom"', '"redux"', 
+            '"react-query"', '"swr"', 
+
+            # Meta-Frameworks / SSR
+            '"next":', '"nuxt":', '"sveltekit":', '"gatsby":', '"remix":', 
+            '"@remix-run/react"', '"@remix-run/node"', # For Remix
+
+            # Styling/Component Libraries
+            '"tailwindcss":', '"styled-components"', '"@emotion/react"', '"@mui/material"', 
+            '"bootstrap":', '"antd":', '"chakra-ui"', '"primevue"', '"element-plus"',
+
+            # Build Tools (often appear in devDependencies)
+            '"vite":', '"webpack":', '"rollup":', '"parcel":', '"esbuild":', '"snowpack":'
+        ],
+        "pm_has_backend_dependencies": ['"express":', '"fastify":', '"nestjs":', '"nest":', '"nestjs":', '"koa"', '"fastify"', '"hapi"', '"sails"'],
+        "pm_has_css_preprocessors": ['"sass"', '"less"', '"stylus"'],
+        "pm_has_bundler": ['"webpack"', '"vite"', '"rollup"', '"parcel"', '"esbuild"'],
+        "pm_has_database_client": ['"pg"', '"mysql"', '"mysql2"', '"sqlite3"', '"mongoose"', '"sequelize"', '"typeorm"'],
+        "pm_is_cli_tool": ['"commander"', '"yargs"', '"inquirer"', '"oclif"'],
+        "pm_is_library_project": ['"main":', '"module":', '"types":', '"exports":'],
     },
     "Cargo.toml": { # Rust (TOML)
         "pm_has_main_entrypoint": ['[lib]'],
@@ -89,7 +120,11 @@ PACKAGE_MANAGER_FEATURE_MAP_BY_FILE = {
         "pm_has_version_control": ['version ='], # Typically under [package]
         "pm_has_author_cited": ['authors ='],
         "pm_has_license": ['license ='],
-        "pm_has_repository": ['repository =']
+        "pm_has_repository": ['repository ='],
+        "pm_has_web_framework": ["actix-web", "rocket", "axum", "warp", "tokio"],
+        "pm_has_database_driver": ["sqlx", "diesel", "postgres", "mysql", "redis"],
+        "pm_is_blockchain_infra": ["substrate", "solana-sdk", "ethers", "web3"],
+        "pm_is_cli_tool": ["clap", "structopt"],
     },
     "pom.xml": { # Java Maven (XML)
         "pm_has_main_entrypoint": ['<mainClass>'],
@@ -98,7 +133,7 @@ PACKAGE_MANAGER_FEATURE_MAP_BY_FILE = {
         "pm_has_version_control": ['<version>'], # This tag is used for both project and dependency versions
         "pm_has_author_cited": ['<developer>', '<contributor>'],
         "pm_has_license": ['<licenses>'],
-        "pm_has_repository": ['<scm>'] # Source Control Management
+        "pm_has_repository": ['<scm>'], # Source Control Management
     },
     "pyproject.toml": { # Python (TOML)
         "pm_has_main_entrypoint": ['[project.scripts]', '[project.gui-scripts]'],
@@ -107,7 +142,11 @@ PACKAGE_MANAGER_FEATURE_MAP_BY_FILE = {
         "pm_has_version_control": ['version ='], # Under [project] or [tool.poetry]
         "pm_has_author_cited": ['authors =', '[project.authors]'],
         "pm_has_license": ['license ='],
-        "pm_has_repository": ['[project.urls]', 'repository =', 'homepage =']
+        "pm_has_repository": ['[project.urls]', 'repository =', 'homepage ='],
+        "pm_has_web_framework": ["django", "flask", "fastapi", "sanic", "tornado"],
+        "pm_has_database_orm": ["sqlalchemy", "django.db", "peewee", "tortoise-orm"],
+        "pm_is_devops_tool": ["ansible", "fabric", "pyinfra"],
+        "pm_is_testing_framework": ["pytest", "unittest", "behave", "robotframework"],
     },
     "composer.json": { # PHP (JSON)
         "pm_has_main_entrypoint": ['"autoload"'],
@@ -125,7 +164,7 @@ PACKAGE_MANAGER_FEATURE_MAP_BY_FILE = {
         "pm_has_version_control": [], # Not specified in Gemfile
         "pm_has_author_cited": [], # Not specified in Gemfile
         "pm_has_license": [], # Not specified in Gemfile
-        "pm_has_repository": ['git_source', 'github']
+        "pm_has_repository": ['git_source', 'github'],
     },
     # This captures metadata for RubyGems
     ".gemspec": {
@@ -135,7 +174,7 @@ PACKAGE_MANAGER_FEATURE_MAP_BY_FILE = {
         "pm_has_version_control": ['spec.version'],
         "pm_has_author_cited": ['spec.authors'],
         "pm_has_license": ['spec.license'],
-        "pm_has_repository": ['spec.homepage', "spec.metadata['source_code_uri']"]
+        "pm_has_repository": ['spec.homepage', "spec.metadata['source_code_uri']"],
     },
     "build.gradle": { # Groovy Gradle
         "pm_has_main_entrypoint": ["mainClassName"],
@@ -144,7 +183,7 @@ PACKAGE_MANAGER_FEATURE_MAP_BY_FILE = {
         "pm_has_version_control": ["version ="],
         "pm_has_author_cited": [], # Not a standard field
         "pm_has_license": ["licenses {"], # From publishing plugin
-        "pm_has_repository": ["scm {"] # From publishing plugin
+        "pm_has_repository": ["scm {"], # From publishing plugin
     },
     "build.gradle.kts": { # Kotlin Gradle
         "pm_has_main_entrypoint": ["mainClass.set("],
@@ -153,7 +192,7 @@ PACKAGE_MANAGER_FEATURE_MAP_BY_FILE = {
         "pm_has_version_control": ["version ="],
         "pm_has_author_cited": [],
         "pm_has_license": ["licenses {"],
-        "pm_has_repository": ["scm {"]
+        "pm_has_repository": ["scm {"],
     },
     "go.mod": { # Go
         "pm_has_main_entrypoint": [], # Not specified in go.mod
@@ -162,7 +201,11 @@ PACKAGE_MANAGER_FEATURE_MAP_BY_FILE = {
         "pm_has_version_control": [], # Not specified in go.mod
         "pm_has_author_cited": [], # Not specified in go.mod
         "pm_has_license": [], # Not specified in go.mod
-        "pm_has_repository": ["module "] # The module path is the repository
+        "pm_has_repository": ["module "], # The module path is the repository,
+        "pm_has_web_framework": ["net/http", "gin-gonic", "gorilla/mux", "chi", "echo"],
+        "pm_has_database_driver": ["database/sql", "gorm", "sqlx"],
+        "pm_is_devops_infra": ["kubernetes", "docker", "moby", "prometheus", "hashicorp/terraform"],
+        "pm_is_blockchain_infra": ["etcd", "tendermint", "cosmos-sdk", "go-ethereum"]
     },
     "setup.py": { # Python Legacy
         "pm_has_main_entrypoint": ["entry_points"],
@@ -171,7 +214,7 @@ PACKAGE_MANAGER_FEATURE_MAP_BY_FILE = {
         "pm_has_version_control": ["version="],
         "pm_has_author_cited": ["author="],
         "pm_has_license": ["license="],
-        "pm_has_repository": ["url="]
+        "pm_has_repository": ["url="],
     },
      "setup.cfg": { # Python Legacy
         "pm_has_main_entrypoint": ["entry_points"],
@@ -180,7 +223,7 @@ PACKAGE_MANAGER_FEATURE_MAP_BY_FILE = {
         "pm_has_version_control": ["version ="],
         "pm_has_author_cited": ["author ="],
         "pm_has_license": ["license ="],
-        "pm_has_repository": ["url ="]
+        "pm_has_repository": ["url ="],
     },
 }
 
@@ -203,13 +246,15 @@ def create_project_repos_description_features_asset(env_prefix: str):
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config
         clean_schema = env_config["clean_schema"]
+        raw_schema = env_config["raw_schema"]
 
         active_repos_table = "latest_active_distinct_project_repos_with_code"
         description_table = "latest_project_repos_description"
         readme_table = "latest_project_repos_readmes"
         package_files_table = "latest_project_repos_package_files"
         is_fork_table = "latest_project_repos_is_fork"
-        output_table_name = "project_repos_features"
+        dominant_language_table = "latest_project_repos_dominant_language"
+        output_table_name = "latest_project_repos_features"
 
         context.log.info(f"Process is running in {env_config['env']} environment.")
         context.log.info(f"Using '{active_repos_table}' as the base and joining descriptions and READMEs.")
@@ -225,12 +270,14 @@ def create_project_repos_description_features_asset(env_prefix: str):
                         r.readme_content,
                         p.file_name,
                         p.file_content,
-                        f.is_fork
+                        f.is_fork,
+                        l.dominant_language
                     FROM {clean_schema}.{active_repos_table} AS a
                     LEFT JOIN {clean_schema}.{description_table} AS d ON a.repo = d.repo
                     LEFT JOIN {clean_schema}.{readme_table} AS r ON a.repo = r.repo
                     LEFT JOIN {clean_schema}.{package_files_table} AS p ON a.repo = p.repo
-                    LEFT JOIN {clean_schema}.{is_fork_table} AS f ON a.repo = f.repo
+                    LEFT JOIN {clean_schema}.{is_fork_table} AS f ON a.repo = f.repo 
+                    LEFT JOIN {clean_schema}.{dominant_language_table} AS l ON a.repo = l.repo
                 """)
                 features_df = pd.read_sql_query(query, conn)
             context.log.info(f"Successfully read {len(features_df)} rows from '{active_repos_table}'.")
@@ -252,6 +299,7 @@ def create_project_repos_description_features_asset(env_prefix: str):
         features_df['has_description'] = features_df['description'].notna()
         features_df['has_package_file'] = features_df['file_content'].notna()
         features_df['is_fork'].fillna(False, inplace=True)
+        features_df['dominant_language'].fillna('', inplace=True)
 
         features_df.fillna({
             'description': '',
@@ -269,6 +317,9 @@ def create_project_repos_description_features_asset(env_prefix: str):
 
         for feature in all_feature_names:
             features_df[feature] = False
+
+        # initialize the readme is single header boolean
+        features_df['readme_is_single_header'] = False
         
         context.log.info(f"Initialized {len(all_feature_names)} total feature columns.")
 
@@ -290,6 +341,22 @@ def create_project_repos_description_features_asset(env_prefix: str):
             features_df[feature_name] = in_description | in_readme
         context.log.info(f"Generated {len(KEYWORD_FEATURE_MAP)} boolean feature columns from description and readme.")
 
+        # Generate the new single-header readme feature ---
+        context.log.info("Checking for READMEs that only contain a single header...")
+        # A vectorized approach for performance:
+        # 1. Strip all leading/trailing whitespace from the readme content.
+        # 2. Check for three conditions:
+        #    a. The content is not empty.
+        #    b. The content does NOT contain any newline characters (it's a single line).
+        #    c. The content starts with a '#' character.
+        stripped_readme = features_df['readme_content'].str.strip()
+        is_not_empty = stripped_readme != ''
+        is_single_line = ~stripped_readme.str.contains('\n', na=False)
+        starts_with_hash = stripped_readme.str.startswith('#', na=False)
+        
+        features_df['readme_is_single_header'] = is_not_empty & is_single_line & starts_with_hash
+        context.log.info(f"Identified {features_df['readme_is_single_header'].sum()} repos with single-header READMEs.")
+
         # Generate features from Package Manager Files
         context.log.info("Generating features from package manager files...")
         for file_pattern, mappings in PACKAGE_MANAGER_FEATURE_MAP_BY_FILE.items():
@@ -310,13 +377,13 @@ def create_project_repos_description_features_asset(env_prefix: str):
         context.log.info("Aggregating feature data to one row per repository.")
         
         # Define aggregation functions. 'any' acts as a logical OR for boolean columns.
-        agg_funcs = { 'data_timestamp': 'first', 'is_fork': 'first' }
-        feature_and_flag_cols = list(all_feature_names) + ['has_readme', 'has_description', 'has_package_file']
+        agg_funcs = { 'data_timestamp': 'first', 'is_fork': 'first', 'dominant_language': 'first' }
+        feature_and_flag_cols = list(all_feature_names) + ['has_readme', 'has_description', 'has_package_file', 'readme_is_single_header']
         for col in feature_and_flag_cols:
              agg_funcs[col] = 'any'
         
         # Select only the columns needed for aggregation
-        cols_to_agg = ['repo', 'data_timestamp', 'is_fork'] + feature_and_flag_cols
+        cols_to_agg = ['repo', 'data_timestamp', 'is_fork', 'dominant_language'] + feature_and_flag_cols
         final_features_df = features_df[cols_to_agg].groupby('repo').agg(agg_funcs).reset_index()
 
         context.log.info(f"Aggregation complete. Result has {len(final_features_df)} unique repos.")
@@ -338,20 +405,22 @@ def create_project_repos_description_features_asset(env_prefix: str):
                 final_features_df.to_sql(
                     output_table_name,
                     conn,
-                    schema=clean_schema,
+                    schema=raw_schema,
                     if_exists='replace',
                     index=False,
                     dtype=output_dtype_mapping
                 )
-                context.log.info(f"Successfully wrote {len(final_features_df)} rows with features to {clean_schema}.{output_table_name}")
+                context.log.info(f"Successfully wrote {len(final_features_df)} rows with features to {raw_schema}.{output_table_name}")
 
                 # add placeholder columns for prediction fields
-                conn.execute(text(f"ALTER TABLE {clean_schema}.{output_table_name} ADD COLUMN predicted_is_scaffold boolean"))
-                conn.execute(text(f"ALTER TABLE {clean_schema}.{output_table_name} ADD COLUMN predicted_is_educational boolean"))
-                conn.execute(text(f"ALTER TABLE {clean_schema}.{output_table_name} ADD COLUMN predicted_is_dev_tooling boolean"))
+                conn.execute(text(f"ALTER TABLE {raw_schema}.{output_table_name} ADD COLUMN predicted_is_scaffold boolean"))
+                conn.execute(text(f"ALTER TABLE {raw_schema}.{output_table_name} ADD COLUMN predicted_is_educational boolean"))
+                conn.execute(text(f"ALTER TABLE {raw_schema}.{output_table_name} ADD COLUMN predicted_is_dev_tooling boolean"))
+                conn.execute(text(f"ALTER TABLE {raw_schema}.{output_table_name} ADD COLUMN predicted_is_app boolean"))
+                conn.execute(text(f"ALTER TABLE {raw_schema}.{output_table_name} ADD COLUMN predicted_is_infrastructure boolean"))
 
         except Exception as e:
-            context.log.error(f"Failed to write features to {clean_schema}.{output_table_name}: {e}")
+            context.log.error(f"Failed to write features to {raw_schema}.{output_table_name}: {e}")
             raise
 
         # Metadata for Dagster UI
@@ -365,7 +434,7 @@ def create_project_repos_description_features_asset(env_prefix: str):
             metadata={
                 "row_count": dg.MetadataValue.int(row_count),
                 "num_features_generated": dg.MetadataValue.int(len(KEYWORD_FEATURE_MAP) + 1),
-                "output_table": dg.MetadataValue.text(f"{clean_schema}.{output_table_name}"),
+                "output_table": dg.MetadataValue.text(f"{raw_schema}.{output_table_name}"),
                 "preview": dg.MetadataValue.md(preview_df[actual_preview_columns].to_markdown(index=False))
             }
         )
