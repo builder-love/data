@@ -7,7 +7,8 @@ from dagster_pipelines.resources import (
     dbt_stg_resource,
     dbt_prod_resource,
     active_env_config_resource,
-    electric_capital_ecosystems_repo
+    electric_capital_ecosystems_repo,
+    gcs_storage_client_resource
 )
 # import assets from assets.py
 from dagster_pipelines.assets import ( # Adjust module path if they are in different files
@@ -32,7 +33,8 @@ from dagster_pipelines.assets import ( # Adjust module path if they are in diffe
 )
 # import assets from features.py
 from dagster_pipelines.features import (
-    create_project_repos_description_features_asset
+    create_project_repos_description_features_asset,
+    create_project_repos_embeddings_asset
 )
 # import assets from models.py
 from dagster_pipelines.models import (
@@ -112,6 +114,7 @@ common_asset_creators = {
     "project_repos_app_dev_framework_files": create_project_repos_app_dev_framework_files_asset,
     "project_repos_frontend_framework_files": create_project_repos_frontend_framework_files_asset,
     "project_repos_description_features": create_project_repos_description_features_asset,
+    "project_repos_embeddings": create_project_repos_embeddings_asset,
     "education_model_predictions": create_education_model_predictions_asset,
     "scaffold_model_predictions": create_scaffold_model_predictions_asset,
     "developer_tooling_model_predictions": create_developer_tooling_model_predictions_asset,
@@ -252,7 +255,10 @@ prod_specific_defs = Definitions(
         "active_dbt_runner": dbt_prod_resource,  # Generic ops use PROD dbt runner
         "dbt_stg_resource": dbt_stg_resource,    # For stg_dbt_assets or stg-specific jobs
         "dbt_prod_resource": dbt_prod_resource,   # For prod_dbt_assets or prod-specific jobs
-        "electric_capital_ecosystems_repo": electric_capital_ecosystems_repo
+        "electric_capital_ecosystems_repo": electric_capital_ecosystems_repo,
+        "gcs_storage_client_resource": gcs_storage_client_resource.configured({
+            "gcp_keyfile_path": os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        })
     },
     assets=prod_prefixed_common_assets + list(prod_dbt_assets_with_resource),
     jobs=prod_jobs_list,
@@ -274,7 +280,10 @@ stg_specific_defs = Definitions(
         "active_dbt_runner": dbt_stg_resource,   # Generic ops use STG dbt runner
         "dbt_stg_resource": dbt_stg_resource,    # For stg_dbt_assets or stg-specific jobs
         "dbt_prod_resource": dbt_prod_resource,   # Still available if needed, though less common for stg defs
-        "electric_capital_ecosystems_repo": electric_capital_ecosystems_repo
+        "electric_capital_ecosystems_repo": electric_capital_ecosystems_repo,
+        "gcs_storage_client_resource": gcs_storage_client_resource.configured({
+            "gcp_keyfile_path": os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        })
     },
     assets=stg_prefixed_common_assets + list(stg_dbt_assets_with_resource),
     jobs=stg_jobs_list,

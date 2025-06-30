@@ -2,7 +2,7 @@ load_from:
   - python_module:
       module_name: dagster_pipelines.definitions
       attribute: prod_specific_defs
-      location_name: prod_workspace 
+      location_name: prod_workspace
 
   - python_module:
       module_name: dagster_pipelines.definitions

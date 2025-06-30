@@ -11,6 +11,8 @@ setup(
         "psycopg2-binary",
         "sqlalchemy",
         "scikit-learn",
+        "sentence_transformers",
+        "gcsfs"
     ],
     extras_require={"dev": ["dagster-webserver", "pytest"]},
 )

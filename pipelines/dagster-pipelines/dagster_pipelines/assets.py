@@ -3386,6 +3386,7 @@ def create_project_repos_description_asset(env_prefix: str):
                     if repo_url not in processed_in_batch:
                         results[repo_url] = None
                         print(f"adding repo to results after max retries, or was invalid url: {repo_url}")
+                        processed_in_batch.add(repo_url)
 
                 # calculate the time it takes to process the batch
                 end_time = time.time()
@@ -3622,7 +3623,7 @@ def create_project_repos_readmes_asset(env_prefix: str):
             api_url = "https://api.github.com/graphql"
             headers = {"Authorization": f"bearer {gh_pat_token}"}
             results: dict[str, tuple[str | None, bool]] = {} 
-            batch_size = 50 
+            batch_size = 55
             
             count_403_errors = 0
             count_502_errors = 0
@@ -3675,7 +3676,7 @@ def create_project_repos_readmes_asset(env_prefix: str):
                 
                 context.log.info(f"Executing GitHub GraphQL batch query for {len(final_query_parts)} repos.")
 
-                max_retries = 5
+                max_retries = 7
                 base_delay = 2
 
                 for attempt in range(max_retries):
@@ -3684,9 +3685,11 @@ def create_project_repos_readmes_asset(env_prefix: str):
                         response.raise_for_status()
                         data = response.json()
 
+                        # Handle errors, but don't immediately fail the whole batch for NOT_FOUND errors.
                         if 'errors' in data and data['errors']:
                             is_rate_limited = False
                             for error in data['errors']:
+                                # Log all GraphQL errors for visibility
                                 context.log.warning(f"GitHub GraphQL Error: {error.get('message', str(error))}")
                                 if error.get('type') == 'RATE_LIMITED':
                                     is_rate_limited = True
@@ -3698,15 +3701,7 @@ def create_project_repos_readmes_asset(env_prefix: str):
                                     break 
                             if is_rate_limited:
                                 continue 
-                            else: 
-                                # NEW, SIMPLER LOGIC: Identify and log the URLs in the failing batch
-                                failing_urls = list(repo_url_to_query_idx_map.keys())
-                                context.log.warning(f"Non-retryable GraphQL error for batch. Repos in this batch were: {failing_urls}")
-                                for repo_url_original, query_idx in repo_url_to_query_idx_map.items():
-                                     if repo_url_original not in processed_in_batch: 
-                                        results[repo_url_original] = (None, False)
-                                        processed_in_batch.add(repo_url_original)
-                                break 
+                            # if other errors (like NOT_FOUND) exist, do not break. Handle them in the data step
 
 
                         if 'data' in data:
@@ -3715,9 +3710,10 @@ def create_project_repos_readmes_asset(env_prefix: str):
                                     continue 
 
                                 repo_key = f'repo{query_idx}'
-                                repo_api_data = data['data'].get(repo_key)
+                                repo_api_data = data['data'].get(repo_key) # This will be None if the repo was not found
                                 raw_readme_content = None
 
+                                # Run the logic if the repo was found and data is not null
                                 if repo_api_data:
                                     if repo_api_data.get('readmeMD') and repo_api_data['readmeMD'].get('text') is not None:
                                         raw_readme_content = repo_api_data['readmeMD']['text']
@@ -3739,13 +3735,15 @@ def create_project_repos_readmes_asset(env_prefix: str):
                                             log_msg += " (truncated)"
                                         context.log.debug(log_msg)
                                 else:
-                                    context.log.debug(f"No data returned for GitHub repo {repo_url_original} in batch response. Storing None.")
+                                    context.log.debug(f"No data returned for GitHub repo {repo_url_original} in batch response (repo url may not be active or not found). Storing None.")
                                     results[repo_url_original] = (None, False)
-                                processed_in_batch.add(repo_url_original)
+                                processed_in_batch.add(repo_url_original) # Mark as processed whether successful or not
+
+                            # If we successfully processed the data part of the response, we can exit the retry loop.
                             break 
 
                     except requests.exceptions.HTTPError as e:
-                        context.log.debug(f"HTTPError on attempt {attempt+1} for GitHub batch: {e}. Status: {e.response.status_code}")
+                        context.log.warning(f"HTTPError on attempt {attempt+1} for GitHub batch: {e}. Status: {e.response.status_code}")
                         if e.response.status_code in (502, 504):
                             count_502_errors += 1
                             delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
@@ -3759,34 +3757,27 @@ def create_project_repos_readmes_asset(env_prefix: str):
                             context.log.warning(f"GitHub API 403/429 error. Retrying in {delay:.2f}s...")
                             time.sleep(delay)
                         else:
-                            context.log.debug(f"Unhandled HTTPError for GitHub batch, not retrying this batch. Error: {e}")
-                            for repo_url_original in repo_url_to_query_idx_map.keys(): 
-                                 if repo_url_original not in processed_in_batch:
-                                    results[repo_url_original] = (None, False)
-                                    processed_in_batch.add(repo_url_original)
+                            context.log.warning(f"Unhandled HTTPError for GitHub batch, not retrying this batch. Error: {e}")
+                            # handle the missing repo url in cleanup step below. Just break here. 
                             break 
                     except requests.exceptions.RequestException as e:
-                        context.log.debug(f"RequestException on attempt {attempt+1} for GitHub batch: {e}. Not retrying this batch.")
-                        for repo_url_original in repo_url_to_query_idx_map.keys():
-                             if repo_url_original not in processed_in_batch:
-                                results[repo_url_original] = (None, False)
-                                processed_in_batch.add(repo_url_original)
+                        context.log.warning(f"RequestException on attempt {attempt+1} for GitHub batch: {e}. Not retrying this batch.")
+                        # handle the missing repo url in cleanup step below. Just break here. 
                         break 
                     except Exception as e:
-                        context.log.debug(f"Unexpected error during GitHub API call on attempt {attempt+1}: {e}. Not retrying this batch.")
-                        for repo_url_original in repo_url_to_query_idx_map.keys():
-                             if repo_url_original not in processed_in_batch:
-                                results[repo_url_original] = (None, False)
-                                processed_in_batch.add(repo_url_original)
+                        context.log.warning(f"Unexpected error during GitHub API call on attempt {attempt+1}: {e}. Not retrying this batch.")
+                        # handle the missing repo url in cleanup step below. Just break here. 
                         break
-                
+
+                # Final check for any repos in the batch that were never processed (e.g., due to repeated HTTP errors, or other network issues)
                 for repo_url_original in batch: 
                     if repo_url_original not in processed_in_batch: 
                         context.log.debug(f"GitHub repo {repo_url_original} failed all attempts or was invalid. Storing (None, False) for README.")
                         results[repo_url_original] = (None, False)
+                        processed_in_batch.add(repo_url_original) # Ensure it's marked to avoid duplicate processing
 
                 batch_duration = time.time() - batch_start_time
-                context.log.infor(f"GitHub batch {i//batch_size + 1} processed in {batch_duration:.2f}s. Total results accumulated: {len(results)}/{len(repo_urls)}")
+                context.log.info(f"GitHub batch {i//batch_size + 1} processed in {batch_duration:.2f}s. Total results accumulated: {len(results)}/{len(repo_urls)}")
                 time.sleep(1)
 
             return results, {'count_403_errors': count_403_errors, 'count_502_errors': count_502_errors}
@@ -3795,8 +3786,7 @@ def create_project_repos_readmes_asset(env_prefix: str):
         with cloud_sql_engine.connect() as conn:
             query_text = f"""
                 SELECT repo, repo_source 
-                FROM {clean_schema}.latest_active_distinct_project_repos 
-                WHERE is_active = true
+                FROM {clean_schema}.latest_active_distinct_project_repos_with_code
             """
             result = conn.execute(text(query_text))
             repo_df = pd.DataFrame(result.fetchall(), columns=result.keys())
@@ -4046,7 +4036,9 @@ def create_project_repos_package_files_asset(env_prefix: str):
                         context.log.warning(f"Invalid GitHub URL format, skipping: {repo_url}")
                         continue
                 
-                if not query_parts: continue
+                if not query_parts: 
+                    context.log.warning(f"No query parts found for batch {i//batch_size + 1} of {len(repo_urls)//batch_size + 1}. Skipping.")
+                    continue
 
                 var_defs = ", ".join([f"$owner{k}: String!, $name{k}: String!" for k in range(len(batch))])
                 full_query = f"query ({var_defs}) {{\n" + "\n".join(query_parts) + "\n}"
@@ -4073,6 +4065,8 @@ def create_project_repos_package_files_asset(env_prefix: str):
                                                 "file_content": content
                                             })
                                             context.log.debug(f"Found '{filename}' for GitHub repo: {repo_url}")
+                                else:
+                                    context.log.warning(f"Could not find GitHub repo {repo_url} in batch response (repo url may not be active or not found). Skipping.")
                         break # Success
                     except requests.exceptions.RequestException as e:
                         context.log.warning(f"GraphQL request failed on attempt {attempt+1}: {e}")

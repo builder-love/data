@@ -11,7 +11,9 @@ dependencies = [
     "pandas",
     "sqlalchemy",
     "psycopg2-binary",
-    "scikit-learn"
+    "scikit-learn",
+    "sentence_transformers",
+    "gcsfs"
 ]
 
 [project.optional-dependencies]

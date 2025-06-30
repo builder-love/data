@@ -5,6 +5,97 @@ import dagster as dg
 from dagster import AssetKey, AssetIn
 from sqlalchemy import text
 import sqlalchemy
+from sentence_transformers import SentenceTransformer
+import math
+import numpy as np
+import gc
+
+def aggregate_corpus_text(features_df: pd.DataFrame, context: dg.OpExecutionContext) -> pd.DataFrame:
+    """
+    Takes the raw, multi-row DataFrame and aggregates text columns into one row per repo.
+    """
+    context.log.info(f"Aggregating text data for {features_df['repo'].nunique()} unique repos...")
+
+    # Handle missing data 
+    text_cols_to_agg = ['description', 'readme_content', 'file_content']
+    features_df[text_cols_to_agg] = features_df[text_cols_to_agg].fillna('')
+
+    agg_funcs = {
+        'description': 'first',
+        'readme_content': 'first',
+        'file_content': ' '.join
+    }
+    corpus_df = features_df.groupby('repo').agg(agg_funcs).reset_index()
+    context.log.info(f"Text aggregation complete. Created corpus_df with {len(corpus_df)} rows.")
+    return corpus_df
+
+
+def generate_embeddings(corpus_df: pd.DataFrame, context: dg.OpExecutionContext) -> pd.DataFrame:
+    """
+    Takes an aggregated DataFrame, creates a corpus, processes it in batches,
+    and returns embeddings with structured progress logging.
+    """
+    context.log.info("Preparing corpus for embedding generation...")
+    # Combine the aggregated columns into a single text document per row
+    corpus_series = (
+        corpus_df['description'] + ' ' +
+        corpus_df['readme_content'] + ' ' +
+        corpus_df['file_content']
+    ).str.replace(r'\s+', ' ', regex=True).str.strip()
+
+    if corpus_series.empty or not corpus_series.any():
+        context.log.warning("Corpus is empty after combining text. No embeddings will be generated.")
+        return pd.DataFrame()
+
+    corpus = corpus_series.tolist()
+    repo_list = corpus_df['repo'].tolist() # Get repo names for the final DataFrame
+
+    # Corpus is in a Python list; no longer need the DataFrame that holds the same text data. 
+    # Delete it before starting the memory-intensive encoding.
+    context.log.info(f"Dropping corpus_df from memory before starting model encoding...")
+    del corpus_df
+    del corpus_series
+    gc.collect()
+    context.log.info("Memory from corpus_df has been released.")
+    
+    context.log.info(f"Successfully created a corpus with {len(corpus)} documents.")
+    
+    # Load the model
+    model = SentenceTransformer('all-mpnet-base-v2')
+
+    # Define a batch size
+    batch_size = 128
+    all_embeddings = []
+
+    context.log.info(f"Starting embedding generation with batch size {batch_size}...")
+    
+    total_batches = math.ceil(len(corpus) / batch_size)
+
+    for i in range(0, len(corpus), batch_size):
+        # Get the current batch of text
+        batch = corpus[i:i + batch_size]
+        
+        # Generate embeddings for the batch. 
+        batch_embeddings = model.encode(batch, show_progress_bar=False)
+        all_embeddings.append(batch_embeddings)
+
+        # Log structured progress to the Dagster UI
+        current_batch_num = (i // batch_size) + 1
+        context.log.info(f"Processed batch {current_batch_num} of {total_batches}...")
+
+    context.log.info("Embedding generation complete. Concatenating results.")
+
+    # Combine the list of batch embeddings into a single numpy array
+    embeddings = np.vstack(all_embeddings)
+
+    # create a dataframe with the embeddings
+    embeddings_df = pd.DataFrame(embeddings, columns=[f'embedding_{i}' for i in range(embeddings.shape[1])])
+    
+    # Add the repo column back for merging
+    embeddings_df['repo'] = repo_list
+    
+    context.log.info(f"Finished generating embeddings. Final shape: {embeddings_df.shape}")
+    return embeddings_df
 
 # Define the keyword groups and their corresponding feature column names
 KEYWORD_FEATURE_MAP = {
@@ -336,9 +427,9 @@ def create_project_repos_description_features_asset(env_prefix: str):
         context.log.info("Generating features from description and README...")
         for feature_name, keywords in KEYWORD_FEATURE_MAP.items():
             pattern = r"\b(" + "|".join(re.escape(kw) for kw in keywords) + r")\b"
-            in_description = features_df['description'].str.contains(pattern, case=False, regex=True)
-            in_readme = features_df['readme_content'].str.contains(pattern, case=False, regex=True)
-            features_df[feature_name] = in_description | in_readme
+            # Create one search text column, then search once
+            search_text = features_df['description'] + ' ' + features_df['readme_content']
+            features_df[feature_name] = search_text.str.contains(pattern, case=False, regex=True)
         context.log.info(f"Generated {len(KEYWORD_FEATURE_MAP)} boolean feature columns from description and readme.")
 
         # Generate the new single-header readme feature ---
@@ -388,14 +479,54 @@ def create_project_repos_description_features_asset(env_prefix: str):
 
         context.log.info(f"Aggregation complete. Result has {len(final_features_df)} unique repos.")
 
+        # generate semantic embeddings
+        try:
+            context.log.info("Aggregating corpus text...")
+            corpus_df = aggregate_corpus_text(features_df, context) # Use the original raw df
+
+            # The raw features_df is now redundant. Delete it to free up memory.
+            context.log.info(f"Dropping raw features_df from memory to conserve resources...")
+            del features_df
+            gc.collect() # Ask the garbage collector to free up the memory now
+            context.log.info("Memory from raw features_df has been released.")
+
+            context.log.info("Generating semantic embeddings...")
+            embeddings_df = generate_embeddings(corpus_df, context)
+        except Exception as e:
+            context.log.error(f"Failed during embedding generation: {e}")
+            raise
+
+        # merge all features together
+        if embeddings_df.empty:
+            context.log.info("No embeddings generated. No features to merge.")
+            raise
+
+        context.log.info("Merging keyword features with semantic embeddings...")
+        final_features_df = pd.merge(final_features_df, embeddings_df, on='repo', how='left')
+
+        # Fill any NaNs created if a repo had no text for embeddings
+        embedding_cols = [col for col in final_features_df if col.startswith('embedding_')]
+        final_features_df[embedding_cols] = final_features_df[embedding_cols].fillna(0)
+        context.log.info(f"Merged {len(embedding_cols)} embedding columns into final_features_df.")
+        
+        context.log.info(f"Final combined feature set created with {len(final_features_df)} rows.")
+
         # Define dtypes for the output table
         output_dtype_mapping = {
             'repo': sqlalchemy.types.Text,
             'data_timestamp': sqlalchemy.types.TIMESTAMP(timezone=False),
         }
         for col in final_features_df.columns:
-            if col not in output_dtype_mapping and final_features_df[col].dtype == 'bool':
+            if col in output_dtype_mapping:
+                continue # Skip already defined columns
+
+            # Handle boolean features
+            if final_features_df[col].dtype == 'bool':
                 output_dtype_mapping[col] = sqlalchemy.types.Boolean
+            # Handle embedding features
+            elif pd.api.types.is_float_dtype(final_features_df[col]):
+                # Use FLOAT or REAL for efficiency over NUMERIC/DECIMAL
+                output_dtype_mapping[col] = sqlalchemy.types.FLOAT
 
         # Write the augmented DataFrame to the new table
         try:
@@ -430,13 +561,129 @@ def create_project_repos_description_features_asset(env_prefix: str):
         preview_columns = ['repo', 'has_readme'] + list(KEYWORD_FEATURE_MAP.keys())[:4]
         actual_preview_columns = [col for col in preview_columns if col in preview_df.columns]
 
+        # get count of columns in the final_features_df
+        num_features_generated = len(final_features_df.columns) - 10 # subtract 10 for the non-feature columns
+
         return dg.MaterializeResult(
             metadata={
                 "row_count": dg.MetadataValue.int(row_count),
-                "num_features_generated": dg.MetadataValue.int(len(KEYWORD_FEATURE_MAP) + 1),
+                "num_features_generated": dg.MetadataValue.int(num_features_generated),
                 "output_table": dg.MetadataValue.text(f"{raw_schema}.{output_table_name}"),
                 "preview": dg.MetadataValue.md(preview_df[actual_preview_columns].to_markdown(index=False))
             }
         )
 
     return _project_repos_description_features_env_specific
+
+
+# create corpus text and pass to akash container
+def create_project_repos_embeddings_asset(env_prefix: str):
+    """
+    Factory function to create an asset that generates boolean features
+    from repository descriptions and READMEs based on keyword matching.
+    The primary source is the latest_active_distinct_project_repos table.
+    """
+
+    @dg.asset(
+        key_prefix=env_prefix,
+        name="project_repos_embeddings",
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "gcs_storage_client_resource"},
+        group_name="feature_engineering",
+        description="Generates semantic embeddings from repository descriptions and READMEs.",
+        tags={"feature_engineering": "True"}
+    )
+    def _project_repos_embeddings_env_specific(context: dg.OpExecutionContext) -> dg.MaterializeResult:
+        cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+        env_config = context.resources.active_env_config
+        clean_schema = env_config["clean_schema"]
+
+        # cloud storage info
+        bucket_name = "bl-repo-corpus-public"
+        gcs_client = context.resources.gcs_storage_client_resource
+        bucket = gcs_client.bucket(bucket_name)
+
+        # cloud sql info
+        active_repos_table = "latest_active_distinct_project_repos_with_code"
+        description_table = "latest_project_repos_description"
+        readme_table = "latest_project_repos_readmes"
+        package_files_table = "latest_project_repos_package_files"
+
+        context.log.info(f"Process is running in {env_config['env']} environment.")
+        context.log.info(f"Using '{active_repos_table}' as the base and joining descriptions and READMEs.")
+
+        # Read the input tables by joining descriptions and readmes to the active repos list
+        try:
+            with cloud_sql_engine.connect() as conn:
+                query = text(f"""
+                with repo_data as (
+                    SELECT
+                        a.repo,
+                        MAX(a.data_timestamp) as data_timestamp,
+                        MAX(d.description) as description,
+                        MAX(r.readme_content) as readme_content,
+                        -- Use STRING_AGG to concatenate all non-null file contents for each repo,
+                        -- separated by a space. This correctly builds the corpus.
+                        STRING_AGG(p.file_content, ' ') as file_content
+                    FROM {clean_schema}.{active_repos_table} AS a
+                    LEFT JOIN {clean_schema}.{description_table} AS d ON a.repo = d.repo
+                    LEFT JOIN {clean_schema}.{readme_table} AS r ON a.repo = r.repo
+                    LEFT JOIN {clean_schema}.{package_files_table} AS p ON a.repo = p.repo
+                    GROUP BY a.repo
+                )
+                select 
+                    repo,
+                    description || ' ' || readme_content || ' ' || file_content as corpus_text
+                from repo_data
+                where description is not null or readme_content is not null or file_content is not null
+                """)
+
+                corpus_df = pd.read_sql_query(query, conn)
+            context.log.info(f"Successfully read {len(corpus_df)} rows from '{active_repos_table}'.")
+        except Exception as e:
+            context.log.error(f"Failed to read and join tables: {e}")
+            raise
+
+        if corpus_df.empty:
+            context.log.warning(f"No data found in {clean_schema}.{active_repos_table}. No features to generate.")
+            return dg.MaterializeResult(
+                metadata={
+                    "row_count": 0,
+                    "preview": dg.MetadataValue.md("Input table was empty. No features generated.")
+                }
+            )
+
+        # fill na values
+        corpus_df['corpus_text'] = corpus_df['corpus_text'].fillna('')
+
+        # Check the size of the final DataFrame before passing it on
+        corpus_df_size_bytes = corpus_df.memory_usage(deep=True).sum()
+        corpus_df_size_mb = corpus_df_size_bytes / (1024 * 1024)
+        
+        context.log.info(f"Final aggregated corpus DataFrame in-memory size: {corpus_df_size_mb:.2f} MB")
+
+        blob_name = f"embeddings_data/{context.run_id}.parquet" # Ensure the extension is .parquet
+
+        # create the blob
+        blob = bucket.blob(blob_name)
+
+        context.log.info(f"Attempting to save DataFrame to gs://{bucket_name}/{blob_name}")
+
+        # Serialize the DataFrame to a Parquet object in memory.
+        # When called with no path, to_parquet() returns a bytes object.
+        parquet_bytes = corpus_df.to_parquet(engine='pyarrow')
+
+        # Upload the raw bytes to the blob.
+        # We use a generic content type for binary data.
+        blob.upload_from_string(parquet_bytes, content_type='application/octet-stream')
+
+        context.log.info(f"Successfully saved corpus file to GCS.")
+
+        # You can return metadata or the GCS path for downstream assets
+        return dg.MaterializeResult(
+            metadata={
+                "gcs_path": dg.MetadataValue.text(f"gs://{bucket_name}/{blob_name}"),
+                "num_rows": dg.MetadataValue.int(len(corpus_df))
+            }
+        )
+
+    return _project_repos_embeddings_env_specific

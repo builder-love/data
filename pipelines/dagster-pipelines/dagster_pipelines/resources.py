@@ -3,6 +3,8 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from dagster import resource, EnvVar
 from dagster_dbt import DbtCliResource
+from google.cloud import storage
+from google.auth.exceptions import DefaultCredentialsError
 
 # define the cloud sql postgres resource
 @resource(
@@ -97,3 +99,27 @@ def electric_capital_ecosystems_repo():
         "output_filename": "exports.jsonl",
         "output_filepath": os.path.join(os.environ.get("DAGSTER_HOME"), "crypto-ecosystems", "crypto-ecosystems","exports.jsonl")
     }
+
+# google cloud storage resource
+@resource(
+    config_schema={
+        "gcp_keyfile_path": str
+    },
+    description="A GCS client that authenticates using a specific service account key file."
+)
+def gcs_storage_client_resource(context):
+    keyfile_path = context.resource_config["gcp_keyfile_path"]
+    context.log.info(f"Authenticating GCS client using key file: {keyfile_path}")
+
+    try:
+        storage_client = storage.Client.from_service_account_json(keyfile_path)
+        # Verify connection by listing buckets (optional but good practice)
+        storage_client.list_buckets(max_results=1) 
+        context.log.info("GCS client created and authenticated successfully.")
+        return storage_client
+    except FileNotFoundError:
+        context.log.error(f"The specified GCP key file was not found at: {keyfile_path}")
+        raise
+    except exceptions.DefaultCredentialsError as e:
+        context.log.error(f"Credentials error with key file {keyfile_path}: {e}")
+        raise
