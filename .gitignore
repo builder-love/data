@@ -182,3 +182,4 @@ cython_debug/
 
 # akash
 deploy.yaml
+pipelines/dagster-pipelines/dagster_pipelines/akash_embeddings/deploy.yaml
