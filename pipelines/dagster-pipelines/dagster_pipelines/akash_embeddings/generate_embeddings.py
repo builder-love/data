@@ -18,7 +18,7 @@ def main():
     """
     logging.info("Starting embedding generation process.")
 
-    # --- 1. Configuration from Environment Variables ---
+    # Configuration from Environment Variables
     gcs_bucket_name = os.environ.get("GCS_BUCKET")
     input_parquet_path = os.environ.get("INPUT_PARQUET_PATH")
     output_pickle_path = os.environ.get("OUTPUT_PICKLE_PATH")
@@ -28,7 +28,7 @@ def main():
         logging.error("Missing one or more environment variables: GCS_BUCKET, INPUT_PARQUET_PATH, OUTPUT_PICKLE_PATH")
         return
 
-    # --- 2. Download Data from GCS ---
+    # Download Data from GCS
     storage_client = storage.Client()
     bucket = storage_client.bucket(gcs_bucket_name)
     
@@ -46,15 +46,15 @@ def main():
         logging.error("Parquet file must contain a 'corpus_text' column.")
         return
         
-    # --- 3. Load Model and Generate Embeddings ---
+    # Load Model and Generate Embeddings
     logging.info(f"Loading SentenceTransformer model: {model_name}")
     model = SentenceTransformer(model_name)
     logging.info("Model loaded.")
 
     corpus = df['corpus_text'].tolist()
-    repo_urls = df['repo'].tolist()
+    repo = df['repo'].tolist()
     
-    # **UPDATED**: Process in batches with explicit logging
+    # Process in batches with explicit logging
     batch_size = 128 
     num_batches = (len(corpus) + batch_size - 1) // batch_size
     all_embeddings = []
