@@ -69,21 +69,33 @@
         SELECT data_timestamp AS load_timestamps
         FROM raw_data_timestamps
         where data_timestamp >= '{{ max_clean_timestamp }}'::timestamp + INTERVAL '20 days'
-        AND record_count <= ({{ mean_count }} * 1.5)
-        AND record_count >= ({{ mean_count }} * 0.5)
+    ),
+
+    language_counts as (
+        select 
+        dominant_language,
+        count(*) developer_count,
+        max(data_timestamp) data_timestamp
+        FROM {{ ref('latest_top_contributors') }} po
+        WHERE po.data_timestamp in (select load_timestamps from load_timestamps)
+        and dominant_language is not NULL
+        group by 1
+        order by 2 desc
+    ),
+
+    language_counts_with_row_count as (
+        select *,
+        count(*) over () as row_count
+        from language_counts
     )
 
     select 
-    dominant_language,
-    count(*) developer_count,
-    max(data_timestamp) data_timestamp
-    FROM
-        {{ ref('latest_top_contributors') }} po
+        dominant_language,
+        developer_count,
+        data_timestamp
+    from language_counts_with_row_count
+    where row_count <= ({{ mean_count }} * 1.5) and row_count >= ({{ mean_count }} * 0.5)
 
-    WHERE po.data_timestamp in (select load_timestamps from load_timestamps)
-    and dominant_language is not NULL
-    group by 1
-    order by 2 desc
 
 {% else %}
 
