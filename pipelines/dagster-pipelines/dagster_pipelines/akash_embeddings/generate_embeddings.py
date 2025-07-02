@@ -5,6 +5,8 @@ from sentence_transformers import SentenceTransformer
 from google.cloud import storage
 import logging
 import numpy as np
+import base64
+from dotenv import load_dotenv
 
 # --- Setup Logging ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -17,6 +19,28 @@ def main():
     and uploads the results back to GCS.
     """
     logging.info("Starting embedding generation process.")
+
+    # Get the base64 encoded credentials string from the environment
+    creds_base64 = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_BASE64")
+    
+    if creds_base64:
+        # Decode the base64 string
+        creds_json_str = base64.b64decode(creds_base64).decode('utf-8')
+        
+        # Write the decoded JSON to a temporary file
+        creds_file_path = "/tmp/gcs_creds.json"
+        with open(creds_file_path, "w") as f:
+            f.write(creds_json_str)
+            
+        # Set the environment variable to the path of the temporary file
+        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = creds_file_path
+        logging.info("Successfully configured Google Cloud credentials from environment variable.")
+    else:
+        logging.error("GOOGLE_APPLICATION_CREDENTIALS_BASE64 environment variable is not set.")
+        return
+
+    # Now that credentials are set, the rest of your script can run
+    load_dotenv()
 
     # Configuration from Environment Variables
     gcs_bucket_name = os.environ.get("GCS_BUCKET")
