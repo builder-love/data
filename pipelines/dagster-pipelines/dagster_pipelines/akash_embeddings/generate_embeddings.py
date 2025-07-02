@@ -21,6 +21,7 @@ def main():
     logging.info("Starting embedding generation process.")
 
     # Get the base64 encoded credentials string from the environment
+    logging.info("Configuring Google Cloud credentials from environment variable.")
     creds_base64 = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_BASE64")
     
     if creds_base64:
