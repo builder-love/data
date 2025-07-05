@@ -76,7 +76,8 @@ WHERE LOWER(project_title) NOT IN (
     'bridge (category)',
     'cosmos network stack',
     'polkadot network stack',
-    'evm toolkit'
+    'evm toolkit',
+    'move stack'
     )
 and report_date >= (CURRENT_DATE - INTERVAL '52 weeks')
 ),
@@ -142,6 +143,11 @@ four_week_change_project_is_fork as (
   from {{ ref('four_week_change_project_is_fork') }} f
   where data_timestamp >= (CURRENT_DATE - INTERVAL '52 weeks')
 ),
+four_week_change_project_repo_count as (
+  select f.*, (data_timestamp - (EXTRACT(ISODOW FROM data_timestamp) - 7) * interval '1 day')::date report_date
+  from {{ ref('four_week_change_project_repo_count') }} f
+  where data_timestamp >= (CURRENT_DATE - INTERVAL '52 weeks')
+),
 -- pass repo count as a reference for the chart
 normalized_project_repo_count as (
   select 
@@ -166,8 +172,9 @@ all_metrics as (
     watcher_change.data_timestamp as watcher_change_data_timestamp,
     is_fork_change.data_timestamp as is_fork_change_data_timestamp,
     r.data_timestamp as repo_data_timestamp,
+    repo_change.data_timestamp as repo_change_data_timestamp,
     GREATEST(f.data_timestamp, s.data_timestamp, cc.data_timestamp, c.data_timestamp, w.data_timestamp, is_fork.data_timestamp, commit_change.data_timestamp, contributor_change.data_timestamp, fork_change.data_timestamp, stargaze_change.data_timestamp, watcher_change.data_timestamp,
-    is_fork_change.data_timestamp, r.data_timestamp) row_data_timestamp,
+    is_fork_change.data_timestamp, repo_change.data_timestamp, r.data_timestamp) row_data_timestamp,
     f.fork_count,
     s.stargaze_count,
     cc.commit_count,
@@ -180,6 +187,7 @@ all_metrics as (
     stargaze_change.stargaze_count_pct_change_over_4_weeks,
     watcher_change.watcher_count_pct_change_over_4_weeks,
     is_fork_change.is_not_fork_ratio_pct_change_over_4_weeks,
+    repo_change.repo_count_pct_change_over_4_weeks,
     r.repo_count
 
   from project_date_series_scaffold p left join normalized_project_fork_count f 
@@ -195,7 +203,8 @@ all_metrics as (
     on p.project_title = stargaze_change.project_title and p.report_date = stargaze_change.report_date left join four_week_change_project_watcher_count watcher_change
     on p.project_title = watcher_change.project_title and p.report_date = watcher_change.report_date left join four_week_change_project_is_fork is_fork_change
     on p.project_title = is_fork_change.project_title and p.report_date = is_fork_change.report_date left join normalized_project_repo_count r
-    on p.project_title = r.project_title and p.report_date = r.report_date
+    on p.project_title = r.project_title and p.report_date = r.report_date left join four_week_change_project_repo_count repo_change
+    on p.project_title = repo_change.project_title and p.report_date = repo_change.report_date
 ),
 
 metrics_with_overall_max_ts AS (
@@ -223,7 +232,8 @@ grouped_metrics AS (
         COUNT(fork_count_pct_change_over_4_weeks) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as fork_change_grp,
         COUNT(stargaze_count_pct_change_over_4_weeks) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as stargaze_change_grp,
         COUNT(watcher_count_pct_change_over_4_weeks) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as watcher_change_grp,
-        COUNT(is_not_fork_ratio_pct_change_over_4_weeks) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as is_fork_ratio_change_grp
+        COUNT(is_not_fork_ratio_pct_change_over_4_weeks) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as is_fork_ratio_change_grp,
+        COUNT(repo_count_pct_change_over_4_weeks) OVER (PARTITION BY project_title ORDER BY report_date ROWS UNBOUNDED PRECEDING) as repo_change_grp
     FROM
         metrics_with_overall_max_ts -- Use the joined data before trying LOCF
 ),
@@ -247,7 +257,8 @@ metrics_locf AS (
         MAX(fork_count_pct_change_over_4_weeks) OVER (PARTITION BY project_title, fork_change_grp) AS fork_count_pct_change_over_4_weeks,
         MAX(stargaze_count_pct_change_over_4_weeks) OVER (PARTITION BY project_title, stargaze_change_grp) AS stargaze_count_pct_change_over_4_weeks,
         MAX(watcher_count_pct_change_over_4_weeks) OVER (PARTITION BY project_title, watcher_change_grp) AS watcher_count_pct_change_over_4_weeks,
-        MAX(is_not_fork_ratio_pct_change_over_4_weeks) OVER (PARTITION BY project_title, is_fork_ratio_change_grp) AS is_not_fork_ratio_pct_change_over_4_weeks
+        MAX(is_not_fork_ratio_pct_change_over_4_weeks) OVER (PARTITION BY project_title, is_fork_ratio_change_grp) AS is_not_fork_ratio_pct_change_over_4_weeks,
+        MAX(repo_count_pct_change_over_4_weeks) OVER (PARTITION BY project_title, repo_change_grp) AS repo_count_pct_change_over_4_weeks
     FROM
         grouped_metrics
 ),
@@ -270,6 +281,7 @@ normalized_metrics AS (
          stargaze_count_pct_change_over_4_weeks,
          watcher_count_pct_change_over_4_weeks,
          is_not_fork_ratio_pct_change_over_4_weeks,
+         repo_count_pct_change_over_4_weeks,
          (fork_count - MIN(fork_count) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(fork_count) OVER (PARTITION BY report_date) - MIN(fork_count) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_fork_count,
          (stargaze_count - MIN(stargaze_count) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(stargaze_count) OVER (PARTITION BY report_date) - MIN(stargaze_count) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_stargaze_count,
          (commit_count - MIN(commit_count) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(commit_count) OVER (PARTITION BY report_date) - MIN(commit_count) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_commit_count,
@@ -304,6 +316,7 @@ ranked_projects AS (
       stargaze_count_pct_change_over_4_weeks,
       watcher_count_pct_change_over_4_weeks,
       is_not_fork_ratio_pct_change_over_4_weeks,
+      repo_count_pct_change_over_4_weeks,
       normalized_fork_count,
       normalized_stargaze_count,
       normalized_commit_count,
@@ -352,6 +365,7 @@ final_ranking AS (
     stargaze_count_pct_change_over_4_weeks,
     watcher_count_pct_change_over_4_weeks,
     is_not_fork_ratio_pct_change_over_4_weeks,
+    repo_count_pct_change_over_4_weeks,
     normalized_fork_count,
     normalized_stargaze_count,
     normalized_commit_count,
@@ -414,6 +428,7 @@ SELECT
   stargaze_count_pct_change_over_4_weeks,
   watcher_count_pct_change_over_4_weeks,
   is_not_fork_ratio_pct_change_over_4_weeks,
+  repo_count_pct_change_over_4_weeks,
   normalized_fork_count,
   normalized_stargaze_count,
   normalized_commit_count,

@@ -50,7 +50,8 @@ where LOWER(lpr.project_title) NOT IN (
     'bridge (category)',
     'cosmos network stack',
     'polkadot network stack',
-    'evm toolkit'
+    'evm toolkit',
+    'move stack'
     )
 
 order by ltr.weighted_score_index desc

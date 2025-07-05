@@ -25,6 +25,7 @@ select
   stargaze_count_pct_change_over_4_weeks,
   watcher_count_pct_change_over_4_weeks,
   is_not_fork_ratio_pct_change_over_4_weeks,
+  repo_count_pct_change_over_4_weeks,
   normalized_fork_count,
   normalized_stargaze_count,
   normalized_commit_count,

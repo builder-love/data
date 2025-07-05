@@ -316,6 +316,10 @@ models:
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: numeric
+      - name: repo_count_pct_change_over_4_weeks
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
       - name: weighted_score
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
@@ -1161,6 +1165,10 @@ models:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: numeric
       - name: is_not_fork_ratio_pct_change_over_4_weeks
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: numeric
+      - name: repo_count_pct_change_over_4_weeks
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: numeric
