@@ -4,7 +4,7 @@
 {{ 
     config(
         materialized='view',
-        unique_key='project_title',
+        unique_key='project_title || data_timestamp',
         tags=['period_change_data']
     ) 
 }} 

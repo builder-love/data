@@ -4,7 +4,7 @@
 {{ 
     config(
         materialized='view',
-        unique_key='repo',
+        unique_key='repo || data_timestamp',
         tags=['period_change_data']
     ) 
 }} 
