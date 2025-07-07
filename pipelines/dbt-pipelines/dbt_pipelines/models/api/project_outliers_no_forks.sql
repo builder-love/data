@@ -1,4 +1,4 @@
--- models/api/project_outliers.sql
+-- models/api/project_outliers_no_forks.sql
 
 {{ 
     config(
@@ -9,5 +9,5 @@
 }} 
 
 {{ generate_project_outliers(
-    project_outliers_model='latest_top_projects_prod'
+    project_outliers_model='latest_top_projects_no_forks_prod'
 ) }}

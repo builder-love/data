@@ -1,4 +1,6 @@
--- models/clean/normalized_top_projects.sql
+-- models/clean/normalized_top_projects_no_forks.sql
+-- note, we drop commit and contributor history of forked repos; 
+-- stargaze, watcher, and fork count of the forked repo is maintained as the metric history is not maintained in the fork
 -- calculate top_project score
 -- metrics and weights include: 
 --   - total all-time commit count (.15), total all-time fork count (.15), total all-time stargaze count (.15), total all-time contributor count (.15), total all-time watcher count (.025), total all-time is_not_fork_ratio (.025)
@@ -24,9 +26,10 @@
     tags=['timestamp_normalized']
 ) }}
 
+-- reference no-forks models
 {{ generate_normalized_top_projects(
-    commit_count_model='normalized_project_commit_count',
-    contributor_count_model='normalized_project_contributor_count',
-    commit_change_model='four_week_change_project_commit_count',
-    contributor_change_model='four_week_change_project_contributor_count'
+    commit_count_model='normalized_project_commit_count_no_forks',
+    contributor_count_model='normalized_project_contributor_count_no_forks',
+    commit_change_model='four_week_change_project_commit_count_no_forks',
+    contributor_change_model='four_week_change_project_contributor_count_no_forks'
 ) }}

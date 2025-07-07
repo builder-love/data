@@ -245,6 +245,10 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 8, period: day}
+      - name: latest_top_projects_no_forks
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 8, period: day}
       - name: latest_top_project_repos
         loaded_at_field: data_timestamp
         freshness: 
@@ -410,12 +414,18 @@ sources:
       - name: normalized_top_projects_prod
         identifier: normalized_top_projects
         description: "normalized_top_projects for prod"
+      - name: normalized_top_projects_no_forks_prod
+        identifier: normalized_top_projects_no_forks
+        description: "normalized_top_projects_no_forks for prod"
       - name: normalized_contributor_dominant_language_prod
         identifier: normalized_contributor_dominant_language
         description: "normalized_contributor_dominant_language for prod"
       - name: latest_top_projects_prod
         identifier: latest_top_projects
         description: "latest_top_projects for prod"
+      - name: latest_top_projects_no_forks_prod
+        identifier: latest_top_projects_no_forks
+        description: "latest_top_projects_no_forks for prod"
       - name: latest_top_contributors_prod
         identifier: latest_top_contributors
         description: "latest_top_contributors for prod"

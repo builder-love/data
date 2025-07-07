@@ -1,4 +1,4 @@
--- models/api/top_50_projects.sql
+-- models/api/top_projects_no_forks.sql
 
 {{ 
     config(
@@ -8,6 +8,6 @@
     ) 
 }} 
 
-{{ generate_top_50_projects(
-    top_50_projects_model='latest_top_projects_prod'
+{{ generate_top_projects_view(
+    top_projects_view_model='latest_top_projects_no_forks_prod'
 ) }}

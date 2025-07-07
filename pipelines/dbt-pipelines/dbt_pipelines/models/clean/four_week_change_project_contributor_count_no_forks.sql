@@ -1,14 +1,15 @@
--- models/clean/four_week_change_project_contributor_count.sql
+-- models/clean/four_week_change_project_contributor_count_no_forks.sql
 -- the periodicity of the data is monthly so we look back one period to get the 4 week change
+-- this version drops forked repos
 
 {{ 
     config(
         materialized='view',
-        unique_key='project_title || data_timestamp',
+        unique_key='repo || data_timestamp',
         tags=['period_change_data']
     ) 
 }} 
 
 {{ generate_four_week_change_project_contributor_count(
-    contributor_count_model='normalized_project_contributor_count'
+    contributor_count_model='normalized_project_contributor_count_no_forks'
 ) }}

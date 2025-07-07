@@ -1,4 +1,5 @@
--- models/api/top_projects_trend.sql
+-- models/api/top_projects_trend_no_forks.sql
+-- This version removes forked repos
 
 {{ 
     config(
@@ -9,5 +10,5 @@
 }} 
 
 {{ generate_top_projects_trend(
-    top_projects_trend_model='normalized_top_projects_prod'
+    top_projects_trend_model='normalized_top_projects_no_forks_prod'
 ) }}
