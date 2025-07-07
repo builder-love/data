@@ -2,5 +2,6 @@ sentence-transformers
 pandas
 pyarrow
 google-cloud-storage
-pyarrow
 fastparquet
+dotenv
+numpy
