@@ -10,18 +10,18 @@
 
 {#- Define the default weights -#}
 {% set default_weights = {
-    'fork_count': 0.125,
-    'stargaze_count': 0.125,
-    'commit_count': 0.125,
-    'contributor_count': 0.125,
-    'watcher_count': 0.1,
-    'is_not_fork_ratio': 0.1,
-    'commit_count_pct_change': 0.05,
-    'contributor_count_pct_change': 0.05,
-    'fork_count_pct_change': 0.05,
-    'stargaze_count_pct_change': 0.05,
-    'watcher_count_pct_change': 0.05,
-    'is_not_fork_ratio_pct_change': 0.05
+    'fork_count': 0.15,
+    'stargaze_count': 0.15,
+    'commit_count': 0.15,
+    'contributor_count': 0.15,
+    'watcher_count': 0.125,
+    'is_not_fork_ratio': 0.125,
+    'commit_count_pct_change': 0.025,
+    'contributor_count_pct_change': 0.025,
+    'fork_count_pct_change': 0.025,
+    'stargaze_count_pct_change': 0.025,
+    'watcher_count_pct_change': 0.025,
+    'is_not_fork_ratio_pct_change': 0.025
 } %}
 
 {#- Update the defaults with any weights passed to the macro -#}
@@ -95,7 +95,8 @@ WHERE LOWER(project_title) NOT IN (
     'cosmos network stack',
     'polkadot network stack',
     'evm toolkit',
-    'move stack'
+    'move stack',
+    'solidity'
     )
 and report_date >= (CURRENT_DATE - INTERVAL '52 weeks')
 ),
@@ -305,13 +306,13 @@ normalized_metrics AS (
          (commit_count - MIN(commit_count) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(commit_count) OVER (PARTITION BY report_date) - MIN(commit_count) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_commit_count,
          (contributor_count - MIN(contributor_count) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(contributor_count) OVER (PARTITION BY report_date) - MIN(contributor_count) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_contributor_count,
          (watcher_count - MIN(watcher_count) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(watcher_count) OVER (PARTITION BY report_date) - MIN(watcher_count) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_watcher_count,
-         (MAX(is_not_fork_ratio) OVER (PARTITION BY report_date) - is_not_fork_ratio)::NUMERIC / NULLIF((MAX(is_not_fork_ratio) OVER (PARTITION BY report_date) - MIN(is_not_fork_ratio) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_is_not_fork_ratio, -- adjust the scaling function here to account for the inverse relationship between is_not_fork_ratio and project score
+         (is_not_fork_ratio - MIN(is_not_fork_ratio) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(is_not_fork_ratio) OVER (PARTITION BY report_date) - MIN(is_not_fork_ratio) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_is_not_fork_ratio, 
          (commit_count_pct_change_over_4_weeks - MIN(commit_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(commit_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date) - MIN(commit_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_commit_count_pct_change_over_4_weeks,
          (contributor_count_pct_change_over_4_weeks - MIN(contributor_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(contributor_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date) - MIN(contributor_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_contributor_count_pct_change_over_4_weeks,
          (fork_count_pct_change_over_4_weeks - MIN(fork_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(fork_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date) - MIN(fork_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_fork_count_pct_change_over_4_weeks,
          (stargaze_count_pct_change_over_4_weeks - MIN(stargaze_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(stargaze_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date) - MIN(stargaze_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_stargaze_count_pct_change_over_4_weeks,
          (watcher_count_pct_change_over_4_weeks - MIN(watcher_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(watcher_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date) - MIN(watcher_count_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_watcher_count_pct_change_over_4_weeks,
-         (MAX(is_not_fork_ratio_pct_change_over_4_weeks) OVER (PARTITION BY report_date) - is_not_fork_ratio_pct_change_over_4_weeks)::NUMERIC / NULLIF((MAX(is_not_fork_ratio_pct_change_over_4_weeks) OVER (PARTITION BY report_date) - MIN(is_not_fork_ratio_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_is_not_fork_ratio_pct_change_over_4_weeks -- adjust the scaling function here to account for the inverse relationship between is_not_fork_ratio and project score
+         (is_not_fork_ratio_pct_change_over_4_weeks - MIN(is_not_fork_ratio_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC / NULLIF((MAX(is_not_fork_ratio_pct_change_over_4_weeks) OVER (PARTITION BY report_date) - MIN(is_not_fork_ratio_pct_change_over_4_weeks) OVER (PARTITION BY report_date))::NUMERIC,0) AS normalized_is_not_fork_ratio_pct_change_over_4_weeks 
      FROM metrics_locf
      WHERE project_title IS NOT NULL and report_date > '3/1/2025' -- there is one contributor count record prior to march 2025
 ),

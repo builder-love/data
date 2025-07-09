@@ -47,7 +47,7 @@ def main():
     gcs_bucket_name = os.environ.get("GCS_BUCKET")
     input_parquet_path = os.environ.get("INPUT_PARQUET_PATH")
     output_pickle_path = os.environ.get("OUTPUT_PICKLE_PATH")
-    model_name = 'all-mpnet-base-v2'
+    model_name = 'BAAI/bge-m3'
 
     if not all([gcs_bucket_name, input_parquet_path, output_pickle_path]):
         logging.error("Missing one or more environment variables: GCS_BUCKET, INPUT_PARQUET_PATH, OUTPUT_PICKLE_PATH")
@@ -80,7 +80,7 @@ def main():
     repo = df['repo'].tolist()
     
     # Process in batches with explicit logging
-    batch_size = 128 
+    batch_size = 128
     num_batches = (len(corpus) + batch_size - 1) // batch_size
     all_embeddings = []
 
