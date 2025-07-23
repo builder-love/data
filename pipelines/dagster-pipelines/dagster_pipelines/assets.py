@@ -500,7 +500,7 @@ def create_github_project_repos_stargaze_count_asset(env_prefix: str):
 
         def get_non_github_repo_stargaze_count(repo_url, repo_source):
 
-            print(f"processing non-githubrepo: {repo_url}")
+            context.log.info(f"processing non-githubrepo: {repo_url}")
 
             # add a 1 second delay to avoid rate limiting
             # note: this is simplified solution but there are not many non-github repos
@@ -515,7 +515,7 @@ def create_github_project_repos_stargaze_count_asset(env_prefix: str):
                     if '.' in repo_slug:
                         repo_slug = repo_slug.split('.')[0]
                 except IndexError:
-                    print(f"Invalid Bitbucket URL format: {repo_url}")
+                    context.log.warning(f"Invalid Bitbucket URL format: {repo_url}")
                     return None
 
                 try:
@@ -536,13 +536,13 @@ def create_github_project_repos_stargaze_count_asset(env_prefix: str):
                     return watchers_data['size']
 
                 except requests.exceptions.RequestException as e:
-                    print(f"Error fetching data from Bitbucket API: {e}")
+                    context.log.warning(f"Error fetching data from Bitbucket API: {e}")
                     return None
                 except KeyError as e:
-                    print(f"Error: missing key in response.  Key: {e}")
+                    context.log.warning(f"Error: missing key in response.  Key: {e}")
                     return None
                 except Exception as e:
-                    print(f"An unexpected error has occurred: {e}")
+                    context.log.warning(f"An unexpected error has occurred: {e}")
                     return None
 
             elif repo_source == "gitlab":
@@ -551,7 +551,7 @@ def create_github_project_repos_stargaze_count_asset(env_prefix: str):
                     project_path = "/".join(parts[3:])
                     project_path_encoded = requests.utils.quote(project_path, safe='')
                 except IndexError:
-                    print(f"Invalid GitLab URL format: {repo_url}")
+                    context.log.warning(f"Invalid GitLab URL format: {repo_url}")
                     return None
 
                 api_url = f"https://gitlab.com/api/v4/projects/{project_path_encoded}"  
@@ -563,13 +563,13 @@ def create_github_project_repos_stargaze_count_asset(env_prefix: str):
                     # return the stargaze count
                     return response.json()['star_count']
                 except requests.exceptions.RequestException as e:
-                    print(f"Error fetching data from GitLab API: {e}")
+                    context.log.warning(f"Error fetching data from GitLab API: {e}")
                     return None
                 except KeyError as e:
-                    print(f"Error: missing key in response.  Key: {e}") 
+                    context.log.warning(f"Error: missing key in response.  Key: {e}") 
                     return None
                 except Exception as e:
-                    print(f"An unexpected error has occurred: {e}")
+                    context.log.warning(f"An unexpected error has occurred: {e}")
                     return None
             else:
                 return None
@@ -601,7 +601,7 @@ def create_github_project_repos_stargaze_count_asset(env_prefix: str):
             batch_time_history = []
 
             for i in range(0, len(repo_urls), batch_size):
-                print(f"processing batch: {i} - {i + batch_size}")
+                context.log.info(f"processing batch: {i} - {i + batch_size}")
                 # calculate the time it takes to process the batch
                 start_time = time.time()
                 batch = repo_urls[i:i + batch_size]
@@ -616,7 +616,7 @@ def create_github_project_repos_stargaze_count_asset(env_prefix: str):
                         owner = parts[-2]
                         name = parts[-1]
                     except IndexError:
-                        print(f"Invalid GitHub URL format: {repo_url}")
+                        context.log.warning(f"Invalid GitHub URL format: {repo_url}")
                         # don't return here, return errors at end of batch
                         continue
 
@@ -642,33 +642,33 @@ def create_github_project_repos_stargaze_count_asset(env_prefix: str):
                 max_retries = 8
 
                 for attempt in range(max_retries):
-                    print(f"attempt: {attempt}")
+                    context.log.info(f"attempt: {attempt}")
                     
                     try:
                         if cpu_time_used >= cpu_time_limit and real_time_used < real_time_window:
                             extra_delay = (cpu_time_used - cpu_time_limit) / 2
                             extra_delay = max(1, extra_delay)
-                            print(f"CPU time limit reached. Delaying for {extra_delay:.2f} seconds.")
+                            context.log.info(f"CPU time limit reached. Delaying for {extra_delay:.2f} seconds.")
                             time.sleep(extra_delay)
-                            print(f"resetting cpu_time_used and real_time_used to 0")
+                            context.log.info(f"resetting cpu_time_used and real_time_used to 0")
                             cpu_time_used = 0
                             real_time_used = 0
                             start_time = time.time()
                         elif real_time_used >= real_time_window and cpu_time_used < cpu_time_limit:
-                            print(f"real time limit reached without CPU time limit reached. Resetting counts.")
+                            context.log.info(f"real time limit reached without CPU time limit reached. Resetting counts.")
                             cpu_time_used = 0
                             real_time_used = 0
                         elif real_time_used >= real_time_window and cpu_time_used >= cpu_time_limit:
-                            print(f"real time limit reached. CPU time limit reached. Resetting counts.")
+                            context.log.info(f"real time limit reached. CPU time limit reached. Resetting counts.")
                             cpu_time_used = 0
                             real_time_used = 0
                         elif real_time_used < real_time_window and cpu_time_used < cpu_time_limit:
-                            print('cpu time limit not reached. Continuing...')
+                            context.log.info('cpu time limit not reached. Continuing...')
 
                         response = requests.post(api_url, json={'query': query, 'variables': variables}, headers=headers)
 
                         time_since_start = time.time() - start_time
-                        print(f"time_since_start: {time_since_start:.2f} seconds")
+                        context.log.info(f"time_since_start: {time_since_start:.2f} seconds")
                         time.sleep(3)  # Consistent delay
                         
                         # use raise for status to catch errors
@@ -676,16 +676,16 @@ def create_github_project_repos_stargaze_count_asset(env_prefix: str):
                         data = response.json()
 
                         if 'errors' in data:
-                            print(f"Status Code: {response.status_code}")
+                            context.log.info(f"Status Code: {response.status_code}")
                             # Extract rate limit information from headers
-                            print(" \n resource usage tracking:")
+                            context.log.info(" \n resource usage tracking:")
                             rate_limit_info = {
                                 'remaining': response.headers.get('x-ratelimit-remaining'),
                                 'used': response.headers.get('x-ratelimit-used'),
                                 'reset': response.headers.get('x-ratelimit-reset'),
                                 'retry_after': response.headers.get('retry-after')
                             }
-                            print(f"Rate Limit Info: {rate_limit_info}\n")
+                            context.log.info(f"Rate Limit Info: {rate_limit_info}\n")
 
                             for error in data['errors']:
                                 if error['type'] == 'RATE_LIMITED':
@@ -694,11 +694,11 @@ def create_github_project_repos_stargaze_count_asset(env_prefix: str):
                                         delay = int(reset_at) - int(time.time()) + 1
                                         delay = max(1, delay)
                                         delay = min(delay, max_delay)
-                                        print(f"Rate limited.  Waiting for {delay} seconds...")
+                                        context.log.info(f"Rate limited.  Waiting for {delay} seconds...")
                                         time.sleep(delay)
                                         continue  # Retry the entire batch
                                 else:
-                                    print(f"GraphQL Error: {error}") #Print all the errors.
+                                    context.log.info(f"GraphQL Error: {error}") #Print all the errors.
 
                         # write the url and stargaze count to the database
                         if 'data' in data:
@@ -711,28 +711,28 @@ def create_github_project_repos_stargaze_count_asset(env_prefix: str):
                                     results[repo_url] = repo_data['stargazers']['totalCount']
                                     processed_in_batch.add(repo_url)  # Mark as processed
                                 else:
-                                    print(f"repo_data is empty for repo: {repo_url}\n")
+                                    context.log.info(f"repo_data is empty for repo: {repo_url}\n")
                                     # don't return here, return errors at end of batch
                         break
 
                     except requests.exceptions.RequestException as e:
-                        print(f"there was a request exception on attempt: {attempt}\n")
-                        print(f"procesing batch: {batch}\n")
-                        print(f"Status Code: {response.status_code}")
+                        context.log.warning(f"there was a request exception on attempt: {attempt}\n")
+                        context.log.warning(f"procesing batch: {batch}\n")
+                        context.log.warning(f"Status Code: {response.status_code}")
 
                         # Extract rate limit information from headers
-                        print(" \n resource usage tracking:")
+                        context.log.warning(" \n resource usage tracking:")
                         rate_limit_info = {
                             'remaining': response.headers.get('x-ratelimit-remaining'),
                             'used': response.headers.get('x-ratelimit-used'),
                             'reset': response.headers.get('x-ratelimit-reset'),
                             'retry_after': response.headers.get('retry-after')
                         }
-                        print(f"Rate Limit Info: {rate_limit_info}\n")
+                        context.log.warning(f"Rate Limit Info: {rate_limit_info}\n")
 
-                        print(f"the error is: {e}\n")
+                        context.log.warning(f"the error is: {e}\n")
                         if attempt == max_retries - 1:
-                            print(f"Max retries reached or unrecoverable error for batch. Giving up.")
+                            context.log.warning(f"Max retries reached or unrecoverable error for batch. Giving up.")
                             # don't return here, return errors at end of batch
                             break
 
@@ -740,36 +740,36 @@ def create_github_project_repos_stargaze_count_asset(env_prefix: str):
                         if isinstance(e, requests.exceptions.HTTPError):
                             if e.response.status_code in (502, 504):
                                 count_502_errors += 1
-                                print(f"This process has generated {count_502_errors} 502/504 errors in total.")
+                                context.log.warning(f"This process has generated {count_502_errors} 502/504 errors in total.")
                                 delay = 1
-                                print(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
+                                context.log.warning(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
                                 time.sleep(delay)
                                 continue
                             elif e.response.status_code in (403, 429):
                                 count_403_errors += 1
-                                print(f"This process has generated {count_403_errors} 403/429 errors in total.")
+                                context.log.warning(f"This process has generated {count_403_errors} 403/429 errors in total.")
                                 retry_after = e.response.headers.get('Retry-After')
                                 if retry_after:
                                     delay = int(retry_after)
-                                    print(f"Rate limited (REST - Retry-After). Waiting for {delay} seconds...")
+                                    context.log.warning(f"Rate limited (REST - Retry-After). Waiting for {delay} seconds...")
                                     time.sleep(delay)
                                     continue
                                 else:
                                     delay = 1 * (2 ** attempt) + random.uniform(0, 1)
-                                    print(f"Rate limited (REST - Exponential Backoff). Waiting for {delay:.2f} seconds...")
+                                    context.log.warning(f"Rate limited (REST - Exponential Backoff). Waiting for {delay:.2f} seconds...")
                                     time.sleep(delay)
                                     continue
                         else:
                             delay = 1 * (2 ** attempt) + random.uniform(0, 1)
-                            print(f"Request failed: {e}. Waiting for {delay:.2f} seconds...")
+                            context.log.warning(f"Request failed: {e}. Waiting for {delay:.2f} seconds...")
                             time.sleep(delay)
 
                     except KeyError as e:
-                        print(f"KeyError: {e}. Response: {data}")
+                        context.log.warning(f"KeyError: {e}. Response: {data}")
                         # Don't append here; handle errors at the end
                         break
                     except Exception as e:
-                        print(f"An unexpected error occurred: {e}")
+                        context.log.warning(f"An unexpected error occurred: {e}")
                         # Don't append here; handle errors at the end
                         break
 
@@ -777,7 +777,7 @@ def create_github_project_repos_stargaze_count_asset(env_prefix: str):
                 for repo_url in batch:
                     if repo_url not in processed_in_batch:
                         results[repo_url] = None
-                        print(f"adding repo to results after max retries, or was invalid url: {repo_url}")
+                        context.log.warning(f"adding repo to results after max retries, or was invalid url: {repo_url}")
 
                 # calculate the time it takes to process the batch
                 end_time = time.time()
@@ -786,11 +786,11 @@ def create_github_project_repos_stargaze_count_asset(env_prefix: str):
                 real_time_used += batch_time
                 batch_time_history.append(batch_time)
                 if batch_time_history and len(batch_time_history) > 10:
-                    print(f"average batch time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
-                print(f"batch {i} - {i + batch_size} completed. Total repos to process: {len(repo_urls)}")
-                print(f"time taken to process batch {i}: {batch_time:.2f} seconds")
-                print(f"Total CPU time used: {cpu_time_used:.2f} seconds")
-                print(f"Total real time used: {real_time_used:.2f} seconds")
+                    context.log.info(f"average batch time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
+                context.log.info(f"batch {i} - {i + batch_size} completed. Total repos to process: {len(repo_urls)}")
+                context.log.info(f"time taken to process batch {i}: {batch_time:.2f} seconds")
+                context.log.info(f"Total CPU time used: {cpu_time_used:.2f} seconds")
+                context.log.info(f"Total real time used: {real_time_used:.2f} seconds")
 
             return results, {
                 'count_403_errors': count_403_errors,
@@ -802,7 +802,13 @@ def create_github_project_repos_stargaze_count_asset(env_prefix: str):
 
             # query the latest_distinct_project_repos table to get the distinct repo list
             result = conn.execute(
-                text(f"""select repo, repo_source from {clean_schema}.latest_active_distinct_project_repos where is_active = true""")
+                text(f"""
+                select 
+                    repo, 
+                    repo_source 
+                from {clean_schema}.latest_active_distinct_project_repos 
+                where is_active = true 
+                """)
                     )
             repo_df = pd.DataFrame(result.fetchall(), columns=result.keys())
 
@@ -825,7 +831,7 @@ def create_github_project_repos_stargaze_count_asset(env_prefix: str):
 
         # if non_github_urls is not empty, get stargaze count
         if not non_github_results_df.empty:
-            print("found non-github repos. Getting repo stargaze count...")
+            context.log.info("found non-github repos. Getting repo stargaze count...")
             # apply distinct_repo_df['repo'] to get stargaze count
             non_github_results_df['stargaze_count'] = non_github_results_df.apply(
                 lambda row: get_non_github_repo_stargaze_count(row['repo'], row['repo_source']), axis=1
@@ -4367,8 +4373,6 @@ FRONTEND_CONFIG_FILES_TO_TRY = {
     "next": ["next.config.js", "next.config.ts"],
     "nuxt": ["nuxt.config.ts", "nuxt.config.js"],
     "angular": ["angular.json"],
-    # "svelte": ["svelte.config.js", "svelte.config.ts"],
-    # "remix": ["remix.config.js", "remix.config.ts"],
 }
 def create_project_repos_frontend_framework_files_asset(env_prefix: str):
     """
@@ -4417,7 +4421,7 @@ def create_project_repos_frontend_framework_files_asset(env_prefix: str):
             found_files = []
             time.sleep(0.2)
 
-            # Use the new FRONTEND_CONFIG_FILES_TO_TRY dictionary
+            # Use the FRONTEND_CONFIG_FILES_TO_TRY dictionary
             for framework, filenames in FRONTEND_CONFIG_FILES_TO_TRY.items():
                 for filename in filenames:
                     raw_content = None
@@ -4443,7 +4447,6 @@ def create_project_repos_frontend_framework_files_asset(env_prefix: str):
                     if raw_content:
                         context.log.info(f"Found '{filename}' for {repo_source} repo: {repo_url}")
                         found_files.append({
-                            "framework_name": framework, 
                             "file_name": filename,
                             "file_content": raw_content
                         })
@@ -4463,7 +4466,7 @@ def create_project_repos_frontend_framework_files_asset(env_prefix: str):
             api_url = "https://api.github.com/graphql"
             headers = {"Authorization": f"bearer {gh_pat_token}"}
             all_found_files = []
-            batch_size = 50
+            batch_size = 35
             errors = {'count_403_errors': 0, 'count_502_errors': 0}
 
             query_objects = []
@@ -4493,9 +4496,13 @@ def create_project_repos_frontend_framework_files_asset(env_prefix: str):
                         context.log.warning(f"Invalid GitHub URL format, skipping: {repo_url}")
                         continue
                 
-                if not query_parts: continue
+                if not query_parts: 
+                    continue
                 var_defs = ", ".join([f"$owner{k}: String!, $name{k}: String!" for k in range(len(batch))])
                 full_query = f"query ({var_defs}) {{\n" + "\n".join(query_parts) + "\n}"
+                # if it is the first batch, print the full query
+                if i == 0:
+                    print(full_query)
                 
                 max_retries, base_delay = 7, 2
                 for attempt in range(max_retries):
@@ -4512,7 +4519,6 @@ def create_project_repos_frontend_framework_files_asset(env_prefix: str):
                                             content = repo_api_data[alias]['text'].replace('\x00', '')
                                             all_found_files.append({
                                                 "repo": repo_url,
-                                                "framework_name": framework, 
                                                 "file_name": filename,
                                                 "file_content": content
                                             })
@@ -4559,7 +4565,6 @@ def create_project_repos_frontend_framework_files_asset(env_prefix: str):
         try:
             dtype_mapping = {
                 'repo': sqlalchemy.types.Text,
-                'framework_name': sqlalchemy.types.Text, 
                 'file_name': sqlalchemy.types.Text,
                 'file_content': sqlalchemy.types.Text,
                 'data_timestamp': sqlalchemy.types.TIMESTAMP(timezone=False)
@@ -4571,7 +4576,7 @@ def create_project_repos_frontend_framework_files_asset(env_prefix: str):
             raise
 
         row_count = len(results_df)
-        preview_df = results_df[['repo', 'framework_name', 'file_name']].head(10)
+        preview_df = results_df[['repo', 'file_name']].head(10)
 
         return dg.MaterializeResult(
             metadata={
@@ -4583,6 +4588,163 @@ def create_project_repos_frontend_framework_files_asset(env_prefix: str):
             }
         )
     return _project_repos_frontend_framework_files_env_specific
+
+def create_project_repos_documentation_files_asset(env_prefix: str):
+    """
+    Factory function to create the project_repos_documentation_files asset.
+    This asset finds and fetches documentation files (.md, .rst) for all active repos.
+    """
+    @dg.asset(
+        key_prefix=env_prefix,
+        name="project_repos_documentation_files",
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        group_name="ingestion",
+        tags={"github_api": "True"},
+        description="""
+        This asset searches for documentation files (*.md, *.rst) across all active repositories,
+        excluding README.md, and stores their content.
+        """
+    )
+    def _project_repos_documentation_files_env_specific(context: dg.OpExecutionContext) -> dg.MaterializeResult:
+        cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+        env_config = context.resources.active_env_config
+        raw_schema = env_config["raw_schema"]
+        clean_schema = env_config["clean_schema"]
+
+        context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
+
+        gh_pat = os.environ.get("go_blockchain_ecosystem")
+        if not gh_pat:
+            context.log.warning("GitHub Personal Access Token (go_blockchain_ecosystem) not found.")
+
+        def get_documentation_files(repo_url: str, repo_source: str) -> list[dict]:
+            """
+            Fetches documentation files for a single repository based on its source.
+            Returns a list of found files, each as a dictionary.
+            """
+            found_files = []
+            headers = {}
+            if repo_source == "github" and gh_pat:
+                headers = {"Authorization": f"bearer {gh_pat}"}
+            
+            try:
+                # 1. Get the default branch for the repository
+                owner, repo_name = repo_url.rstrip('/').replace(".git", "").split('/')[-2:]
+                default_branch = "main" # Default fallback
+                
+                if repo_source == "github":
+                    api_url = f"https://api.github.com/repos/{owner}/{repo_name}"
+                    response = requests.get(api_url, headers=headers, timeout=15)
+                    if response.status_code == 200:
+                        default_branch = response.json().get("default_branch", "main")
+                    else:
+                        # Fallback for repos that may have moved or been renamed
+                        default_branch = "master"
+                # Note: GitLab and Bitbucket logic often defaults to main/master without a separate check.
+                
+                # 2. Get the recursive file tree
+                file_paths = []
+                if repo_source == "github":
+                    tree_url = f"https://api.github.com/repos/{owner}/{repo_name}/git/trees/{default_branch}?recursive=1"
+                    response = requests.get(tree_url, headers=headers, timeout=30)
+                    response.raise_for_status()
+                    tree_data = response.json().get("tree", [])
+                    file_paths = [item['path'] for item in tree_data if item['type'] == 'blob']
+
+                elif repo_source == "gitlab":
+                    project_path_encoded = requests.utils.quote(f"{owner}/{repo_name}", safe='')
+                    tree_url = f"https://gitlab.com/api/v4/projects/{project_path_encoded}/repository/tree?recursive=true&per_page=100"
+                    response = requests.get(tree_url, timeout=30)
+                    response.raise_for_status()
+                    tree_data = response.json()
+                    file_paths = [item['path'] for item in tree_data if item['type'] == 'blob']
+
+                # Bitbucket does not support a simple recursive tree API, so we skip it for this complex task.
+                # A full implementation would require manual, paginated recursion through directories.
+                elif repo_source == "bitbucket":
+                    context.log.warning(f"Skipping Bitbucket repo due to complex API for file listing: {repo_url}")
+                    return []
+                
+                # 3. Filter for documentation files and fetch content
+                for path in file_paths:
+                    path_lower = path.lower()
+                    if (path_lower.endswith(".md") or path_lower.endswith(".rst")) and path_lower != "readme.md":
+                        # Construct raw content URL
+                        content_url = ""
+                        if repo_source == "github":
+                            content_url = f"https://raw.githubusercontent.com/{owner}/{repo_name}/{default_branch}/{path}"
+                        elif repo_source == "gitlab":
+                            project_path_encoded = requests.utils.quote(f"{owner}/{repo_name}", safe='')
+                            path_encoded = requests.utils.quote(path, safe='')
+                            content_url = f"https://gitlab.com/api/v4/projects/{project_path_encoded}/repository/files/{path_encoded}/raw?ref={default_branch}"
+
+                        if content_url:
+                            time.sleep(0.1) # Rate limiting
+                            content_response = requests.get(content_url, headers=headers, timeout=20)
+                            if content_response.status_code == 200:
+                                content = content_response.text.replace('\x00', '')
+                                found_files.append({
+                                    "repo": repo_url,
+                                    "file_name": os.path.basename(path),
+                                    "file_content": content
+                                })
+                                context.log.info(f"Found '{path}' in {repo_url}")
+
+            except requests.exceptions.RequestException as e:
+                context.log.error(f"Failed to process repo {repo_url}: {e}")
+            except Exception as e:
+                context.log.error(f"An unexpected error occurred for repo {repo_url}: {e}")
+
+            return found_files
+
+        # Main asset logic
+        with cloud_sql_engine.connect() as conn:
+            repo_df = pd.DataFrame(conn.execute(text(f"SELECT repo, repo_source FROM {clean_schema}.latest_active_distinct_project_repos_with_code")).fetchall())
+
+        if repo_df.empty:
+            context.log.info("No active repositories found to process.")
+            return dg.MaterializeResult(metadata={"row_count": 0})
+
+        final_results_list = []
+        context.log.info(f"Starting documentation file fetch for {len(repo_df)} repositories...")
+        for _, row in repo_df.iterrows():
+            # Add a delay between processing each repository to respect rate limits
+            time.sleep(0.5)
+            repo_url, repo_source = row['repo'], row['repo_source']
+            final_results_list.extend(get_documentation_files(repo_url, repo_source))
+
+        if not final_results_list:
+            context.log.warning("No documentation files were found for any repository.")
+            return dg.MaterializeResult(metadata={"row_count": 0})
+
+        results_df = pd.DataFrame(final_results_list)
+        results_df['data_timestamp'] = pd.Timestamp.now(tz='UTC')
+
+        target_table_name = "latest_project_repos_documentation_files" 
+        try:
+            dtype_mapping = {
+                'repo': sqlalchemy.types.Text,
+                'file_name': sqlalchemy.types.Text,
+                'file_content': sqlalchemy.types.Text,
+                'data_timestamp': sqlalchemy.types.TIMESTAMP(timezone=False)
+            }
+            results_df.to_sql(target_table_name, cloud_sql_engine, if_exists='replace', index=False, schema=raw_schema, dtype=dtype_mapping)
+            context.log.info(f"Successfully wrote {len(results_df)} documentation file entries to {raw_schema}.{target_table_name}")
+        except Exception as e:
+            context.log.error(f"Error writing documentation files to database: {e}")
+            raise
+
+        row_count = len(results_df)
+        preview_df = results_df[['repo', 'file_name']].head(10)
+
+        return dg.MaterializeResult(
+            metadata={
+                "row_count": dg.MetadataValue.int(row_count),
+                "preview": dg.MetadataValue.md(preview_df.to_markdown(index=False)),
+                "file_types_searched": dg.MetadataValue.text("*.md, *.rst")
+            }
+        )
+    return _project_repos_documentation_files_env_specific
 
 # define the asset that gets the contributors for a repo
 # to accomodate multiple environments, we will use a factory function
