@@ -1,4 +1,4 @@
--- normalized_contributor_dominant_language.sql
+-- normalized_contributor_dominant_language_top_1000.sql
 -- create an incremental table in clean with data_timestamp intervals >20 days apart
 -- project_repos_contributors raw table
 -- 
@@ -8,5 +8,5 @@
     tags=['timestamp_normalized']
 ) }}
 
--- Call the macro without a limit
-{{ generate_normalized_contributor_dominant_language(contributor_limit=9999999) }}
+-- Call the macro with a limit of 1000
+{{ generate_normalized_contributor_dominant_language(contributor_limit=1000) }}

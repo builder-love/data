@@ -85,6 +85,14 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
+      - name: repos
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: latest_project_repo_corpus_embeddings
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
   - name: clean_schema
     database: "{{ env_var('cloud_sql_postgres_db', 'postgres') }}"
     schema: "{{ 'clean_stg' if target.name == 'stg' else 'clean' }}"
@@ -420,6 +428,9 @@ sources:
       - name: normalized_contributor_dominant_language_prod
         identifier: normalized_contributor_dominant_language
         description: "normalized_contributor_dominant_language for prod"
+      - name: normalized_contributor_dominant_language_top_1000_prod
+        identifier: normalized_contributor_dominant_language_top_1000
+        description: "normalized_contributor_dominant_language_top_1000 for prod"
       - name: latest_top_projects_prod
         identifier: latest_top_projects
         description: "latest_top_projects for prod"
@@ -450,6 +461,12 @@ sources:
       - name: latest_ranked_organizations_by_project_prod
         identifier: latest_ranked_organizations_by_project
         description: "latest_ranked_organizations_by_project for prod"
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: latest_project_repo_corpus_embeddings_prod
+        identifier: latest_project_repo_corpus_embeddings
+        description: "latest_project_repo_corpus_embeddings for prod"
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}

@@ -447,6 +447,10 @@ models:
         tests:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: text
+      - name: first_seen_timestamp
+        tests:
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
       - name: latest_data_timestamp
         tests:
           - not_null
@@ -1015,3 +1019,57 @@ models:
     tests:
       - unique_combination_of_columns:
           column_names: [project_title, report_date]
+  - name: top_1000_contributor_count_by_language
+    columns:
+      - name: dominant_language
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
+      - name: developer_count
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: latest_data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
+    tests:
+      - unique_combination_of_columns:
+          column_names: [dominant_language, latest_data_timestamp]
+  - name: contributor_count_by_language
+    columns:
+      - name: dominant_language
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
+      - name: developer_count
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: bigint
+      - name: latest_data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: text
+    tests:
+      - unique_combination_of_columns:
+          column_names: [dominant_language, latest_data_timestamp]
+  - name: project_repo_embeddings
+    columns:
+      - name: repo
+        tests:
+          - not_null
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+      - name: corpus_embedding
+    tests:
+      - unique_combination_of_columns:
+          column_names: [repo, data_timestamp]

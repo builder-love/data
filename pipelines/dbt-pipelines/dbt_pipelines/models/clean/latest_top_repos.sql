@@ -37,6 +37,7 @@ latest_four_week_change_repos_watcher_count as (
 all_metrics as (
   select 
     p.repo,
+    r.first_seen_timestamp,
     f.data_timestamp as fork_data_timestamp, 
     s.data_timestamp as stargaze_data_timestamp, 
     w.data_timestamp as watcher_data_timestamp, 
@@ -57,7 +58,8 @@ all_metrics as (
     on p.repo = w.repo left join latest_four_week_change_repos_fork_count fork_change
     on p.repo = fork_change.repo left join latest_four_week_change_repos_stargaze_count stargaze_change
     on p.repo = stargaze_change.repo left join latest_four_week_change_repos_watcher_count watcher_change
-    on p.repo = watcher_change.repo
+    on p.repo = watcher_change.repo left join {{ source('raw', 'repos') }} r
+    on p.repo = r.repo and r.is_active = true
   
   where p.is_active = true
 ),
@@ -72,6 +74,7 @@ metrics_with_overall_max_ts AS (
 normalized_metrics AS (
      SELECT
          repo,
+         first_seen_timestamp,
          data_timestamp,
          fork_count,
          stargaze_count,
@@ -91,6 +94,7 @@ normalized_metrics AS (
 ranked_projects AS (
   SELECT
       repo,
+      first_seen_timestamp,
       data_timestamp,
       fork_count,
       stargaze_count,
@@ -119,6 +123,7 @@ ranked_projects AS (
 final_ranking AS (
   SELECT
     repo,
+    first_seen_timestamp,
     data_timestamp,
     fork_count,
     stargaze_count,
@@ -145,6 +150,7 @@ final_ranking AS (
 
 SELECT
   repo,
+  first_seen_timestamp,
   data_timestamp,
   fork_count::integer,
   stargaze_count::integer,

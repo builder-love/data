@@ -8,6 +8,7 @@
 
 select 
   lpr.project_title,
+  ltr.first_seen_timestamp,
   ltr.data_timestamp,
   ltr.repo,
   ltr.fork_count,
@@ -51,7 +52,8 @@ where LOWER(lpr.project_title) NOT IN (
     'cosmos network stack',
     'polkadot network stack',
     'evm toolkit',
-    'move stack'
+    'move stack',
+    'solidity'
     )
 
 order by ltr.weighted_score_index desc

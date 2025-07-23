@@ -10,6 +10,7 @@
 
 select 
   project_title,
+  TO_CHAR(first_seen_timestamp, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS first_seen_timestamp,
   TO_CHAR(data_timestamp, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS latest_data_timestamp,
   repo,
   fork_count,
