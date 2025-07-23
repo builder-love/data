@@ -9,6 +9,8 @@ from sentence_transformers import SentenceTransformer
 import math
 import numpy as np
 import gc
+from google.cloud import storage
+import pickle
 
 def aggregate_corpus_text(features_df: pd.DataFrame, context: dg.OpExecutionContext) -> pd.DataFrame:
     """
@@ -17,7 +19,7 @@ def aggregate_corpus_text(features_df: pd.DataFrame, context: dg.OpExecutionCont
     context.log.info(f"Aggregating text data for {features_df['repo'].nunique()} unique repos...")
 
     # Handle missing data 
-    text_cols_to_agg = ['description', 'readme_content', 'file_content']
+    text_cols_to_agg = ['repo' ,'description', 'readme_content', 'file_content']
     features_df[text_cols_to_agg] = features_df[text_cols_to_agg].fillna('')
 
     agg_funcs = {
@@ -577,6 +579,7 @@ def create_project_repos_description_features_asset(env_prefix: str):
 
 
 # create corpus text and pass to akash container
+# factory function
 def create_project_repos_embeddings_asset(env_prefix: str):
     """
     Factory function to create an asset that generates boolean features
@@ -607,6 +610,8 @@ def create_project_repos_embeddings_asset(env_prefix: str):
         description_table = "latest_project_repos_description"
         readme_table = "latest_project_repos_readmes"
         package_files_table = "latest_project_repos_package_files"
+        is_fork_table = "latest_project_repos_is_fork"
+        dominant_language_table = "latest_project_repos_dominant_language"
 
         context.log.info(f"Process is running in {env_config['env']} environment.")
         context.log.info(f"Using '{active_repos_table}' as the base and joining descriptions and READMEs.")
@@ -623,16 +628,26 @@ def create_project_repos_embeddings_asset(env_prefix: str):
                         MAX(r.readme_content) as readme_content,
                         -- Use STRING_AGG to concatenate all non-null file contents for each repo,
                         -- separated by a space. This correctly builds the corpus.
-                        STRING_AGG(p.file_content, ' ') as file_content
+                        STRING_AGG(p.file_content, ' ') as file_content,
+                        MAX(f.is_fork) as is_fork,
+                        MAX(l.dominant_language) as dominant_language
                     FROM {clean_schema}.{active_repos_table} AS a
                     LEFT JOIN {clean_schema}.{description_table} AS d ON a.repo = d.repo
                     LEFT JOIN {clean_schema}.{readme_table} AS r ON a.repo = r.repo
                     LEFT JOIN {clean_schema}.{package_files_table} AS p ON a.repo = p.repo
+                    LEFT JOIN {clean_schema}.{is_fork_table} AS f ON a.repo = f.repo 
+                    LEFT JOIN {clean_schema}.{dominant_language_table} AS l ON a.repo = l.repo
                     GROUP BY a.repo
                 )
                 select 
                     repo,
-                    description || ' ' || readme_content || ' ' || file_content as corpus_text
+                    CONCAT_WS(' ',
+                        description,
+                        readme_content,
+                        file_content,
+                        CASE WHEN is_fork THEN 'this repo is a fork' END,
+                        CASE WHEN dominant_language is not null THEN 'the dominant language of the repo is ' || dominant_language END
+                    ) AS corpus_text
                 from repo_data
                 where description is not null or readme_content is not null or file_content is not null
                 """)
@@ -687,3 +702,113 @@ def create_project_repos_embeddings_asset(env_prefix: str):
         )
 
     return _project_repos_embeddings_env_specific
+
+
+
+# get pickle file from gcs bucket
+def get_pickle_file_from_gcs(context: dg.OpExecutionContext, gcs_client: storage.Client, gcs_bucket_name: str, gcs_pickle_file_path: str):
+    """
+    Downloads embeddings from GCS and imports them into a Cloud SQL database.
+    """
+    context.log.info("Starting import process...")
+
+    # Download embeddings from GCS
+    try:
+        context.log.info(f"Downloading {gcs_pickle_file_path} from bucket {gcs_bucket_name}...")
+        bucket = gcs_client.bucket(gcs_bucket_name)
+        blob = bucket.blob(gcs_pickle_file_path)
+        pickle_data = blob.download_as_bytes()
+    except Exception as e:
+        context.log.error(f"Failed to download pickle file from GCS: {e}")
+        raise
+
+    try:
+        context.log.info("Unpickling embeddings...")
+        embeddings_dict = pickle.loads(pickle_data)
+    except Exception as e:
+        context.log.error(f"Failed to unpickle embeddings: {e}")
+        raise
+
+    context.log.info(f"Successfully downloaded and unpickled {len(embeddings_dict)} embeddings.")
+
+    return embeddings_dict
+
+def store_embeddings_in_postgres(context: dg.OpExecutionContext, embeddings_dict: dict, cloud_sql_engine: sqlalchemy.engine.Engine, raw_schema: str):
+    """
+    Efficiently replaces embeddings in Postgres using a full refresh pattern.
+    """
+    table_name = "latest_project_repo_corpus_embeddings"
+    full_table_name = f"{raw_schema}.{table_name}"
+
+    context.log.info(f"Starting full refresh for {full_table_name}")
+
+    try:
+        # 1. Prepare data in a pandas DataFrame
+        df = pd.DataFrame(list(embeddings_dict.items()), columns=['repo', 'corpus_embedding'])
+        df['corpus_embedding'] = df['corpus_embedding'].apply(lambda x: str(x.tolist()))
+        context.log.info(f"Prepared DataFrame with {len(df)} records.")
+
+        # 2. Drop the old index and truncate the table in a single transaction
+        with cloud_sql_engine.begin() as conn:
+            context.log.info(f"Truncating table {full_table_name}...")
+            conn.execute(text(f"TRUNCATE TABLE {full_table_name};"))
+        
+        # 3. Insert new data in batches (this is the slowest step)
+        context.log.info(f"Bulk inserting {len(df)} records...")
+        df.to_sql(
+            name=table_name,
+            con=cloud_sql_engine,
+            schema=raw_schema,
+            if_exists='append',
+            index=False,
+            chunksize=10000,
+            method='multi'
+        )
+        context.log.info("Bulk insert complete.")
+
+    except Exception as e:
+        context.log.error(f"Failed during full refresh of {full_table_name}: {e}")
+        raise
+
+    context.log.info(f"Successfully refreshed {full_table_name} with {len(df)} records.")
+
+
+# factory function to get embeddings from gcs bucket and store them in postgres vector column - table raw.repo_corpus_embeddings
+def create_project_repos_corpus_embeddings(env_prefix: str):
+    """
+    Factory function to create an asset that gets embeddings from gcs bucket and stores them in postgres vector column - table raw.repo_corpus_embeddings
+    """
+
+    @dg.asset(
+        key_prefix=env_prefix,
+        name="project_repos_corpus_embeddings",
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "gcs_storage_client_resource"},
+        group_name="feature_engineering",
+        description="Gets embeddings from gcs bucket and stores them in postgres vector column - table raw.repo_corpus_embeddings",
+        tags={"feature_engineering": "True"}
+    )
+    def _project_repos_corpus_embeddings_env_specific(context: dg.OpExecutionContext) -> dg.MaterializeResult:
+        cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+        gcs_client = context.resources.gcs_storage_client_resource
+        env_config = context.resources.active_env_config
+        gcs_bucket_name = "bl-repo-corpus-public"
+        gcs_pickle_file_path = "embeddings_data/repo_embeddings_bge_m3.pkl"
+        raw_schema = env_config["raw_schema"]
+
+        # get embeddings from gcs bucket
+        embeddings_dict = get_pickle_file_from_gcs(context, gcs_client, gcs_bucket_name, gcs_pickle_file_path)
+
+        # store embeddings in postgres vector column - table raw.repo_corpus_embeddings
+        store_embeddings_in_postgres(context, embeddings_dict, cloud_sql_engine, raw_schema)
+
+    return _project_repos_corpus_embeddings_env_specific
+
+
+
+
+
+# create corpus text from the latest_active_distinct_project_repos_with_code table
+# concatenate repo name, description, readme, config file content
+# generate statements about the repo that we think are true, and then concatenate them into a single string
+# e.g. "this repo is a scaffold for a new project", "this repo is a dev tooling repo", "this repo is an app"
+

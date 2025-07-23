@@ -34,7 +34,8 @@ from dagster_pipelines.assets import ( # Adjust module path if they are in diffe
 # import assets from features.py
 from dagster_pipelines.features import (
     create_project_repos_description_features_asset,
-    create_project_repos_embeddings_asset
+    create_project_repos_embeddings_asset,
+    create_project_repos_corpus_embeddings
 )
 # import assets from models.py
 from dagster_pipelines.models import (
@@ -115,6 +116,7 @@ common_asset_creators = {
     "project_repos_frontend_framework_files": create_project_repos_frontend_framework_files_asset,
     "project_repos_description_features": create_project_repos_description_features_asset,
     "project_repos_embeddings": create_project_repos_embeddings_asset,
+    "project_repos_corpus_embeddings": create_project_repos_corpus_embeddings,
     "education_model_predictions": create_education_model_predictions_asset,
     "scaffold_model_predictions": create_scaffold_model_predictions_asset,
     "developer_tooling_model_predictions": create_developer_tooling_model_predictions_asset,

@@ -1,8 +1,8 @@
 sentence-transformers==4.1.0
-torch==2.1.2
 accelerate==0.29.3
 numpy<2.0
 pandas==2.1.4
 google-cloud-storage==2.14.0
 python-dotenv==1.0.0
 pyarrow==14.0.1
+psutil

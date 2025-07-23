@@ -7,6 +7,7 @@ import logging
 import numpy as np
 import base64
 from dotenv import load_dotenv
+import psutil
 
 # --- Setup Logging ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -19,6 +20,9 @@ def main():
     and uploads the results back to GCS.
     """
     logging.info("Starting embedding generation process.")
+    process = psutil.Process(os.getpid()) # Get the current process
+    logging.info(f"Process ID: {process.pid}")
+    logging.info(f"Process memory usage: {process.memory_info().rss / 1024 / 1024:.2f} MB")
 
     # Get the base64 encoded credentials string from the environment
     logging.info("Configuring Google Cloud credentials from environment variable.")
@@ -89,7 +93,8 @@ def main():
     for i in range(0, len(corpus), batch_size):
         batch_corpus = corpus[i:i+batch_size]
         batch_num = (i // batch_size) + 1
-        logging.info(f"Processing batch {batch_num}/{num_batches}...")
+        logging.info(f"Batch {batch_num}/{num_batches} complete. Current RAM usage: {process.memory_info().rss / 1024 ** 2:.2f} MB")
+
         # model.encode returns a numpy array
         batch_embeddings = model.encode(batch_corpus)
         all_embeddings.extend(batch_embeddings)

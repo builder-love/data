@@ -1,23 +1,23 @@
-import os
-import pickle
-import pandas as pd
 from sentence_transformers import SentenceTransformer
-from google.cloud import storage
-import logging
-import numpy as np
-import base64
-from dotenv import load_dotenv
 
-model = SentenceTransformer("BAAI/bge-m3")
+def test_generate_embeddings():
+    model_name = 'BAAI/bge-m3'
+        
+    # Load Model and Generate Embeddings
+    print(f"Loading SentenceTransformer model: {model_name}")
+    model = SentenceTransformer(model_name)
+    print("Model loaded.")
 
-sentences = [
-    "That is a happy person",
-    "That is a happy dog",
-    "That is a very happy person",
-    "Today is a sunny day"
-]
-embeddings = model.encode(sentences)
+    corpus = 'developer tooling repo for building a smart contract'
+    
+    embedding = model.encode(corpus)
 
-similarities = model.similarity(embeddings, embeddings)
-print(similarities.shape)
-# [4, 4]
+    # Convert the numpy array to the required string format
+    embedding_str = str(embedding.tolist())
+
+    print("--- Your SQL-ready embedding string ---")
+    print(embedding_str)
+    print("--- End of string ---")
+
+# Run the function
+test_generate_embeddings()

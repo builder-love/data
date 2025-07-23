@@ -62,10 +62,18 @@ def create_prod_indexes(context, previous_op_output):
         """))
         context.log.info(f"Created idx_proj_title_gin_trgm on {temp_target_schema}.normalized_top_projects.")
 
+        # creating hnsw index on latest_project_repo_corpus_embeddings
+        conn.execute(text(f"""
+            CREATE INDEX IF NOT EXISTS idx_hnsw_latest_project_repo_corpus_embeddings ON {temp_target_schema}.latest_project_repo_corpus_embeddings USING hnsw (corpus_embedding vector_cosine_ops);
+        """))
+        context.log.info(f"Created idx_hnsw_latest_project_repo_corpus_embeddings on {temp_target_schema}.latest_project_repo_corpus_embeddings.")
+
         context.log.info(f"Analyzing {temp_target_schema} tables after index creation...")
         conn.execute(text(f"ANALYZE {temp_target_schema}.latest_top_project_repos;"))
         conn.execute(text(f"ANALYZE {temp_target_schema}.normalized_top_projects;"))
+        conn.execute(text(f"ANALYZE {temp_target_schema}.latest_project_repo_corpus_embeddings;"))
         context.log.info(f"Successfully analyzed {temp_target_schema}.latest_top_project_repos and {temp_target_schema}.normalized_top_projects.")
+        context.log.info(f"Successfully analyzed {temp_target_schema}.latest_project_repo_corpus_embeddings.")
 
         conn.commit()
     context.log.info(f"Successfully created indexes on {temp_target_schema} tables.")
