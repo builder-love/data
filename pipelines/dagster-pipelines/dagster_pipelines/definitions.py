@@ -29,7 +29,8 @@ from dagster_pipelines.assets import ( # Adjust module path if they are in diffe
     create_project_repos_readmes_asset,
     create_project_repos_package_files_asset,
     create_project_repos_app_dev_framework_files_asset,
-    create_project_repos_frontend_framework_files_asset
+    create_project_repos_frontend_framework_files_asset,
+    create_project_repos_documentation_files_asset
 )
 # import assets from features.py
 from dagster_pipelines.features import (
@@ -115,6 +116,7 @@ common_asset_creators = {
     "project_repos_app_dev_framework_files": create_project_repos_app_dev_framework_files_asset,
     "project_repos_frontend_framework_files": create_project_repos_frontend_framework_files_asset,
     "project_repos_description_features": create_project_repos_description_features_asset,
+    "project_repos_documentation_files": create_project_repos_documentation_files_asset,
     "project_repos_embeddings": create_project_repos_embeddings_asset,
     "project_repos_corpus_embeddings": create_project_repos_corpus_embeddings,
     "education_model_predictions": create_education_model_predictions_asset,
@@ -168,6 +170,7 @@ asset_job_schedule_params_map = {
     "project_repos_package_files": {"base_job_name": "project_repos_package_files_refresh", "base_job_desc": "Gets the repo package files...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 24 * *", "base_schedule_name": "project_repos_package_files_schedule"},
     "project_repos_app_dev_framework_files": {"base_job_name": "project_repos_app_dev_framework_files_refresh", "base_job_desc": "Gets the repo app dev framework files...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 25 * *", "base_schedule_name": "project_repos_app_dev_framework_files_schedule"},
     "project_repos_frontend_framework_files": {"base_job_name": "project_repos_frontend_framework_files_refresh", "base_job_desc": "Gets the repo frontend framework files...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 26 * *", "base_schedule_name": "project_repos_frontend_framework_files_schedule"},
+    "project_repos_documentation_files": {"base_job_name": "project_repos_documentation_files_refresh", "base_job_desc": "Gets the repo documentation files...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 27 * *", "base_schedule_name": "project_repos_documentation_files_schedule"},
     "process_compressed_contributors_data": {"base_job_name": "process_compressed_contributors_data_refresh", "base_job_desc": "Extracts, decompresses, and inserts data...", "job_tags": {"github_api": "True"}, "cron_str": "0 3 * * *", "base_schedule_name": "process_compressed_contributors_data_schedule"},
     "latest_contributor_data": {"base_job_name": "latest_contributor_data_refresh", "base_job_desc": "Queries the latest list of contributors...", "job_tags": {"github_api": "True"}, "cron_str": "0 10 8,22 * *", "base_schedule_name": "latest_contributor_data_schedule"},
     "contributor_follower_count": {"base_job_name": "contributor_follower_count_refresh", "base_job_desc": "Queries follower count...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 9 * *", "base_schedule_name": "contributor_follower_count_schedule"},

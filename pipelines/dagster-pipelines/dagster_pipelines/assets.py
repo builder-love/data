@@ -2,6 +2,8 @@ import dagster as dg
 from dagster import asset
 import os
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
 import pandas as pd
 import toml
 from sqlalchemy import text
@@ -4589,6 +4591,108 @@ def create_project_repos_frontend_framework_files_asset(env_prefix: str):
         )
     return _project_repos_frontend_framework_files_env_specific
 
+# Define config files and exclusion keywords at a broader scope
+CONFIG_FILES = ["mkdocs.yml", "docusaurus.config.js", "hugo.toml", "config.toml", "_config.yml"]
+KEYWORDS_TO_EXCLUDE = ["readme", "license", "contributors", "contribution", "changelog", "upgrading", "upgrade", "history", "changes", "contributing"]
+def get_documentation_files(context: dg.OpExecutionContext, gh_pat: str | None, session: requests.Session, repo_url: str, repo_source: str) -> list[dict]:
+    """
+    Fetches documentation files for a single repository based on its source.
+    Returns a list of found files, each as a dictionary.
+    """
+    found_files = []
+    headers = {}
+    if repo_source == "github" and gh_pat:
+        headers = {"Authorization": f"bearer {gh_pat}"}
+    
+    try:
+        owner, repo_name = repo_url.rstrip('/').replace(".git", "").split('/')[-2:]
+        default_branch = "main"
+        
+        if repo_source == "github":
+            # Fetches default branch
+            api_url = f"https://api.github.com/repos/{owner}/{repo_name}"
+            response = session.get(api_url, headers=headers, timeout=15)
+            default_branch = response.json().get("default_branch", "master") if response.ok else "master"
+
+        # --- 1. Get the recursive file tree ---
+        file_paths = []
+        if repo_source == "github":
+            tree_url = f"https://api.github.com/repos/{owner}/{repo_name}/git/trees/{default_branch}?recursive=1"
+            response = session.get(tree_url, headers=headers, timeout=30)
+            response.raise_for_status()
+            tree_data = response.json().get("tree", [])
+            file_paths = [item['path'] for item in tree_data if item['type'] == 'blob']
+        
+        elif repo_source == "gitlab":
+            # GitLab logic remains the same
+            project_path_encoded = requests.utils.quote(f"{owner}/{repo_name}", safe='')
+            tree_url = f"https://gitlab.com/api/v4/projects/{project_path_encoded}/repository/tree?recursive=true&per_page=100" # Note: GitLab API is paginated, this may not be exhaustive for >100 files
+            response = session.get(tree_url, timeout=30)
+            response.raise_for_status()
+            file_paths = [item['path'] for item in response.json() if item['type'] == 'blob']
+        
+        if not file_paths:
+            return []
+
+        # --- 2. STRATEGY: FIND DOCS ROOT & FILTER FILE LIST ---
+        docs_root = None
+        for path in file_paths:
+            path_lower = path.lower()
+            if os.path.basename(path_lower) in CONFIG_FILES or ".vitepress/config.js" in path_lower:
+                docs_root = os.path.dirname(path)
+                # Handle case where config is in root, dirname returns empty string
+                if docs_root == ".": docs_root = ""
+                context.log.info(f"Found config file '{path}'. Docs root is '{docs_root or './'}' for {repo_url}")
+                break
+        
+        files_to_process = []
+        if docs_root is not None:
+            # If a root was found, only process files within that directory.
+            # Add a trailing slash for accurate `startswith` matching, unless it's the repo root.
+            root_prefix = f"{docs_root}/" if docs_root else ""
+            files_to_process = [
+                p for p in file_paths
+                if (
+                    p.startswith(root_prefix) and
+                    p.lower().endswith((".md", ".rst")) and
+                    # filename exclusion logic
+                    not any(keyword in os.path.basename(p.lower()) for keyword in KEYWORDS_TO_EXCLUDE)
+                )
+            ]
+
+        # --- 3. Fetch content for the targeted files ---
+        if len(files_to_process) > 0:
+            context.log.info(f"Found {len(files_to_process)} documentation files to fetch for {repo_url}.")
+
+            for path in files_to_process:
+                content_url = ""
+                if repo_source == "github":
+                    # for debugging, print the content_url
+                    context.log.info(f"found file: {path} for {repo_url} and {default_branch}")
+                    content_url = f"https://raw.githubusercontent.com/{owner}/{repo_name}/{default_branch}/{path}"
+                elif repo_source == "gitlab":
+                    project_path_encoded = requests.utils.quote(f"{owner}/{repo_name}", safe='')
+                    path_encoded = requests.utils.quote(path, safe='')
+                    content_url = f"https://gitlab.com/api/v4/projects/{project_path_encoded}/repository/files/{path_encoded}/raw?ref={default_branch}"
+
+                if content_url:
+                    time.sleep(0.1) # Rate limiting
+                    content_response = session.get(content_url, headers=headers, timeout=20)
+                    if content_response.status_code == 200:
+                        found_files.append({
+                            "repo": repo_url,
+                            "file_name": os.path.basename(path),
+                            "file_content": content_response.text.replace('\x00', '')
+                        })
+        else:
+            found_files = []
+            context.log.info(f"No documentation files found for {repo_url}. Skipping this repo.")
+    except requests.exceptions.RequestException as e:
+        context.log.error(f"Failed to process repo {repo_url}: {e}")
+    except Exception as e:
+        context.log.error(f"An unexpected error occurred for repo {repo_url}: {e}")
+
+    return found_files
 def create_project_repos_documentation_files_asset(env_prefix: str):
     """
     Factory function to create the project_repos_documentation_files asset.
@@ -4602,7 +4706,7 @@ def create_project_repos_documentation_files_asset(env_prefix: str):
         tags={"github_api": "True"},
         description="""
         This asset searches for documentation files (*.md, *.rst) across all active repositories,
-        excluding README.md, and stores their content.
+        excluding README.md and LICENSE.md, and stores their content.
         """
     )
     def _project_repos_documentation_files_env_specific(context: dg.OpExecutionContext) -> dg.MaterializeResult:
@@ -4617,87 +4721,17 @@ def create_project_repos_documentation_files_asset(env_prefix: str):
         if not gh_pat:
             context.log.warning("GitHub Personal Access Token (go_blockchain_ecosystem) not found.")
 
-        def get_documentation_files(repo_url: str, repo_source: str) -> list[dict]:
-            """
-            Fetches documentation files for a single repository based on its source.
-            Returns a list of found files, each as a dictionary.
-            """
-            found_files = []
-            headers = {}
-            if repo_source == "github" and gh_pat:
-                headers = {"Authorization": f"bearer {gh_pat}"}
-            
-            try:
-                # 1. Get the default branch for the repository
-                owner, repo_name = repo_url.rstrip('/').replace(".git", "").split('/')[-2:]
-                default_branch = "main" # Default fallback
-                
-                if repo_source == "github":
-                    api_url = f"https://api.github.com/repos/{owner}/{repo_name}"
-                    response = requests.get(api_url, headers=headers, timeout=15)
-                    if response.status_code == 200:
-                        default_branch = response.json().get("default_branch", "main")
-                    else:
-                        # Fallback for repos that may have moved or been renamed
-                        default_branch = "master"
-                # Note: GitLab and Bitbucket logic often defaults to main/master without a separate check.
-                
-                # 2. Get the recursive file tree
-                file_paths = []
-                if repo_source == "github":
-                    tree_url = f"https://api.github.com/repos/{owner}/{repo_name}/git/trees/{default_branch}?recursive=1"
-                    response = requests.get(tree_url, headers=headers, timeout=30)
-                    response.raise_for_status()
-                    tree_data = response.json().get("tree", [])
-                    file_paths = [item['path'] for item in tree_data if item['type'] == 'blob']
+        # Create a session object with a retry policy
+        session = requests.Session()
+        retry_strategy = Retry(
+            total=7,
+            status_forcelist=[500, 502, 503, 504], # Retry on server-side errors
+            backoff_factor=1
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
 
-                elif repo_source == "gitlab":
-                    project_path_encoded = requests.utils.quote(f"{owner}/{repo_name}", safe='')
-                    tree_url = f"https://gitlab.com/api/v4/projects/{project_path_encoded}/repository/tree?recursive=true&per_page=100"
-                    response = requests.get(tree_url, timeout=30)
-                    response.raise_for_status()
-                    tree_data = response.json()
-                    file_paths = [item['path'] for item in tree_data if item['type'] == 'blob']
-
-                # Bitbucket does not support a simple recursive tree API, so we skip it for this complex task.
-                # A full implementation would require manual, paginated recursion through directories.
-                elif repo_source == "bitbucket":
-                    context.log.warning(f"Skipping Bitbucket repo due to complex API for file listing: {repo_url}")
-                    return []
-                
-                # 3. Filter for documentation files and fetch content
-                for path in file_paths:
-                    path_lower = path.lower()
-                    if (path_lower.endswith(".md") or path_lower.endswith(".rst")) and path_lower != "readme.md":
-                        # Construct raw content URL
-                        content_url = ""
-                        if repo_source == "github":
-                            content_url = f"https://raw.githubusercontent.com/{owner}/{repo_name}/{default_branch}/{path}"
-                        elif repo_source == "gitlab":
-                            project_path_encoded = requests.utils.quote(f"{owner}/{repo_name}", safe='')
-                            path_encoded = requests.utils.quote(path, safe='')
-                            content_url = f"https://gitlab.com/api/v4/projects/{project_path_encoded}/repository/files/{path_encoded}/raw?ref={default_branch}"
-
-                        if content_url:
-                            time.sleep(0.1) # Rate limiting
-                            content_response = requests.get(content_url, headers=headers, timeout=20)
-                            if content_response.status_code == 200:
-                                content = content_response.text.replace('\x00', '')
-                                found_files.append({
-                                    "repo": repo_url,
-                                    "file_name": os.path.basename(path),
-                                    "file_content": content
-                                })
-                                context.log.info(f"Found '{path}' in {repo_url}")
-
-            except requests.exceptions.RequestException as e:
-                context.log.error(f"Failed to process repo {repo_url}: {e}")
-            except Exception as e:
-                context.log.error(f"An unexpected error occurred for repo {repo_url}: {e}")
-
-            return found_files
-
-        # Main asset logic
         with cloud_sql_engine.connect() as conn:
             repo_df = pd.DataFrame(conn.execute(text(f"SELECT repo, repo_source FROM {clean_schema}.latest_active_distinct_project_repos_with_code")).fetchall())
 
@@ -4706,12 +4740,16 @@ def create_project_repos_documentation_files_asset(env_prefix: str):
             return dg.MaterializeResult(metadata={"row_count": 0})
 
         final_results_list = []
-        context.log.info(f"Starting documentation file fetch for {len(repo_df)} repositories...")
-        for _, row in repo_df.iterrows():
+        total_repos = len(repo_df)
+        context.log.info(f"Starting documentation file fetch for {total_repos} repositories...")
+        for index, row in repo_df.iterrows():
             # Add a delay between processing each repository to respect rate limits
             time.sleep(0.5)
             repo_url, repo_source = row['repo'], row['repo_source']
-            final_results_list.extend(get_documentation_files(repo_url, repo_source))
+            # print every 100 repos
+            if (index + 1) % 100 == 0:
+                context.log.info(f"Processing repo {index + 1}/{total_repos}: {repo_url}")
+            final_results_list.extend(get_documentation_files(context, gh_pat, session, repo_url, repo_source))
 
         if not final_results_list:
             context.log.warning("No documentation files were found for any repository.")
