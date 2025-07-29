@@ -40,7 +40,7 @@ steps:
     echo "go_blockchain_ecosystem=$$GH_PAT" >> .env
     echo "bitbucket_api_key=$$BB_KEY" >> .env
 
-- name: 'us-central1-docker.pkg.dev/cloud-builders/docker/latest'
+- name: 'gcr.io/cloud-builders/docker'
   args: [
     'build',
     '--secret=id=env.list,src=.env',
