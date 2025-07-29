@@ -7,18 +7,18 @@ import psycopg2
 import pandas as pd
 from sqlalchemy import create_engine, text
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.preprocessing import StandardScaler
 import re
 import dagster as dg
 from dagster import AssetKey, AssetIn
-from dagster_pipelines.features import create_project_repos_description_features_asset
+from .features import create_project_repos_description_features_asset
+import xgboost as xgb
 
 
 # --- factory function to create the education model predictions asset --- #
 # train a simple classification model to predict if a repo is educational or not
-## random forest model with balanced class weights
+## xgboost model with balanced class weights
 def create_education_model_predictions_asset(env_prefix: str):
     """
     Factory function to create an asset that generates predictions from the education model.
@@ -182,9 +182,13 @@ def create_education_model_predictions_asset(env_prefix: str):
         # set the n_estimators param
         n_estimators = 750
 
-        # Initialize and train a Random Forest model
-        # n_estimators is the number of trees in the forest
-        model_balanced = RandomForestClassifier(random_state=42, class_weight='balanced', n_estimators=n_estimators)
+        # --- Model Training ---
+        # Initialize and train an XGBoost model
+        # For imbalanced datasets, scale_pos_weight is the equivalent of class_weight='balanced'
+        # It's calculated as: count(negative_class) / count(positive_class)
+        scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
+
+        model_balanced = xgb.XGBClassifier(random_state=42, scale_pos_weight=scale_pos_weight, n_estimators=n_estimators)
         model_balanced.fit(X_train_scaled, y_train)
 
         ## ----------------------------------------------------- Model Evaluation ------------------------------------------------- ##
@@ -261,9 +265,9 @@ def create_education_model_predictions_asset(env_prefix: str):
         # 'X' and 'y' are the full feature and target DataFrames from merged_df
 
         # Define the final model with the proven parameters
-        final_model = RandomForestClassifier(
+        final_model = xgb.XGBClassifier(
             random_state=42,
-            class_weight='balanced',
+            scale_pos_weight=scale_pos_weight,
             n_estimators=n_estimators
         )
 
@@ -359,7 +363,7 @@ def create_education_model_predictions_asset(env_prefix: str):
 
 # --- factory function to create the scaffold model predictions asset --- #
 # train a simple classification model to predict if a repo is scaffold or not
-## random forest model with balanced class weights
+## xgboost model with balanced class weights
 def create_scaffold_model_predictions_asset(env_prefix: str):
     """
     Factory function to create an asset that generates predictions from the scaffold model.
@@ -523,9 +527,12 @@ def create_scaffold_model_predictions_asset(env_prefix: str):
         # set the n_estimators param
         n_estimators = 750
 
-        # Initialize and train a Random Forest model
-        # n_estimators is the number of trees in the forest
-        model_balanced = RandomForestClassifier(random_state=42, class_weight='balanced', n_estimators=n_estimators)
+        # Initialize and train an XGBoost model
+        # For imbalanced datasets, scale_pos_weight is the equivalent of class_weight='balanced'
+        # It's calculated as: count(negative_class) / count(positive_class)
+        scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
+
+        model_balanced = xgb.XGBClassifier(random_state=42, scale_pos_weight=scale_pos_weight, n_estimators=n_estimators)
         model_balanced.fit(X_train_scaled, y_train)
 
         ## ----------------------------------------------------- Model Evaluation ------------------------------------------------- ##
@@ -602,9 +609,9 @@ def create_scaffold_model_predictions_asset(env_prefix: str):
         # 'X' and 'y' are the full feature and target DataFrames from merged_df
 
         # Define the final model with the proven parameters
-        final_model = RandomForestClassifier(
+        final_model = xgb.XGBClassifier(
             random_state=42,
-            class_weight='balanced',
+            scale_pos_weight=scale_pos_weight,
             n_estimators=n_estimators
         )
 
@@ -700,7 +707,7 @@ def create_scaffold_model_predictions_asset(env_prefix: str):
 
 # --- factory function to create the developer tooling model predictions asset --- #
 # train a simple classification model to predict if a repo is developer tooling or not
-## random forest model with balanced class weights
+## xgboost model with balanced class weights
 def create_developer_tooling_model_predictions_asset(env_prefix: str):
     """
     Factory function to create an asset that generates predictions from the developer tooling model.
@@ -872,9 +879,12 @@ def create_developer_tooling_model_predictions_asset(env_prefix: str):
         # set the n_estimators param
         n_estimators = 750
 
-        # Initialize and train a Random Forest model
-        # n_estimators is the number of trees in the forest
-        model_balanced = RandomForestClassifier(random_state=42, class_weight='balanced', n_estimators=n_estimators)
+        # Initialize and train an XGBoost model
+        # For imbalanced datasets, scale_pos_weight is the equivalent of class_weight='balanced'
+        # It's calculated as: count(negative_class) / count(positive_class)
+        scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
+
+        model_balanced = xgb.XGBClassifier(random_state=42, scale_pos_weight=scale_pos_weight, n_estimators=n_estimators)
         model_balanced.fit(X_train_scaled, y_train)
 
         ## ----------------------------------------------------- Model Evaluation ------------------------------------------------- ##
@@ -951,9 +961,9 @@ def create_developer_tooling_model_predictions_asset(env_prefix: str):
         # 'X' and 'y' are the full feature and target DataFrames from merged_df
 
         # Define the final model with the proven parameters
-        final_model = RandomForestClassifier(
+        final_model = xgb.XGBClassifier(
             random_state=42,
-            class_weight='balanced',
+            scale_pos_weight=scale_pos_weight,
             n_estimators=n_estimators
         )
 

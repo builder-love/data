@@ -1,0 +1,32 @@
+# This file configures the Dagster instance 
+run_coordinator:
+  module: dagster.core.run_coordinator
+  class: QueuedRunCoordinator
+  config:
+    max_concurrent_runs: 25
+    tag_concurrency_limits:
+      - key: "github_api"
+        value: "True"
+        limit: 1
+
+telemetry:
+  enabled: false
+
+retention:
+  schedule:
+    purge_after_days: 180
+  sensor:
+    purge_after_days:
+      skipped: 14
+      failure: 45
+      success: -1
+
+# Configures where information about runs and structured logs are stored
+storage:
+  postgres:
+    postgres_db:
+      hostname: { "env": "cloud_sql_postgres_host" }
+      username: { "env": "cloud_sql_user" }
+      password: { "env": "cloud_sql_password" }
+      db_name: { "env": "cloud_sql_postgres_db" } 
+      port: 5432

@@ -6,7 +6,7 @@ import json
 
 # dbt test op 
 @op(
-    required_resource_keys={"active_dbt_runner"}, 
+    required_resource_keys={"dbt_cli"}, 
     out={"dbt_test_results": Out()}
     )
 def test_dbt_api_views(context: OpExecutionContext, previous_op_output=None) -> DbtCliInvocation:
@@ -14,13 +14,13 @@ def test_dbt_api_views(context: OpExecutionContext, previous_op_output=None) -> 
     Runs dbt tests against the API models using the active dbt target (prod or stg).
     Outputs True if tests pass, False otherwise.
     """
-    active_dbt_runner = context.resources.active_dbt_runner
-    target_name = active_dbt_runner.target
+    dbt = context.resources.dbt_cli
+    target_name = dbt.target
     context.log.info(f"Running dbt tests on API models (path:models/api/) for dbt target: {target_name}.")
 
     try:
         # Run tests specifically on the api models
-        invocation: DbtCliInvocation = active_dbt_runner.cli(
+        invocation: DbtCliInvocation = dbt.cli(
             ["test", "--select", "path:models/api/"], 
             context=context
         ).wait()
@@ -37,7 +37,7 @@ def test_dbt_api_views(context: OpExecutionContext, previous_op_output=None) -> 
 
 # Op to manage view creations in `api` schema
 @op(
-    required_resource_keys={"active_dbt_runner"}, 
+    required_resource_keys={"dbt_cli"}, 
     out={"dbt_run_results": Out()}
     )
 def create_dbt_api_views(context: OpExecutionContext, start_after=None) -> DbtCliInvocation:
@@ -45,13 +45,13 @@ def create_dbt_api_views(context: OpExecutionContext, start_after=None) -> DbtCl
     Runs dbt to create/update views in the target API schema (e.g., 'api' or 'api_stg')
     using the active dbt target. Outputs True if run is successful, False otherwise.
     """
-    active_dbt_runner = context.resources.active_dbt_runner
-    target_name = active_dbt_runner.target
+    dbt = context.resources.dbt_cli
+    target_name = dbt.target
 
     context.log.info(f"Running dbt to create/update views in target API schema for dbt target: {target_name} (models: path:models/api/).")
     
     try:
-        invocation: DbtCliInvocation = active_dbt_runner.cli(
+        invocation: DbtCliInvocation = dbt.cli(
             ["run", "--select", "path:models/api/"], context=context # select the api models
         ).wait()
 

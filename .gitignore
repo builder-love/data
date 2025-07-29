@@ -142,6 +142,8 @@ pipelines/api_venv/
 ENV/
 env.bak/
 venv.bak/
+env.list
+/pipelines/env.list
 
 # Spyder project settings
 .spyderproject
@@ -182,5 +184,14 @@ cython_debug/
 
 # akash
 deploy.yaml
-pipelines/dagster-pipelines/dagster_pipelines/akash_embeddings/deploy.yaml
-pipelines/dagster-pipelines/dagster_pipelines/akash_embeddings/run.sh
+pipelines/dagster-pipelines/akash_embeddings/deploy.yaml
+pipelines/dagster-pipelines/akash_embeddings/run.sh
+
+# dagster local storage
+pipelines/storage/
+pipelines/.telemetry/
+
+# dbt generated files
+pipelines/dbt-pipelines/target/
+pipelines/dbt-pipelines/logs/
+pipelines/dbt-pipelines/.dbt_packages/
