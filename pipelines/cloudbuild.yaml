@@ -1,26 +1,32 @@
+# 1. Define which secrets to make available to the build
+availableSecrets:
+  secretManager:
+  - versionName: projects/$PROJECT_ID/secrets/dagster-env-list/versions/latest
+    env: 'DAGSTER_ENV_LIST' # Maps the secret to this environment variable
+
 steps:
-# 1. Access the dbt environment variables from Secret Manager
-- name: 'us-central1-docker.pkg.dev/cloud-builders/gcloud/latest'
-  entrypoint: 'sh'
+# 2. Write the secret from the environment variable into a .env file
+# This step replaces your original gcloud command.
+- name: 'bash'
   args:
   - '-c'
-  - 'gcloud secrets versions access latest --secret="dagster-env-list" > .env'
+  - 'echo "$$DAGSTER_ENV_LIST" > .env' # $$ is used to escape the $ for Cloud Build
 
-# 2. Build the Docker image using the secret
+# 3. Build the Docker image using the secret file
 - name: 'us-central1-docker.pkg.dev/cloud-builders/docker/latest'
   args: [
     'build',
     '--secret=id=env.list,src=.env',
     '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA',
     '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest',
-    './pipelines' # IMPORTANT: Set build context to the pipelines directory
+    './pipelines'
   ]
 
-# 3. Push the image to Artifact Registry
+# 4. Push the image to Artifact Registry
 - name: 'us-central1-docker.pkg.dev/cloud-builders/docker/latest'
   args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app']
 
-# 4. Deploy to GKE by updating the image for the deployment
+# 5. Deploy to GKE by updating the image for the deployment
 - name: 'us-central1-docker.pkg.dev/cloud-builders/gke-deploy/latest'
   args:
   - 'run'
