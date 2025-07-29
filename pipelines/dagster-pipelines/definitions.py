@@ -2,7 +2,7 @@ import os
 
 from dagster import Definitions, with_resources, AssetSelection, define_asset_job, JobDefinition, ScheduleDefinition, AssetKey, asset, OpExecutionContext
 # Import resources
-from dagster_pipelines.resources import (
+from .resources import (
     cloud_sql_postgres_resource,
     dbt_stg_resource,
     dbt_prod_resource,
@@ -11,7 +11,7 @@ from dagster_pipelines.resources import (
     gcs_storage_client_resource
 )
 # import assets from assets.py
-from dagster_pipelines.assets import ( # Adjust module path if they are in different files
+from .assets import ( # Adjust module path if they are in different files
     create_crypto_ecosystems_project_json_asset,
     create_latest_active_distinct_github_project_repos_asset,
     create_github_project_repos_stargaze_count_asset,
@@ -33,23 +33,22 @@ from dagster_pipelines.assets import ( # Adjust module path if they are in diffe
     create_project_repos_documentation_files_asset
 )
 # import assets from features.py
-from dagster_pipelines.features import (
+from .features import (
     create_project_repos_description_features_asset,
     create_project_repos_embeddings_asset,
     create_project_repos_corpus_embeddings
 )
 # import assets from models.py
-from dagster_pipelines.models import (
+from .models import (
     create_education_model_predictions_asset,
     create_scaffold_model_predictions_asset,
     create_developer_tooling_model_predictions_asset
 )
-from dagster_pipelines.cleaning_assets import ( 
-    all_stg_dbt_assets, 
-    all_prod_dbt_assets,
+from .cleaning_assets import ( 
+    all_dbt_assets,
     create_process_compressed_contributors_data_asset
 )
-from dagster_pipelines.jobs import (
+from .jobs import (
     create_env_specific_asset_job_from_prefixed,
     stg_normalized_dbt_assets_job,
     stg_latest_dbt_assets_job,
@@ -61,7 +60,7 @@ from dagster_pipelines.jobs import (
     prod_ml_pipeline_job,
     stg_ml_pipeline_job
 )
-from dagster_pipelines.schedules import (
+from .schedules import (
     create_env_specific_schedule,
     refresh_prod_schema_schedule,
     refresh_api_schema_schedule,
@@ -75,25 +74,12 @@ from dagster_pipelines.schedules import (
     prod_ml_pipeline_schedule,
     stg_ml_pipeline_schedule
 )
-from dagster_pipelines.load_data_jobs import (
+from .load_data_jobs import (
     refresh_prod_schema, 
     create_update_crypto_ecosystems_repo_and_run_export_asset
 )
-from dagster_pipelines.api_data import refresh_api_schema
+from .api_data import refresh_api_schema
 
-## ------------------------------------------ end imports --------------------------------- ##
-
-# Bind the correct dbt resource to each group of dbt assets.
-# The @dbt_assets decorator makes assets look for a resource named "dbt_cli".
-stg_dbt_assets_with_resource = with_resources(
-    [all_stg_dbt_assets],
-    resource_defs={"dbt_cli": dbt_stg_resource}
-)
-
-prod_dbt_assets_with_resource = with_resources(
-    [all_prod_dbt_assets],
-    resource_defs={"dbt_cli": dbt_prod_resource}
-)
 
 ## ------------------------------------------ define common assets, jobs, and schedules --------------------------------- ##
 # --- Define mapping from base asset names to their CREATOR functions ---
@@ -244,35 +230,42 @@ if 'refresh_api_schema' in globals() and isinstance(refresh_api_schema, JobDefin
     prod_jobs_list.append(refresh_api_schema)
     if 'refresh_api_schema_schedule' in globals() and isinstance(refresh_api_schema_schedule, ScheduleDefinition): prod_schedules_list.append(refresh_api_schema_schedule)
 
-## ------------------------------------------ create defintion objects for each environment --------------------------------- ##
-# --- Production Specific Definitions ---
-prod_specific_defs = Definitions(
-    resources={
-        "cloud_sql_postgres_resource": cloud_sql_postgres_resource.configured(
-            {
-                "username": os.getenv("cloud_sql_user"),
-                "password": os.getenv("cloud_sql_password"),
-                "hostname": os.getenv("cloud_sql_postgres_host"),
-                "database": os.getenv("cloud_sql_postgres_db"),
-            }
-        ),
-        "active_env_config": active_env_config_resource.configured({"env_target": "prod"}),
-        "active_dbt_runner": dbt_prod_resource,  # Generic ops use PROD dbt runner
-        "dbt_stg_resource": dbt_stg_resource,    # For stg_dbt_assets or stg-specific jobs
-        "dbt_prod_resource": dbt_prod_resource,   # For prod_dbt_assets or prod-specific jobs
-        "electric_capital_ecosystems_repo": electric_capital_ecosystems_repo,
-        "gcs_storage_client_resource": gcs_storage_client_resource.configured({
-            "gcp_keyfile_path": os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-        })
-    },
-    assets=prod_prefixed_common_assets + list(prod_dbt_assets_with_resource),
-    jobs=prod_jobs_list,
-    schedules=prod_schedules_list,
-)
+## ------------------------------------------ Environment-based Definitions Builder --------------------------------- ##
 
-# --- Staging Specific Definitions ---
-stg_specific_defs = Definitions(
+# Read the environment variable to determine which assets, jobs, and resources to use.
+DAGSTER_ENV = os.getenv("DAGSTER_ENV", "stg") # Default to 'stg'
+
+# Set up environment-specific components based on the environment variable
+if DAGSTER_ENV == "prod":
+    prefixed_common_assets = prod_prefixed_common_assets
+    jobs_list = prod_jobs_list
+    schedules_list = prod_schedules_list
+    active_dbt_resource = dbt_prod_resource
+    active_env_target = "prod"
+else: # Default to staging
+    prefixed_common_assets = stg_prefixed_common_assets
+    jobs_list = stg_jobs_list
+    schedules_list = stg_schedules_list
+    active_dbt_resource = dbt_stg_resource
+    active_env_target = "stg"
+
+# Combine the Python-defined assets with the dynamically loaded dbt assets.
+# The 'if all_dbt_assets' check handles the case where the manifest was not found.
+final_assets = prefixed_common_assets + ([all_dbt_assets] if all_dbt_assets else [])
+
+# Define a single, unified Definitions object
+defs = Definitions(
+    assets=final_assets,
+    jobs=jobs_list,
+    schedules=schedules_list,
     resources={
+        # This is the key the @dbt_assets decorator looks for.
+        "dbt_cli": active_dbt_resource,
+
+        # Configure other resources dynamically
+        "active_env_config": active_env_config_resource.configured({"env_target": active_env_target}),
+
+        # Keep other resources that might be used by name
         "cloud_sql_postgres_resource": cloud_sql_postgres_resource.configured(
             {
                 "username": os.getenv("cloud_sql_user"),
@@ -281,16 +274,11 @@ stg_specific_defs = Definitions(
                 "database": os.getenv("cloud_sql_postgres_db"),
             }
         ),
-        "active_env_config": active_env_config_resource.configured({"env_target": "stg"}),
-        "active_dbt_runner": dbt_stg_resource,   # Generic ops use STG dbt runner
-        "dbt_stg_resource": dbt_stg_resource,    # For stg_dbt_assets or stg-specific jobs
-        "dbt_prod_resource": dbt_prod_resource,   # Still available if needed, though less common for stg defs
+        "dbt_stg_resource": dbt_stg_resource,
+        "dbt_prod_resource": dbt_prod_resource,
         "electric_capital_ecosystems_repo": electric_capital_ecosystems_repo,
         "gcs_storage_client_resource": gcs_storage_client_resource.configured({
             "gcp_keyfile_path": os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
         })
     },
-    assets=stg_prefixed_common_assets + list(stg_dbt_assets_with_resource),
-    jobs=stg_jobs_list,
-    schedules=stg_schedules_list,
 )

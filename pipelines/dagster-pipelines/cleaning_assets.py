@@ -1,56 +1,42 @@
 import os
-
-from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
-import time
 import dagster as dg
 import pandas as pd
 from sqlalchemy import text
-import requests
 import json
-import random
-from dagster_dbt import DbtCliResource, DagsterDbtTranslator, dbt_assets, DbtCliInvocation
-from dagster import asset, AssetExecutionContext, AssetKey, op, Out, Output, job, In, Nothing, AssetMaterialization, MetadataValue
-from dagster_pipelines.resources import dbt_stg_resource, dbt_prod_resource
+from dagster_dbt import DagsterDbtTranslator, DbtCliResource, dbt_assets, DbtCliResource
+from dagster import AssetKey, op, Out, Output, In, Nothing, AssetMaterialization, MetadataValue, AssetExecutionContext
+from .resources import dbt_stg_resource, dbt_prod_resource
 import gzip
-import psycopg2
+from pathlib import Path
 
-################################################ normalized time series data ################################################
+# get the environment and set configs
+# Read the environment variable, defaulting to 'stg' for local development
+env = os.getenv("DAGSTER_ENV", "stg").lower()
 
-_THIS_FILE_DIR = Path(__file__).parent.resolve() # dagster_pipelines/cleaning_assets.py
-_DAGSTER_PROJECT_ROOT = _THIS_FILE_DIR.parent # dagster_pipelines/
-_MONOREPO_ROOT = _DAGSTER_PROJECT_ROOT.parent # e.g., data/
+# Define the path to the dbt project within the container
+# This should be the directory that contains the dbt_project.yml
+dbt_project_dir = Path("/opt/dagster/app/dbt-pipelines")
+manifest_path = None
+translator = None
 
-DBT_PROJECT_DIR_FOR_MANIFESTS = _MONOREPO_ROOT / "dbt-pipelines" / "dbt_pipelines"
-
-# Manifest path for STAGING
-DBT_STG_MANIFEST_PATH = DBT_PROJECT_DIR_FOR_MANIFESTS / "target" / "stg" / "manifest.json"
-
-# Manifest path for PRODUCTION
-DBT_PROD_MANIFEST_PATH = DBT_PROJECT_DIR_FOR_MANIFESTS / "target" / "prod" / "manifest.json"
+print(f"INFO: Running in '{env}' environment. Configuring dbt assets...")
 
 # --- Custom DagsterDbtTranslator ---
 # Define Custom Translator for dbt sources (can be reused)
 class CustomDbtTranslator(DagsterDbtTranslator):
-    def __init__(self, target_group_name: str, environment_prefix: str):
-        self._target_group_name = target_group_name
+    
+    def __init__(self, environment_prefix: str):
         self.environment_prefix = environment_prefix  # e.g., "prod" or "stg"
         super().__init__()
 
     def get_asset_key(self, dbt_node_info: Dict[str, Any]) -> AssetKey:
-        # Get the default asset key (e.g., AssetKey(["clean_stg", "latest_project_repos"]))
+        """
+        Prefixes the default dbt asset key with the environment name.
+        e.g., AssetKey(["my_model"]) -> AssetKey(["stg", "my_model"])
+        """
         base_key = super().get_asset_key(dbt_node_info)
-        base_path = base_key.path
-
-        if dbt_node_info.get("resource_type") == "source":
-            # Apply environment prefix and existing "dbt_sources" prefix for sources
-            # e.g., AssetKey(["stg", "dbt_sources", "raw_schema_name", "source_table_name"])
-            return AssetKey([self.environment_prefix, "dbt_sources"] + base_path)
-        
-        # For models (and other non-source dbt resources like seeds, snapshots)
-        # Prepend the environment prefix to make the AssetKey globally unique in Dagster
-        # e.g., AssetKey(["stg", "clean_stg", "latest_project_repos"])
-        return AssetKey([self.environment_prefix] + base_path)
+        return base_key.with_prefix(self.environment_prefix)
 
     def get_tags(self, dbt_node_info: Dict[str, Any]) -> Optional[Mapping[str, str]]:
         dagster_tags = super().get_tags(dbt_node_info) or {}
@@ -60,61 +46,48 @@ class CustomDbtTranslator(DagsterDbtTranslator):
         return dagster_tags if dagster_tags else None
 
     def get_group_name(self, dbt_node_info: Dict[str, Any]) -> Optional[str]:
-        return self._target_group_name
+        """
+        Assigns all dbt assets for an environment to a single group.
+        e.g., "dbt_stg" or "dbt_prod"
+        """
+        return f"dbt_{self.environment_prefix}"
 
-# --- Define dbt Assets using @dbt_assets ---
+# --- Instantiate dbt Translators ---
+if env == "prod":
+    # This path matches the 'target-path' in your dbt_project.yml for the 'prod' target
+    manifest_path = dbt_project_dir / "target/prod" / "manifest.json"
+    translator = CustomDbtTranslator(environment_prefix="prod")
+elif env == "stg":
+    # This path matches the 'target-path' for the 'stg' target
+    manifest_path = dbt_project_dir / "target/stg" / "manifest.json"
+    translator = CustomDbtTranslator(environment_prefix="stg")
 
-# --- PRODUCTION dbt assets ---
-if DBT_PROD_MANIFEST_PATH.exists():
+# --- Conditionally define dbt Assets ---
+
+# This is the single variable that Dagster Definitions object will import. Must update this across other files.
+all_dbt_assets = []
+
+# Check if the configuration was valid AND the manifest file actually exists
+if manifest_path and translator and manifest_path.exists():
+
     @dbt_assets(
-        manifest=DBT_PROD_MANIFEST_PATH,
-        dagster_dbt_translator=CustomDbtTranslator(
-            target_group_name="prod_dbt_assets",
-            environment_prefix="prod"  # Add environment prefix
-        ) # Pass an instance of the translator, configured with the desired group name; translating dbt tags to Dagster tags
+        manifest=manifest_path,
+        dagster_dbt_translator=translator
     )
-    def all_prod_dbt_assets(context: AssetExecutionContext, dbt_cli: DbtCliResource):
+    def dbt_assets_for_env(context: AssetExecutionContext, dbt_cli: DbtCliResource):
         """
-        Dagster assets for dbt models in the production environment,
-        loaded from the production manifest.
-        The DbtCliResource (dbt_prod_resource via with_resources) will handle targeting 'prod'.
-        """
-        # dbt.cli(["build"], ...) will run models, tests, seeds, snapshots based on the manifest.
-        # The DbtCliResource is already configured for the 'prod' target.
-        # You can add selectors here if you want to refine what dbt runs, e.g., dbt.cli(["build", "--select", "my_model"])
-        # but for "all" assets, you typically build everything represented by the manifest assets.
-        # yield from dbt.cli(["build"], context=context).stream()
-        # Alternatively, if you want separate run and test:
-        yield from dbt_cli.cli(["run"], context=context).stream()
-        yield from dbt_cli.cli(["test"], context=context).stream()
-else:
-    print(f"WARNING: dbt PRODUCTION manifest not found at {DBT_PROD_MANIFEST_PATH}. Skipping prod_dbt_assets definition.")
-    print(f"Please run 'dbt compile --target prod' (or 'dbt run --target prod') in your dbt project.")
-    all_prod_dbt_assets = [] # type: ignore
-
-# --- STAGING dbt assets ---
-if DBT_STG_MANIFEST_PATH.exists():
-    @dbt_assets(
-        manifest=DBT_STG_MANIFEST_PATH,
-        dagster_dbt_translator=CustomDbtTranslator(
-            target_group_name="stg_dbt_assets",
-            environment_prefix="stg"  # Add environment prefix 
-        ) # Pass an instance of the translator, configured with the desired group name; translating dbt tags to Dagster tags
-    )
-    def all_stg_dbt_assets(context: AssetExecutionContext, dbt_cli: DbtCliResource):
-        """
-        Dagster assets for dbt models in the staging environment,
-        loaded from the staging manifest.
-        The DbtCliResource (dbt_stg_resource via with_resources) will handle targeting 'stg'.
+        Dynamically loads dbt assets based on the DAGSTER_ENV.
         """
         yield from dbt_cli.cli(["run"], context=context).stream()
         yield from dbt_cli.cli(["test"], context=context).stream()
-else:
-    print(f"WARNING: dbt STAGING manifest not found at {DBT_STG_MANIFEST_PATH}. Skipping stg_dbt_assets definition.")
-    print(f"Please run 'dbt compile --target stg' (or 'dbt run --target stg') in your dbt project.")
-    all_stg_dbt_assets = [] # type: ignore
-########################################################################################################################
 
+    # Assign the newly defined assets to the variable.
+    all_dbt_assets = dbt_assets_for_env
+
+else:
+    # This block runs if env is not 'prod'/'stg', or if the manifest is missing.
+    print(f"WARNING: dbt manifest not found for environment '{env}' at expected path '{manifest_path}'.")
+    print("Skipping dbt asset definition. Ensure you have run 'dbt compile' for the correct target in your Docker build.")
 
 ################################################ process compressed data #######################################################
 
@@ -269,13 +242,6 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                 # confirm max_source_ts_aware and target_ts_aware_contributors are not None
                 if max_source_ts_aware is None or target_ts_aware_contributors is None:
                     raise ValueError("Validation failed: max_source_ts_aware or target_ts_aware_contributors is None.")
-                    return dg.MaterializeResult(
-                        metadata={
-                            "latest_contributors_preview": "No rows found for preview.",
-                            "latest_project_repos_contributors_preview": "No rows found for preview.",
-                            "message": "Data is not valid."
-                        }
-                    )
 
                 datetime_validation = process_compressed_contributors_validation_dates(context, target_ts_aware_contributors, max_source_ts_aware, final_table_name_contributors)
 
@@ -303,7 +269,6 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
 
                 if rows.empty:
                     raise ValueError("Validation failed: DataFrame is empty.")
-                    return dg.MaterializeResult(metadata={"row_count": 0, "message": "No raw data found."})
 
                 # capture the data in a list
                 print(f"Fetched {len(rows)} repos with compressed data. Decompressing...")
@@ -559,18 +524,18 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
 ########################################################################################################################
 
 @op(
-    required_resource_keys={"active_dbt_runner"},
+    required_resource_keys={"dbt_cli"},
     out={"dbt_tests_passed": Out(bool)}
 )
 def run_dbt_tests_on_crypto_ecosystems_raw_file_staging(context) -> bool:
-    active_dbt_runner = context.resources.active_dbt_runner
-    target_name = active_dbt_runner.target
+    dbt = context.resources.dbt_cli
+    target_name = dbt.target
     context.log.info(f"----------************* Running in environment: {target_name} *************----------")
     context.log.info(f"Running dbt tests on path:tests/crypto_ecosystems/ for dbt target: {target_name}.")
 
     invocation_obj = None
     try:
-        invocation_obj = active_dbt_runner.cli(
+        invocation_obj = dbt.cli(
             ["test", "--select", "path:tests/crypto_ecosystems/"], context=context
         )
         # The .wait() method from dagster-dbt is designed to raise an exception

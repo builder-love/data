@@ -14,10 +14,6 @@ seed-paths: ["seeds"]
 macro-paths: ["macros"]
 snapshot-paths: ["snapshots"]
 
-# This will create target/prod/, target/stg/, etc.
-# for compiled files including manifest.json
-target-path: "target/{{ target.name }}"
-
 clean-targets:         # directories to be removed by `dbt clean`
   - "target"
   - "dbt_packages"

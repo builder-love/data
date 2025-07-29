@@ -1,19 +1,19 @@
 [project]
-name = "dagster_pipelines"
+name = "dagster-pipelines"
 version = "0.1.0"
 description = "builder.love data orchestration"
 readme = "README.md"
 requires-python = ">=3.9,<3.13"
 dependencies = [
     "dagster",
-    "dagster-cloud",
+    "dagster-postgres",
     "dagster-dbt",
     "pandas",
     "sqlalchemy",
     "psycopg2-binary",
-    "scikit-learn",
-    "sentence_transformers",
-    "gcsfs"
+    "gcsfs",
+    "google-cloud-storage",
+    "toml"
 ]
 
 [project.optional-dependencies]
@@ -27,8 +27,8 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [tool.dagster]
-module_name = "dagster_pipelines.definitions"
-project_name = "dagster_pipelines"
+module_name = "dagster-pipelines.definitions"
+project_name = "dagster-pipelines"
 
 [tool.setuptools.packages.find]
 exclude=["dagster_pipelines_tests"]

@@ -5,6 +5,7 @@ from dagster import resource, EnvVar
 from dagster_dbt import DbtCliResource
 from google.cloud import storage
 from google.auth.exceptions import DefaultCredentialsError
+from google.cloud import exceptions
 
 # define the cloud sql postgres resource
 @resource(
@@ -27,16 +28,8 @@ def cloud_sql_postgres_resource(context):
     engine = create_engine(conn_str)
     return engine
 
-# Define the path to dbt project directory
-_THIS_FILE_DIR = Path(__file__).parent.resolve() # Assuming resources.py is in dagster_pipelines/
-_DAGSTER_PROJECT_ROOT = _THIS_FILE_DIR.parent # Root of dagster_pipelines project
-_MONOREPO_ROOT = _DAGSTER_PROJECT_ROOT.parent # Root of the monorepo (e.g., data/)
-
-DBT_PROJECT_DIR = _MONOREPO_ROOT / "dbt-pipelines" / "dbt_pipelines"
+DBT_PROJECT_DIR = "./dbt-pipelines"
 DBT_PROFILES_DIR = DBT_PROJECT_DIR # Assuming profiles.yml is in the dbt project directory
-
-# Calculate path to the dbt executable inside dbt_venv
-DBT_EXECUTABLE_PATH = _MONOREPO_ROOT / "dbt_venv" / "bin" / "dbt"
 
 # dbt resource for STAGING environment
 # This will use the 'stg' target from your profiles.yml by default if 'target' is not specified,
@@ -44,7 +37,6 @@ DBT_EXECUTABLE_PATH = _MONOREPO_ROOT / "dbt_venv" / "bin" / "dbt"
 dbt_stg_resource = DbtCliResource(
     project_dir=os.fspath(DBT_PROJECT_DIR),
     profiles_dir=os.fspath(DBT_PROFILES_DIR),
-    executable=os.fspath(DBT_EXECUTABLE_PATH),
     target="stg"  # Explicitly set target to 'stg'
 )
 
@@ -52,7 +44,6 @@ dbt_stg_resource = DbtCliResource(
 dbt_prod_resource = DbtCliResource(
     project_dir=os.fspath(DBT_PROJECT_DIR),
     profiles_dir=os.fspath(DBT_PROFILES_DIR),
-    executable=os.fspath(DBT_EXECUTABLE_PATH),
     target="prod"  # Explicitly set target to 'prod'
 )
 
@@ -91,13 +82,16 @@ def active_env_config_resource(context):
 # define the crypto ecosystems repo resource
 @resource
 def electric_capital_ecosystems_repo():
+    # path is relative to the app directory inside the container
+    clone_dir = "/opt/dagster/app/data/crypto-ecosystems"
+
     return {
         "git_repo_url": "https://github.com/electric-capital/crypto-ecosystems.git",
-        "clone_parent_dir": os.path.join(os.environ.get("DAGSTER_HOME"), "crypto-ecosystems"),
+        "clone_parent_dir": clone_dir,
         "repo_name": "crypto-ecosystems",
         "primary_branch": "master",
         "output_filename": "exports.jsonl",
-        "output_filepath": os.path.join(os.environ.get("DAGSTER_HOME"), "crypto-ecosystems", "crypto-ecosystems","exports.jsonl")
+        "output_filepath": os.path.join(clone_dir, "crypto-ecosystems", "exports.jsonl")
     }
 
 # google cloud storage resource

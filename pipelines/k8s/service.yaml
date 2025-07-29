@@ -1,0 +1,13 @@
+# k8s/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: dagster-webserver-service
+spec:
+  type: LoadBalancer
+  selector:
+    app: dagster-webserver
+  ports:
+  - protocol: TCP
+    port: 80 # External port
+    targetPort: 3000 # Internal port on the container

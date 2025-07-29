@@ -1,5 +1,4 @@
 import dagster as dg
-from dagster import asset
 import os
 import requests
 from requests.adapters import HTTPAdapter

@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 from sqlalchemy import text
 from dagster import Output, op, job, Out, Failure, asset
-from dagster_pipelines.api_data import create_dbt_api_views
+from .api_data import create_dbt_api_views
 
 @op(required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"})
 def create_prod_indexes(context, previous_op_output): 
@@ -121,14 +121,14 @@ def copy_clean_to_temp_target_schema(context, previous_op_output):
     #yield Output(None) # Use yield
 
 @op(
-    required_resource_keys={"active_dbt_runner"}
+    required_resource_keys={"dbt_cli"}
 )
 def run_dbt_tests_on_clean_models(context): #Correct return type
     """
     Runs dbt tests (path:models/clean/) using the active dbt target (prod or stg).
     """
-    active_dbt_runner = context.resources.active_dbt_runner
-    target_name = active_dbt_runner.target # "prod" or "stg"
+    dbt = context.resources.dbt_cli
+    target_name = dbt.target # "prod" or "stg"
 
     # tell the user what environment we are running in
     context.log.info(f"----------************* Running in environment: {target_name} *************----------")
@@ -142,7 +142,7 @@ def run_dbt_tests_on_clean_models(context): #Correct return type
 
         # Execute dbt test command and wait for completion
         # The context=context argument ensures logs from the dbt process are captured by Dagster
-        invocation: DbtCliInvocation = context.resources.active_dbt_runner.cli(
+        invocation: DbtCliInvocation = dbt.cli(
             dbt_command,
             context=context
             # Note: raise_on_error defaults to True. If dbt exits non-zero,
