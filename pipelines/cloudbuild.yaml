@@ -41,6 +41,9 @@ steps:
     echo "bitbucket_api_key=$$BB_KEY" >> .env
 
 - name: 'gcr.io/cloud-builders/docker'
+  id: 'docker build'
+  env: 
+  - 'DOCKER_BUILDKIT=1'
   args: [
     'build',
     '--secret=id=env.list,src=.env',
