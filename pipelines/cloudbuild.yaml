@@ -1,4 +1,3 @@
-# cloudbuild.yaml
 steps:
 # 1. Access the dbt environment variables from Secret Manager
 - name: 'gcr.io/cloud-sdk-gcloud/gcloud'
@@ -8,37 +7,34 @@ steps:
   - 'gcloud secrets versions access latest --secret="dagster-env-list" > .env'
 
 # 2. Build the Docker image using the secret
-# The ID 'dbt-prod-env' makes the .env file available inside the build at /run/secrets/dbt-prod-env
 - name: 'gcr.io/cloud-builders/docker'
   args: [
     'build',
-    '--secret=id=env.list,src=.env', # This maps the .env file to the secret mount in your Dockerfile
+    '--secret=id=env.list,src=.env',
     '-t', 'gcr.io/$PROJECT_ID/dagster-app:$SHORT_SHA',
     '-t', 'gcr.io/$PROJECT_ID/dagster-app:latest',
-    '.'
+    './pipelines' # IMPORTANT: Set build context to the pipelines directory
   ]
 
-# 3. Push the image to Google Container Registry (or Artifact Registry)
+# 3. Push the image to Google Container Registry
 - name: 'gcr.io/cloud-builders/docker'
   args: ['push', 'gcr.io/$PROJECT_ID/dagster-app']
 
 # 4. Deploy to GKE by updating the image for the deployment
-- name: 'gcr.io/cloud-builders/gke-deploy'
+- name: 'gcr.io/cloud-builders/gke-deploy-develop'
   args:
   - 'run'
-  - '--filename=k8s/' # Point to your manifest directory
-  - '--image=gcr.io/$PROJECT_ID/dagster-app=$IMAGE_URL' # Specifies which container image to update
-  - '--location=us-central1-c' 
+  - '--filename=pipelines/k8s/' # Correct path to k8s manifests
+  # The --image flag uses the format: KEY_IN_YAML=NEW_IMAGE_WITH_TAG
+  - '--image=gcr.io/$PROJECT_ID/dagster-app=gcr.io/$PROJECT_ID/dagster-app:$SHORT_SHA'
+  - '--location=us-central1-c'
   - '--cluster=dagster-cluster'
-
-# This substitutes the specific image tag for the deployment
-substitutions:
-  _IMAGE_URL: 'gcr.io/${PROJECT_ID}/dagster-app:${SHORT_SHA}'
 
 # Defines which images to push after a successful build
 images:
-  - 'gcr.io/$PROJECT_ID/dagster-app:$SHORT_SHA'
-  - 'gcr.io/$PROJECT_ID/dagster-app:latest'
+- 'gcr.io/$PROJECT_ID/dagster-app:$SHORT_SHA'
+- 'gcr.io/$PROJECT_ID/dagster-app:latest'
 
+# Send logs only to Cloud Logging
 options:
   logging: CLOUD_LOGGING_ONLY
