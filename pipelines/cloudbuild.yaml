@@ -8,9 +8,8 @@ steps:
 # 2. Write the secret from the environment variable into a .env file
 # This step replaces your original gcloud command.
 - name: 'bash'
-  args:
-  - '-c'
-  - 'echo "$$DAGSTER_ENV_LIST" > .env' # $$ is used to escape the $ for Cloud Build
+  id: 'Create .env from Secret'
+  script: 'echo "$$DAGSTER_ENV_LIST" > .env'
 
 # 3. Build the Docker image using the secret file
 - name: 'us-central1-docker.pkg.dev/cloud-builders/docker/latest'
