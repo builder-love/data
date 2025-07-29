@@ -1,39 +1,39 @@
 steps:
 # 1. Access the dbt environment variables from Secret Manager
-- name: 'gcr.io/cloud-sdk-gcloud/gcloud'
+- name: 'us-central1-docker.pkg.dev/cloud-builders/gcloud/latest'
   entrypoint: 'sh'
   args:
   - '-c'
   - 'gcloud secrets versions access latest --secret="dagster-env-list" > .env'
 
 # 2. Build the Docker image using the secret
-- name: 'gcr.io/cloud-builders/docker'
+- name: 'us-central1-docker.pkg.dev/cloud-builders/docker/latest'
   args: [
     'build',
     '--secret=id=env.list,src=.env',
-    '-t', 'gcr.io/$PROJECT_ID/dagster-app:$SHORT_SHA',
-    '-t', 'gcr.io/$PROJECT_ID/dagster-app:latest',
+    '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA',
+    '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest',
     './pipelines' # IMPORTANT: Set build context to the pipelines directory
   ]
 
-# 3. Push the image to Google Container Registry
-- name: 'gcr.io/cloud-builders/docker'
-  args: ['push', 'gcr.io/$PROJECT_ID/dagster-app']
+# 3. Push the image to Artifact Registry
+- name: 'us-central1-docker.pkg.dev/cloud-builders/docker/latest'
+  args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app']
 
 # 4. Deploy to GKE by updating the image for the deployment
-- name: 'gcr.io/cloud-builders/gke-deploy-develop'
+- name: 'us-central1-docker.pkg.dev/cloud-builders/gke-deploy/latest'
   args:
   - 'run'
   - '--filename=pipelines/k8s/' # Correct path to k8s manifests
   # The --image flag uses the format: KEY_IN_YAML=NEW_IMAGE_WITH_TAG
-  - '--image=gcr.io/$PROJECT_ID/dagster-app=gcr.io/$PROJECT_ID/dagster-app:$SHORT_SHA'
+  - '--image=us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app=us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA'
   - '--location=us-central1-c'
   - '--cluster=dagster-cluster'
 
 # Defines which images to push after a successful build
 images:
-- 'gcr.io/$PROJECT_ID/dagster-app:$SHORT_SHA'
-- 'gcr.io/$PROJECT_ID/dagster-app:latest'
+- 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA'
+- 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest'
 
 # Send logs only to Cloud Logging
 options:
