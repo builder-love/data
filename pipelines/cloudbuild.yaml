@@ -19,13 +19,26 @@ steps:
   entrypoint: 'sh'
   args:
     - '-c'
-    - '/cloud_sql_proxy --project=$PROJECT_ID --quiet $$INSTANCE_CONNECTION_NAME &'
+    - '/cloud_sql_proxy --project=$PROJECT_ID $$INSTANCE_CONNECTION_NAME &'
   secretEnv: ['INSTANCE_CONNECTION_NAME']
 
 - name: 'gcr.io/cloud-builders/gcloud'
-  id: 'Wait for Proxy'
+  id: 'Wait for Proxy to be Ready'
   entrypoint: 'bash'
-  args: ['-c', 'sleep 5']
+  args:
+  - '-c'
+  - |
+    echo "Waiting for proxy..."
+    for i in {1..30}; do
+      if nc -z 127.0.0.1 5432; then
+        echo "Proxy is ready."
+        exit 0
+      fi
+      echo -n "."
+      sleep 1
+    done
+    echo "Proxy did not start in time."
+    exit 1
 
 - name: 'bash'
   id: 'Create .env File'
