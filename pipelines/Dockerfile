@@ -19,7 +19,6 @@
     
     # Securely mount the secrets file, source the variables, and run dbt
     RUN --mount=type=secret,id=env.list,target=/run/secrets/env.list \
-    echo "Forcing dbt to re-compile to see logs. V3..." && \
     set -a && . /run/secrets/env.list && set +a && \
     dbt deps && \
     dbt compile --threads 16 --target stg --target-path "target/stg" --profiles-dir . && \
