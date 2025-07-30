@@ -16,11 +16,10 @@ availableSecrets:
 steps:
 - name: 'gcr.io/cloud-sql-connectors/cloud-sql-proxy'
   id: 'Start Proxy'
-  detached: true
+  entrypoint: 'sh'
   args:
-    - '--project=$PROJECT_ID'
-    - '--quiet'
-    - '$$INSTANCE_CONNECTION_NAME'
+    - '-c'
+    - '/cloud_sql_proxy --project=$PROJECT_ID --quiet $$INSTANCE_CONNECTION_NAME &'
   secretEnv: ['INSTANCE_CONNECTION_NAME']
 
 - name: 'gcr.io/cloud-builders/gcloud'
@@ -33,7 +32,6 @@ steps:
   secretEnv:
   - 'DB_USER'
   - 'DB_PASSWORD'
-  - 'INSTANCE_CONNECTION_NAME'
   - 'GCP_PROJECT_ID'
   - 'GH_PAT'
   - 'BB_KEY'
@@ -49,7 +47,6 @@ steps:
     echo "cloud_sql_postgres_host=$DB_HOST" >> .env
     echo "cloud_sql_user=$$DB_USER" >> .env
     echo "cloud_sql_password=$$DB_PASSWORD" >> .env
-    echo "cloud_sql_instance_connection_name=$$INSTANCE_CONNECTION_NAME" >> .env
     echo "gcp_project_id=$$GCP_PROJECT_ID" >> .env
     echo "go_blockchain_ecosystem=$$GH_PAT" >> .env
     echo "bitbucket_api_key=$$BB_KEY" >> .env
