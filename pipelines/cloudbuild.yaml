@@ -19,7 +19,7 @@ steps:
   args:
     - '-c'
     - |
-      docker pull gcr.io/cloud-sql-proxy/cloud-sql-proxy:2.15.1
+      docker pull gcr.io/cloud-sql-proxy/v2.15.1/cloud-sql-proxy.linux.amd64
       docker run -d \
         --name=cloudsql-proxy \
         --network=cloudbuild \
