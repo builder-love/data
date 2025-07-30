@@ -19,7 +19,7 @@ steps:
   args:
     - -c
       - |
-        wget -O /workspace/cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/2.18.0
+        wget -P /workspace -O cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/2.18.0
         chmod +x /workspace/cloud-sql-proxy
 
 # 3. Create .env file inside the 'pipelines' directory.
