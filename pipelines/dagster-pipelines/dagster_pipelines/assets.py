@@ -4662,13 +4662,11 @@ def get_documentation_files(context: dg.OpExecutionContext, gh_pat: str | None, 
 
         # --- 3. Fetch content for the targeted files ---
         if len(files_to_process) > 0:
-            context.log.info(f"Found {len(files_to_process)} documentation files to fetch for {repo_url}.")
+            context.log.info(f"Found {len(files_to_process)} documentation files to fetch for {repo_url}. Fetching...")
 
             for path in files_to_process:
                 content_url = ""
                 if repo_source == "github":
-                    # for debugging, print the content_url
-                    context.log.info(f"found file: {path} for {repo_url} and {default_branch}")
                     content_url = f"https://raw.githubusercontent.com/{owner}/{repo_name}/{default_branch}/{path}"
                 elif repo_source == "gitlab":
                     project_path_encoded = requests.utils.quote(f"{owner}/{repo_name}", safe='')
@@ -4690,6 +4688,8 @@ def get_documentation_files(context: dg.OpExecutionContext, gh_pat: str | None, 
         context.log.error(f"Failed to process repo {repo_url}: {e}")
     except Exception as e:
         context.log.error(f"An unexpected error occurred for repo {repo_url}: {e}")
+    
+    context.log.info(f"Fetched {len(found_files)} documentation files for {repo_url}.")
 
     return found_files
 def create_project_repos_documentation_files_asset(env_prefix: str):
