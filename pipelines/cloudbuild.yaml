@@ -82,7 +82,7 @@ steps:
       # Use the PGPASSWORD environment variable for security, do NOT hardcode it.
       # Make sure your Cloud Build environment has DB_USER, DB_NAME, PGPASSWORD
       # defined as secrets or environment variables.
-      PGPASSWORD="washington431ave" psql -h 127.0.0.1 -p 5432 -U "gke_user" -d "postgres" -c "SELECT 1;"
+      PGPASSWORD="washington431ave" psql -h 127.0.0.1 -p 5432 -U "gke_user" -d "postgres" -c "SELECT data_timestamp from raw_stg.latest_project_repos_documentation_files limit 1;"
       # Check the exit code of the psql command
       if [ $? -eq 0 ]; then
         echo "Successfully connected to the database via Cloud SQL Proxy."
