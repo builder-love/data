@@ -60,8 +60,8 @@ steps:
     cat <<EOT > pipelines/.env
     DAGSTER_ENV=$$DAGSTER_ENV
     DAGSTER_HOME=$$DAGSTER_HOME
-    cloud_sql_postgres_db=$DB_NAME
-    cloud_sql_postgres_host=$DB_HOST
+    cloud_sql_postgres_db=$$DB_NAME
+    cloud_sql_postgres_host=$$DB_HOST
     cloud_sql_user=$$DB_USER
     cloud_sql_password=$$DB_PASSWORD
     gcp_project_id=$$GCP_PROJECT_ID
