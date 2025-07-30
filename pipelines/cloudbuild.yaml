@@ -15,7 +15,7 @@ availableSecrets:
 steps:
 - name: 'gcr.io/cloud-builders/docker'
   id: 'pull-proxy-image'
-  args: ['pull', 'gcr.io/cloud-builders/cloud-sql-proxy']
+  args: ['pull', 'gcr.io/cloud-builders/cloud-sql-proxy:2.15.1']
   waitFor: ['-'] # Start this step immediately
 
 # 2. Run the Cloud SQL Proxy in the 'cloudbuild' network
@@ -29,7 +29,7 @@ steps:
         --name=cloudsql-proxy \
         --network=cloudbuild \
         -p 127.0.0.1:5432:5432 \
-        gcr.io/cloud-builders/cloud-sql-proxy:latest \ 
+        gcr.io/cloud-builders/cloud-sql-proxy:2.15.1 \ 
         data-pipelines-450611:us-central1:builder-love
       echo "Cloud SQL Proxy started. Waiting for it to be ready..."
       sleep 10 # Give the proxy a moment to fully initialize
