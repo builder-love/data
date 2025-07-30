@@ -4682,14 +4682,14 @@ def get_documentation_files(context: dg.OpExecutionContext, gh_pat: str | None, 
                             "file_name": os.path.basename(path),
                             "file_content": content_response.text.replace('\x00', '')
                         })
+            
+            context.log.info(f"Successfully fetched {len(found_files)} documentation files for {repo_url}.")
         else:
             found_files = []
     except requests.exceptions.RequestException as e:
         context.log.error(f"Failed to process repo {repo_url}: {e}")
     except Exception as e:
         context.log.error(f"An unexpected error occurred for repo {repo_url}: {e}")
-    
-    context.log.info(f"Fetched {len(found_files)} documentation files for {repo_url}.")
 
     return found_files
 def create_project_repos_documentation_files_asset(env_prefix: str):
