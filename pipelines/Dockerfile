@@ -13,17 +13,18 @@
     
     # Copy all application code
     COPY . .
+
+    # copy the .env file into the builder stage
+    COPY .env .
     
     # Change to the dbt project directory
     WORKDIR /opt/dagster/app/dbt-pipelines
     
-    # Securely mount the secrets file, source the variables, and run dbt
-    RUN --mount=type=secret,id=env.list,target=/run/secrets/env.list \
-    set -a && . /run/secrets/env.list && set +a && \
+    # source the variables, and run dbt
+    RUN set -a && . .env && set +a && \
     dbt deps && \
     dbt compile --threads 16 --target stg --target-path "target/stg" --profiles-dir . && \
     dbt compile --threads 16 --target prod --target-path "target/prod" --profiles-dir .
-    
     
 # --- Final Stage ---
     FROM python:3.13-slim
