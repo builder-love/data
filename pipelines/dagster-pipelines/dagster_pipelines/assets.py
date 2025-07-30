@@ -4687,7 +4687,7 @@ def get_documentation_files(context: dg.OpExecutionContext, gh_pat: str | None, 
         else:
             found_files = []
     except requests.exceptions.RequestException as e:
-        context.log.error(f"Failed to process repo {repo_url}: {e}")
+        context.log.warning(f"Failed to process repo {repo_url}: {e}")
     except Exception as e:
         context.log.error(f"An unexpected error occurred for repo {repo_url}: {e}")
 
