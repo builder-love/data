@@ -11,7 +11,7 @@ steps:
     - '-c'
     - |
       echo "Attempting to start proxy with connection name: [$$INSTANCE_CONNECTION_NAME]"
-      /cloud_sql_proxy --structured-logs --debug-logs $$INSTANCE_CONNECTION_NAME
+      cloud_sql_proxy --structured-logs --debug-logs $$INSTANCE_CONNECTION_NAME
   secretEnv: ['INSTANCE_CONNECTION_NAME']
 
 options:
