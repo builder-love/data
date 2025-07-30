@@ -53,12 +53,9 @@ steps:
 
 - name: 'gcr.io/cloud-builders/docker'
   id: 'docker build'
-  env: 
-  - 'DOCKER_BUILDKIT=1'
   args: [
     'build',
     '--network=cloudbuild',
-    '--secret=id=env.list,src=.env',
     '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA',
     '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest',
     './pipelines'
