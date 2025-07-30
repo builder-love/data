@@ -30,7 +30,7 @@ steps:
   - |
     apt-get update && apt-get install -y netcat-openbsd
     echo "Waiting for proxy..."
-    for i in {1..30}; do
+    for i in {1..60}; do
       if nc -z 127.0.0.1 5432; then
         echo "Proxy is ready."
         exit 0
