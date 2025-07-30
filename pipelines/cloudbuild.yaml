@@ -61,8 +61,10 @@ steps:
 # 4. Build the Docker image, connecting to the proxy network.
 - name: 'gcr.io/cloud-builders/docker'
   id: 'docker build'
+  waitFor: ['Start-Proxy-Service']
   args: [
     'build',
+    '--network=cloudbuild',
     '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA',
     '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest',
     './pipelines'
