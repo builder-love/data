@@ -55,6 +55,11 @@ steps:
   args:
     - '-c'
     - |
+      # first print the .env file BEFORE starting the docker build
+      echo "--- Contents of .env file ---"
+      cat .env # Assuming .env is in the Cloud Build working directory
+      echo "--- End of .env file contents ---"
+      
       # first install the proxy using curl
       curl -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.18.0/cloud-sql-proxy.linux.amd64
       chmod +x cloud-sql-proxy
@@ -69,28 +74,6 @@ steps:
       
       # Give the proxy a moment to fully initialize
       sleep 5 
-
-      # --- NEW: Test Database Connection ---
-      echo "--- Testing database connection via proxy ---"
-      # You'll need to install 'psql' if it's not in the 'docker' builder image.
-      # The 'docker' builder might not have psql by default.
-      # Let's try installing it first if needed.
-      # For Debian/Ubuntu based images (which gcr.io/cloud-builders/docker often is):
-      apt-get update && apt-get install -y postgresql-client
-
-      # Replace with your actual database, user, and potentially password
-      # Use the PGPASSWORD environment variable for security, do NOT hardcode it.
-      # Make sure your Cloud Build environment has DB_USER, DB_NAME, PGPASSWORD
-      # defined as secrets or environment variables.
-      PGPASSWORD="washington431ave" psql -h 127.0.0.1 -p 5432 -U "gke_user" -d "postgres" -c "SELECT data_timestamp from raw_stg.latest_project_repos_documentation_files limit 1;"
-      # Check the exit code of the psql command
-      if [ $? -eq 0 ]; then
-        echo "Successfully connected to the database via Cloud SQL Proxy."
-      else
-        echo "Failed to connect to the database via Cloud SQL Proxy. Exiting build."
-        exit 1
-      fi
-      echo "--- Database connection test complete ---"
 
       # --- Docker Build Operations ---
       docker build \
