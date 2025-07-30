@@ -57,10 +57,9 @@ steps:
 
     # Part 4: Create the .env file
     echo "--- Creating .env file ---"
-    # Using a heredoc is cleaner for multi-line files
     cat <<EOT > pipelines/.env
-    DAGSTER_ENV=$DAGSTER_ENV
-    DAGSTER_HOME=$DAGSTER_HOME
+    DAGSTER_ENV=$$DAGSTER_ENV
+    DAGSTER_HOME=$$DAGSTER_HOME
     cloud_sql_postgres_db=$DB_NAME
     cloud_sql_postgres_host=$DB_HOST
     cloud_sql_user=$$DB_USER
