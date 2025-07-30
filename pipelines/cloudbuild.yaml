@@ -60,7 +60,7 @@ steps:
 # 4. Build the Docker image, connecting to the proxy network.
 - name: 'gcr.io/cloud-builders/docker'
   id: 'docker build'
-  waitFor: ['proxy', 'Create .env File']
+  waitFor: ['proxy-service', 'Create .env File']
   args: [
     'build',
     '--network=cloudbuild',
