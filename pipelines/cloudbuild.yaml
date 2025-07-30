@@ -13,14 +13,14 @@ availableSecrets:
     env: 'BB_KEY'
 
 steps:
-- name: 'gcr.io/cloud-builders/wget'
-  id: 'install-proxy'
-  entrypoint: sh
-  args:
-    - -c
-      - |
-        wget -P /workspace -O cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/2.18.0
-        chmod +x /workspace/cloud-sql-proxy
+# - name: 'gcr.io/cloud-builders/wget'
+#   id: 'install-proxy'
+#   entrypoint: sh
+#   args:
+#     - -c
+#       - |
+#         wget -P /workspace -O cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/2.18.0
+#         chmod +x /workspace/cloud-sql-proxy
 
 # 3. Create .env file inside the 'pipelines' directory.
 - name: 'bash'
@@ -55,9 +55,13 @@ steps:
   args:
     - '-c'
     - |
+      # first install the proxy using curl
+      curl -L -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/2.18.0
+      chmod +x cloud-sql-proxy
+
       # Start the Cloud SQL Proxy in the background
       # Use your specific instance connection name and port
-      /workspace/cloud-sql-proxy \
+      ./cloud-sql-proxy \
         -instances=data-pipelines-450611:us-central1:builder-love=tcp:5432 \
         --address=127.0.0.1 &
       
