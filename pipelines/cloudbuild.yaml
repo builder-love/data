@@ -41,15 +41,15 @@ steps:
   - 'DB_NAME=postgres'
   - 'DB_HOST=127.0.0.1'
   script: |
-    echo "DAGSTER_ENV=$DAGSTER_ENV" > .env
-    echo "DAGSTER_HOME=$DAGSTER_HOME" >> .env
-    echo "cloud_sql_postgres_db=$DB_NAME" >> .env
-    echo "cloud_sql_postgres_host=$DB_HOST" >> .env
-    echo "cloud_sql_user=$$DB_USER" >> .env
-    echo "cloud_sql_password=$$DB_PASSWORD" >> .env
-    echo "gcp_project_id=$$GCP_PROJECT_ID" >> .env
-    echo "go_blockchain_ecosystem=$$GH_PAT" >> .env
-    echo "bitbucket_api_key=$$BB_KEY" >> .env
+    echo "DAGSTER_ENV=$DAGSTER_ENV" > pipelines/.env
+    echo "DAGSTER_HOME=$DAGSTER_HOME" >> pipelines/.env
+    echo "cloud_sql_postgres_db=$DB_NAME" >> pipelines/.env
+    echo "cloud_sql_postgres_host=$DB_HOST" >> pipelines/.env
+    echo "cloud_sql_user=$$DB_USER" >> pipelines/.env
+    echo "cloud_sql_password=$$DB_PASSWORD" >> pipelines/.env
+    echo "gcp_project_id=$$GCP_PROJECT_ID" >> pipelines/.env
+    echo "go_blockchain_ecosystem=$$GH_PAT" >> pipelines/.env
+    echo "bitbucket_api_key=$$BB_KEY" >> pipelines/.env
 
 - name: 'gcr.io/cloud-builders/docker'
   id: 'docker build'
