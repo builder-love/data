@@ -65,7 +65,7 @@ steps:
 
       # Start the Cloud SQL Proxy in the background
       # Use your specific instance connection name and port
-      ./cloud-sql-proxy -instances=data-pipelines-450611:us-central1:builder-love=tcp:5432
+      ./cloud-sql-proxy data-pipelines-450611:us-central1:builder-love
       
       # Give the proxy a moment to fully initialize
       sleep 5 
