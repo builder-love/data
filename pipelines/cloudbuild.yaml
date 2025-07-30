@@ -25,6 +25,12 @@ steps:
     curl -L -f https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.15.1/cloud-sql-proxy.linux.amd64 -o cloud-sql-proxy
     chmod +x cloud-sql-proxy
     ./cloud-sql-proxy --structured-logs --health-check data-pipelines-450611:us-central1:builder-love &
+
+    sleep 5
+
+    echo "--- Displaying proxy log output ---"
+    cat proxy.log
+
   waitFor: ['-']
 
 # 2. Wait for the proxy's health check to be ready (this step is optional but recommended).
