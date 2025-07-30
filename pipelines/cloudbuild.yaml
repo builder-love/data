@@ -16,7 +16,7 @@ steps:
 # 1. Download, permission, and run the proxy in the background.
 # This step creates a proxy connection that subsequent steps can use.
 - name: 'gcr.io/cloud-builders/gcloud'
-  id: 'Start-Proxy-Service'
+  id: 'proxy'
   entrypoint: 'sh'
   args:
   - '-c'
@@ -24,7 +24,7 @@ steps:
     set -e
     curl -L -f https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.15.1/cloud-sql-proxy.linux.amd64 -o cloud-sql-proxy
     chmod +x cloud-sql-proxy
-    ./cloud-sql-proxy --structured-logs --health-check --http-address=0.0.0.0 data-pipelines-450611:us-central1:builder-love > proxy.log 2>&1 &
+    ./cloud-sql-proxy --structured-logs --health-check data-pipelines-450611:us-central1:builder-love > proxy.log 2>&1 &
 
     sleep 5
 
@@ -46,7 +46,7 @@ steps:
   - 'DAGSTER_ENV=stg'
   - 'DAGSTER_HOME=/opt/dagster/app'
   - 'DB_NAME=postgres'
-  - 'DB_HOST=Start-Proxy-Service' # This points to the proxy.
+  - 'DB_HOST=proxy' # This points to the proxy.
   script: |
     echo "DAGSTER_ENV=$DAGSTER_ENV" > pipelines/.env
     echo "DAGSTER_HOME=$DAGSTER_HOME" >> pipelines/.env
@@ -61,7 +61,7 @@ steps:
 # 4. Build the Docker image, connecting to the proxy network.
 - name: 'gcr.io/cloud-builders/docker'
   id: 'docker build'
-  waitFor: ['Start-Proxy-Service', 'Create .env File']
+  waitFor: ['proxy', 'Create .env File']
   args: [
     'build',
     '--network=cloudbuild',
