@@ -13,13 +13,13 @@ availableSecrets:
     env: 'BB_KEY'
 
 steps:
-# 1. Start Proxy as a background service using its default entrypoint.
+# 1. Start Proxy as a background service
 - name: 'gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.15.1-alpine'
   id: 'Start-Proxy-Service'
+  entrypoint: 'sh'
   args:
-    - '--structured-logs'
-    - '--health-check'
-    - 'data-pipelines-450611:us-central1:builder-love'
+    - '-c'
+    - 'cloud-sql-proxy --structured-logs --health-check data-pipelines-450611:us-central1:builder-love &'
   waitFor: ['-']
 
 - name: 'gcr.io/cloud-builders/curl'
