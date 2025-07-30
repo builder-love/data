@@ -13,74 +13,80 @@ availableSecrets:
     env: 'BB_KEY'
 
 steps:
-# 1. Download, permission, and run the proxy in the background.
-# This step creates a proxy connection that subsequent steps can use.
-- name: 'gcr.io/cloud-builders/gcloud'
-  id: 'Start-Proxy-Service'
-  entrypoint: 'sh'
-  args:
-  - '-c'
-  - |
-    set -e
-    curl -L -f https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.15.1/cloud-sql-proxy.linux.amd64 -o cloud-sql-proxy
-    chmod +x cloud-sql-proxy
-    ./cloud-sql-proxy --structured-logs --health-check --http-address=0.0.0.0 data-pipelines-450611:us-central1:builder-love > proxy.log 2>&1 &
-
-    sleep 5
-
-    echo "--- Displaying proxy log output ---"
-    cat proxy.log
-
-  waitFor: ['-']
-
-# 2. Wait for the proxy's health check to be ready (this step is optional but recommended).
-- name: 'gcr.io/cloud-builders/curl'
-  id: 'Wait-for-Proxy'
-  args: ['--fail', '--retry', '20', '--retry-delay', '1', 'http://127.0.0.1:9090/ready']
-  waitFor: ['Start-Proxy-Service']
-
-# 3. Create .env file inside the 'pipelines' directory.
-- name: 'bash'
-  id: 'Create .env File'
-  secretEnv:
-  - 'DB_USER'
-  - 'DB_PASSWORD'
-  - 'GCP_PROJECT_ID'
-  - 'GH_PAT'
-  - 'BB_KEY'
+# A single, unified step to handle the proxy, .env creation, and docker build
+- name: 'gcr.io/cloud-builders/docker' # Use the docker builder as the base
+  id: 'Proxy-Env-and-Build'
+  entrypoint: 'bash'
+  secretEnv: ['DB_USER', 'DB_PASSWORD', 'GCP_PROJECT_ID', 'GH_PAT', 'BB_KEY']
   env:
   - 'DAGSTER_ENV=stg'
   - 'DAGSTER_HOME=/opt/dagster/app'
   - 'DB_NAME=postgres'
-  - 'DB_HOST=127.0.0.1' # This points to the proxy.
-  script: |
-    echo "DAGSTER_ENV=$DAGSTER_ENV" > pipelines/.env
-    echo "DAGSTER_HOME=$DAGSTER_HOME" >> pipelines/.env
-    echo "cloud_sql_postgres_db=$DB_NAME" >> pipelines/.env
-    echo "cloud_sql_postgres_host=$DB_HOST" >> pipelines/.env
-    echo "cloud_sql_user=$$DB_USER" >> pipelines/.env
-    echo "cloud_sql_password=$$DB_PASSWORD" >> pipelines/.env
-    echo "gcp_project_id=$$GCP_PROJECT_ID" >> pipelines/.env
-    echo "go_blockchain_ecosystem=$$GH_PAT" >> pipelines/.env
-    echo "bitbucket_api_key=$$BB_KEY" >> pipelines/.env
+  - 'DB_HOST=127.0.0.1'
+  args:
+  - '-c'
+  - |
+    set -e # Exit immediately if a command fails
 
-# 4. Build the Docker image, connecting to the proxy network.
-- name: 'gcr.io/cloud-builders/docker'
-  id: 'docker build'
-  args: [
-    'build',
-    '--network=cloudbuild',
-    '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA',
-    '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest',
-    './pipelines'
-  ]
+    # Part 1: Install curl in the docker builder container
+    apk add --no-cache curl
+
+    # Part 2: Download and start the proxy in the background
+    echo "--- Starting Proxy ---"
+    curl -o cloud-sql-proxy "https://storage.googleapis.com/cloud-sql-proxy/v2/cloud-sql-proxy.linux.amd64"
+    chmod +x cloud-sql-proxy
+    # The proxy can bind to localhost here since all commands are in the same step
+    ./cloud-sql-proxy --structured-logs --health-check data-pipelines-450611:us-central1:builder-love &
+    
+    # Part 3: Wait for the proxy to be healthy
+    echo "--- Waiting for proxy health check ---"
+    sleep 5 # Give it a moment to initialize
+    for i in {1..20}; do
+      # Use the -s (silent) flag for curl in the loop
+      if curl -s http://127.0.0.1:9090/ready; then
+        echo "Proxy is ready!"
+        break
+      fi
+      if [ $i -eq 20 ]; then
+        echo "Proxy did not become ready in time"
+        exit 1
+      fi
+      echo "Proxy not ready, waiting..."
+      sleep 1
+    done
+
+    # Part 4: Create the .env file
+    echo "--- Creating .env file ---"
+    # Using a heredoc is cleaner for multi-line files
+    cat <<EOT > pipelines/.env
+    DAGSTER_ENV=$DAGSTER_ENV
+    DAGSTER_HOME=$DAGSTER_HOME
+    cloud_sql_postgres_db=$DB_NAME
+    cloud_sql_postgres_host=$DB_HOST
+    cloud_sql_user=$$DB_USER
+    cloud_sql_password=$$DB_PASSWORD
+    gcp_project_id=$$GCP_PROJECT_ID
+    go_blockchain_ecosystem=$$GH_PAT
+    bitbucket_api_key=$$BB_KEY
+    EOT
+
+    # Part 5: Run the docker build
+    echo "--- Building Docker image ---"
+    docker build \
+      -t us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA \
+      -t us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest \
+      ./pipelines
 
 # 5. Push the built image to Artifact Registry.
 - name: 'gcr.io/cloud-builders/docker'
+  id: 'Push-Image'
+  waitFor: ['Proxy-Env-and-Build']
   args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app', '--all-tags']
 
 # 6. Deploy the new image to your GKE cluster.
 - name: 'gcr.io/cloud-builders/gke-deploy'
+  id: 'Deploy-Image'
+  waitFor: ['Push-Image']
   args:
   - 'run'
   - '--filename=pipelines/k8s/'
