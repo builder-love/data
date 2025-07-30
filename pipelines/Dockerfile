@@ -21,11 +21,9 @@
     WORKDIR /opt/dagster/app/dbt-pipelines
     
     # source the variables, and run dbt
-    # first print the .env file
-    RUN cat ../.env
-    
     RUN set -a && . ../.env && set +a && \
     dbt deps && \
+    dbt debug --config && \
     dbt compile --threads 16 --target stg --target-path "target/stg" --profiles-dir . && \
     dbt compile --threads 16 --target prod --target-path "target/prod" --profiles-dir .
     
