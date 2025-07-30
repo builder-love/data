@@ -13,25 +13,14 @@ availableSecrets:
     env: 'BB_KEY'
 
 steps:
-# 1. Download, permission, and run the proxy in the background.
-# This step creates a proxy connection that subsequent steps can use.
-- name: 'gcr.io/cloud-builders/gcloud'
-  id: 'proxy'
-  entrypoint: 'sh'
+- name: 'gcr.io/cloud-builders/wget'
+  id: 'install-proxy'
+  entrypoint: sh
   args:
-  - '-c'
-  - |
-    set -e
-    curl -L -f https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.15.1/cloud-sql-proxy.linux.amd64 -o cloud-sql-proxy
-    chmod +x cloud-sql-proxy
-    ./cloud-sql-proxy --structured-logs data-pipelines-450611:us-central1:builder-love > proxy.log 2>&1 &
-
-    sleep 5
-
-    echo "--- Displaying proxy log output ---"
-    cat proxy.log
-
-  waitFor: ['-']
+    - -c
+      - |
+        wget -O /workspace/cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/2.18.0
+        chmod +x /workspace/cloud-sql-proxy
 
 # 3. Create .env file inside the 'pipelines' directory.
 - name: 'bash'
@@ -59,16 +48,36 @@ steps:
     echo "bitbucket_api_key=$$BB_KEY" >> pipelines/.env
 
 # 4. Build the Docker image, connecting to the proxy network.
-- name: 'gcr.io/cloud-builders/docker'
-  id: 'docker build'
-  waitFor: ['proxy', 'Create .env File']
-  args: [
-    'build',
-    '--network=cloudbuild',
-    '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA',
-    '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest',
-    './pipelines'
-  ]
+- name: 'gcr.io/cloud-builders/docker' # Use the docker builder as it's the primary operation
+  id: 'build-and-push-app'
+  waitFor: ['proxy', 'Create .env File'] # Keep your existing waits if needed
+  entrypoint: 'bash' # We'll run a multi-line bash script
+  args:
+    - '-c'
+    - |
+      # Start the Cloud SQL Proxy in the background
+      # Use your specific instance connection name and port
+      /workspace/cloud-sql-proxy \
+        -instances=data-pipelines-450611:us-central1:builder-love=tcp:5432 \
+        --address=127.0.0.1 &
+      
+      # Give the proxy a moment to fully initialize
+      sleep 5 
+      echo "Cloud SQL Proxy started. Proceeding with Docker build."
+
+      # --- Docker Build Operations ---
+      docker build \
+        --network=cloudbuild \
+        -t us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA \
+        -t us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest \
+        ./pipelines
+      
+      # --- Docker Push Operations ---
+      echo "Pushing Docker images..."
+      docker push us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA
+      docker push us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest
+
+      echo "Docker build and push completed."
 
 # 5. Push the built image to Artifact Registry.
 - name: 'gcr.io/cloud-builders/docker'
