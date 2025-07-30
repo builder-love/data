@@ -24,10 +24,10 @@
     RUN set -a && . ../.env && set +a && \
     dbt deps
     RUN set -a && . ../.env && set +a && \
-    dbt debug --config && \
+    dbt debug && \
     RUN set -a && . ../.env && set +a && \
-    dbt compile --threads 16 --target stg --target-path "target/stg" --profiles-dir . && \
-    dbt compile --threads 16 --target prod --target-path "target/prod" --profiles-dir .
+    dbt compile --threads 16 --target stg --target-path "target/stg" && \
+    dbt compile --threads 16 --target prod --target-path "target/prod"
     
 # --- Final Stage ---
     FROM python:3.13-slim
