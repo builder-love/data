@@ -18,30 +18,20 @@ steps:
   id: 'Start-Proxy-Service'
   args:
     - '--structured-logs'
-    # The hardcoded instance name is passed directly as an argument.
+    - '--health-check'
     - 'data-pipelines-450611:us-central1:builder-love'
-  # waitFor: ['-'] starts this step but doesn't wait for it to finish.
   waitFor: ['-']
 
-# 2. Robust health check to wait for the proxy to be ready.
-- name: 'gcr.io/cloud-builders/gcloud'
+- name: 'gcr.io/cloud-builders/curl'
   id: 'Wait-for-Proxy'
-  entrypoint: 'bash'
   args:
-  - '-c'
-  - |
-    apt-get update && apt-get install -y netcat-openbsd
-    echo "Waiting for proxy..."
-    for i in {1..30}; do
-      if nc -z 127.0.0.1 5432; then
-        echo "Proxy is ready."
-        exit 0
-      fi
-      sleep 1
-    done
-    echo "Proxy did not start in time."
-    exit 1
-  # This step waits for the proxy service to have started.
+  - '--fail'
+  - '--retry'
+  - '30'
+  - '--retry-delay'
+  - '1'
+  - '--retry-connrefused'
+  - 'http://127.0.0.1:9091/ready'
   waitFor: ['Start-Proxy-Service']
 
 # 3. Create .env file inside the 'pipelines' directory.
