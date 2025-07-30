@@ -15,11 +15,11 @@ availableSecrets:
 
 steps:
 - name: 'gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.15.1-alpine'
-  id: 'Debug Proxy Startup'
+  id: 'Start Proxy'
+  entrypoint: 'sh'
   args:
-    - '--structured-logs'
-    - '--debug-logs'
-    - '$$INSTANCE_CONNECTION_NAME'
+    - '-c'
+    - '/cloud_sql_proxy --structured-logs $$INSTANCE_CONNECTION_NAME &'
   secretEnv: ['INSTANCE_CONNECTION_NAME']
 
 - name: 'gcr.io/cloud-builders/gcloud'
