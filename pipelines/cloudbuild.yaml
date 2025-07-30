@@ -46,7 +46,7 @@ steps:
   - 'DAGSTER_ENV=stg'
   - 'DAGSTER_HOME=/opt/dagster/app'
   - 'DB_NAME=postgres'
-  - 'DB_HOST=proxy' # This points to the proxy.
+  - 'DB_HOST=127.0.0.1' # This points to the proxy.
   script: |
     echo "DAGSTER_ENV=$DAGSTER_ENV" > pipelines/.env
     echo "DAGSTER_HOME=$DAGSTER_HOME" >> pipelines/.env
