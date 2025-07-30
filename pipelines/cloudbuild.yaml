@@ -14,23 +14,28 @@ availableSecrets:
 
 steps:
 - name: 'gcr.io/cloud-builders/docker'
+  id: 'pull-proxy-image'
+  args: ['pull', 'gcr.io/cloud-builders/cloud-sql-proxy']
+  waitFor: ['-'] # Start this step immediately
+
+# 2. Run the Cloud SQL Proxy in the 'cloudbuild' network
+- name: 'gcr.io/cloud-builders/docker'
   id: 'proxy-service'
   entrypoint: 'sh'
   args:
     - '-c'
     - |
-      docker pull gcr.io/cloud-builders/cloud-sql-proxy
       docker run -d \
         --name=cloudsql-proxy \
         --network=cloudbuild \
         -p 127.0.0.1:5432:5432 \
-        gcr.io/cloud-sql-proxy/cloud-sql-proxy:2.15.1 \
+        gcr.io/cloud-builders/cloud-sql-proxy:latest \ 
         data-pipelines-450611:us-central1:builder-love
       echo "Cloud SQL Proxy started. Waiting for it to be ready..."
-      sleep 10
+      sleep 10 # Give the proxy a moment to fully initialize
       echo "Proxy status:"
       docker logs cloudsql-proxy
-  waitFor: ['-']
+  waitFor: ['pull-proxy-image'] # Ensure the image is pulled before running
 
 # 3. Create .env file inside the 'pipelines' directory.
 - name: 'bash'
