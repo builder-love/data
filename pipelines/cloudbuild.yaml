@@ -81,6 +81,17 @@ steps:
       bitbucket_api_key=$$BB_KEY
       EOT
 
+      # use the .env file to test connection to the database
+      echo "--- Installing PostgreSQL client ---"
+      apt-get update && apt-get install -y postgresql-client
+      echo "--- Testing database connection ---"
+
+      PGPASSWORD="$$DB_PASSWORD" psql -h "$$DB_HOST" -p 5432 -U "$$DB_USER" -d "$$DB_NAME" -c "SELECT data_timestamp from raw_stg.latest_project_repos_documentation_files limit 1;"
+      if [ $? -ne 0 ]; then
+        echo "Failed to connect to the database. Exiting build."
+        exit 1
+      fi
+
       # Part 5: Run the docker build
       echo "--- Building Docker image ---"
       docker build \
