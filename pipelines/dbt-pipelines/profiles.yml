@@ -7,7 +7,7 @@ dbt_pipelines:
       password: "{{ env_var('cloud_sql_password')  }}"
       port: 5432
       schema: clean_stg # Default schema for models if not overridden
-      threads: 4
+      threads: 16
       type: postgres
       user: "{{ env_var('cloud_sql_user')  }}" # same user as production
     prod:
@@ -16,6 +16,6 @@ dbt_pipelines:
       password: "{{ env_var('cloud_sql_password')  }}"
       port: 5432
       schema: clean
-      threads: 4
+      threads: 16
       type: postgres
       user: "{{ env_var('cloud_sql_user')  }}"
