@@ -14,7 +14,7 @@ availableSecrets:
 
 steps:
 # A single, unified step to handle the proxy, .env creation, and docker build
-- name: 'gcr.io/cloud-builders/docker' # Use the docker builder as the base
+- name: 'gcr.io/cloud-builders/gcloud'
   id: 'Proxy-Env-and-Build'
   entrypoint: 'bash'
   secretEnv: ['DB_USER', 'DB_PASSWORD', 'GCP_PROJECT_ID', 'GH_PAT', 'BB_KEY']
@@ -28,8 +28,8 @@ steps:
   - |
     set -e # Exit immediately if a command fails
 
-    # Part 1: Install curl in the docker builder container
-    apk add --no-cache curl
+    # Part 1: Install the docker client using apt-get
+    apt-get update -y && apt-get install -y --no-install-recommends docker.io
 
     # Part 2: Download and start the proxy in the background
     echo "--- Starting Proxy ---"
