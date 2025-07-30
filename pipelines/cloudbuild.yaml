@@ -52,11 +52,6 @@ steps:
   args:
     - '-c'
     - |
-      # first print the .env file BEFORE starting the docker build
-      echo "--- Contents of pipelines/.env file ---"
-      cat pipelines/.env # Assuming .env is in the Cloud Build working directory
-      echo "--- End of pipelines/.env file contents ---"
-
       # first install the proxy using curl
       curl -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.18.0/cloud-sql-proxy.linux.amd64
       chmod +x cloud-sql-proxy
