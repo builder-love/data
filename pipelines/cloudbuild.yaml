@@ -1,8 +1,8 @@
 steps:
 - name: 'gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.15.1-alpine'
-  id: 'Find-Proxy-Executable'
+  id: 'List-All-Files'
   entrypoint: 'sh'
-  args: ['-c', 'find / -name cloud_sql_proxy']
+  args: ['-c', 'ls -lR /']
 
 options:
   logging: CLOUD_LOGGING_ONLY
