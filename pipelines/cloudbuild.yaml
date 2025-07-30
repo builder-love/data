@@ -1,17 +1,29 @@
+# cloudbuild.yaml
+availableSecrets:
+  secretManager:
+  - versionName: projects/$PROJECT_ID/secrets/cloud_sql_user/versions/latest
+    env: 'DB_USER'
+  - versionName: projects/$PROJECT_ID/secrets/cloud_sql_password/versions/latest
+    env: 'DB_PASSWORD'
+  - versionName: projects/$PROJECT_ID/secrets/gcp_project_id/versions/latest
+    env: 'GCP_PROJECT_ID'
+  - versionName: projects/$PROJECT_ID/secrets/go_blockchain_ecosystem/versions/latest
+    env: 'GH_PAT'
+  - versionName: projects/$PROJECT_ID/secrets/bitbucket_api_key/versions/latest
+    env: 'BB_KEY'
+
 steps:
-# 1. Start the proxy using its default entrypoint and run it as a background service.
+# 1. Start Proxy as a background service using its default entrypoint.
 - name: 'gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.15.1-alpine'
   id: 'Start-Proxy-Service'
-  # We have REMOVED the 'entrypoint' line, so it uses the container's default.
   args:
     - '--structured-logs'
     # The hardcoded instance name is passed directly as an argument.
     - 'data-pipelines-450611:us-central1:builder-love'
-  # The 'waitFor' key with '-' tells Cloud Build to start this step
-  # but not wait for it to finish before starting the next one.
+  # waitFor: ['-'] starts this step but doesn't wait for it to finish.
   waitFor: ['-']
 
-# 2. Health check to confirm the proxy is listening.
+# 2. Robust health check to wait for the proxy to be ready.
 - name: 'gcr.io/cloud-builders/gcloud'
   id: 'Wait-for-Proxy'
   entrypoint: 'bash'
@@ -22,14 +34,68 @@ steps:
     echo "Waiting for proxy..."
     for i in {1..30}; do
       if nc -z 127.0.0.1 5432; then
-        echo "Proxy is ready. Connection successful! ✅"
+        echo "Proxy is ready."
         exit 0
       fi
       sleep 1
     done
     echo "Proxy did not start in time."
     exit 1
+  # This step waits for the proxy service to have started.
   waitFor: ['Start-Proxy-Service']
+
+# 3. Create .env file inside the 'pipelines' directory.
+- name: 'bash'
+  id: 'Create .env File'
+  secretEnv:
+  - 'DB_USER'
+  - 'DB_PASSWORD'
+  - 'GCP_PROJECT_ID'
+  - 'GH_PAT'
+  - 'BB_KEY'
+  env:
+  - 'DAGSTER_ENV=stg'
+  - 'DAGSTER_HOME=/opt/dagster/app'
+  - 'DB_NAME=postgres'
+  - 'DB_HOST=127.0.0.1' # This points to the proxy.
+  script: |
+    echo "DAGSTER_ENV=$DAGSTER_ENV" > pipelines/.env
+    echo "DAGSTER_HOME=$DAGSTER_HOME" >> pipelines/.env
+    echo "cloud_sql_postgres_db=$DB_NAME" >> pipelines/.env
+    echo "cloud_sql_postgres_host=$DB_HOST" >> pipelines/.env
+    echo "cloud_sql_user=$$DB_USER" >> pipelines/.env
+    echo "cloud_sql_password=$$DB_PASSWORD" >> pipelines/.env
+    echo "gcp_project_id=$$GCP_PROJECT_ID" >> pipelines/.env
+    echo "go_blockchain_ecosystem=$$GH_PAT" >> pipelines/.env
+    echo "bitbucket_api_key=$$BB_KEY" >> pipelines/.env
+
+# 4. Build the Docker image, connecting to the proxy network.
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'docker build'
+  args: [
+    'build',
+    '--network=cloudbuild',
+    '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA',
+    '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest',
+    './pipelines'
+  ]
+
+# 5. Push the built image to Artifact Registry.
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app', '--all-tags']
+
+# 6. Deploy the new image to your GKE cluster.
+- name: 'gcr.io/cloud-builders/gke-deploy'
+  args:
+  - 'run'
+  - '--filename=pipelines/k8s/'
+  - '--image=us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app=us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA'
+  - '--location=us-central1-c'
+  - '--cluster=dagster-cluster'
+
+images:
+- 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA'
+- 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY
