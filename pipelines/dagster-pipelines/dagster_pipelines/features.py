@@ -5,7 +5,7 @@ import dagster as dg
 from dagster import AssetKey, AssetIn
 from sqlalchemy import text
 import sqlalchemy
-from sentence_transformers import SentenceTransformer
+# from sentence_transformers import SentenceTransformer
 import math
 import numpy as np
 import gc
@@ -32,72 +32,72 @@ def aggregate_corpus_text(features_df: pd.DataFrame, context: dg.OpExecutionCont
     return corpus_df
 
 
-def generate_embeddings(corpus_df: pd.DataFrame, context: dg.OpExecutionContext) -> pd.DataFrame:
-    """
-    Takes an aggregated DataFrame, creates a corpus, processes it in batches,
-    and returns embeddings with structured progress logging.
-    """
-    context.log.info("Preparing corpus for embedding generation...")
-    # Combine the aggregated columns into a single text document per row
-    corpus_series = (
-        corpus_df['description'] + ' ' +
-        corpus_df['readme_content'] + ' ' +
-        corpus_df['file_content']
-    ).str.replace(r'\s+', ' ', regex=True).str.strip()
+# def generate_embeddings(corpus_df: pd.DataFrame, context: dg.OpExecutionContext) -> pd.DataFrame:
+#     """
+#     Takes an aggregated DataFrame, creates a corpus, processes it in batches,
+#     and returns embeddings with structured progress logging.
+#     """
+#     context.log.info("Preparing corpus for embedding generation...")
+#     # Combine the aggregated columns into a single text document per row
+#     corpus_series = (
+#         corpus_df['description'] + ' ' +
+#         corpus_df['readme_content'] + ' ' +
+#         corpus_df['file_content']
+#     ).str.replace(r'\s+', ' ', regex=True).str.strip()
 
-    if corpus_series.empty or not corpus_series.any():
-        context.log.warning("Corpus is empty after combining text. No embeddings will be generated.")
-        return pd.DataFrame()
+#     if corpus_series.empty or not corpus_series.any():
+#         context.log.warning("Corpus is empty after combining text. No embeddings will be generated.")
+#         return pd.DataFrame()
 
-    corpus = corpus_series.tolist()
-    repo_list = corpus_df['repo'].tolist() # Get repo names for the final DataFrame
+#     corpus = corpus_series.tolist()
+#     repo_list = corpus_df['repo'].tolist() # Get repo names for the final DataFrame
 
-    # Corpus is in a Python list; no longer need the DataFrame that holds the same text data. 
-    # Delete it before starting the memory-intensive encoding.
-    context.log.info(f"Dropping corpus_df from memory before starting model encoding...")
-    del corpus_df
-    del corpus_series
-    gc.collect()
-    context.log.info("Memory from corpus_df has been released.")
+#     # Corpus is in a Python list; no longer need the DataFrame that holds the same text data. 
+#     # Delete it before starting the memory-intensive encoding.
+#     context.log.info(f"Dropping corpus_df from memory before starting model encoding...")
+#     del corpus_df
+#     del corpus_series
+#     gc.collect()
+#     context.log.info("Memory from corpus_df has been released.")
     
-    context.log.info(f"Successfully created a corpus with {len(corpus)} documents.")
+#     context.log.info(f"Successfully created a corpus with {len(corpus)} documents.")
     
-    # Load the model
-    model = SentenceTransformer('all-mpnet-base-v2')
+#     # Load the model
+#     model = SentenceTransformer('all-mpnet-base-v2')
 
-    # Define a batch size
-    batch_size = 128
-    all_embeddings = []
+#     # Define a batch size
+#     batch_size = 128
+#     all_embeddings = []
 
-    context.log.info(f"Starting embedding generation with batch size {batch_size}...")
+#     context.log.info(f"Starting embedding generation with batch size {batch_size}...")
     
-    total_batches = math.ceil(len(corpus) / batch_size)
+#     total_batches = math.ceil(len(corpus) / batch_size)
 
-    for i in range(0, len(corpus), batch_size):
-        # Get the current batch of text
-        batch = corpus[i:i + batch_size]
+#     for i in range(0, len(corpus), batch_size):
+#         # Get the current batch of text
+#         batch = corpus[i:i + batch_size]
         
-        # Generate embeddings for the batch. 
-        batch_embeddings = model.encode(batch, show_progress_bar=False)
-        all_embeddings.append(batch_embeddings)
+#         # Generate embeddings for the batch. 
+#         batch_embeddings = model.encode(batch, show_progress_bar=False)
+#         all_embeddings.append(batch_embeddings)
 
-        # Log structured progress to the Dagster UI
-        current_batch_num = (i // batch_size) + 1
-        context.log.info(f"Processed batch {current_batch_num} of {total_batches}...")
+#         # Log structured progress to the Dagster UI
+#         current_batch_num = (i // batch_size) + 1
+#         context.log.info(f"Processed batch {current_batch_num} of {total_batches}...")
 
-    context.log.info("Embedding generation complete. Concatenating results.")
+#     context.log.info("Embedding generation complete. Concatenating results.")
 
-    # Combine the list of batch embeddings into a single numpy array
-    embeddings = np.vstack(all_embeddings)
+#     # Combine the list of batch embeddings into a single numpy array
+#     embeddings = np.vstack(all_embeddings)
 
-    # create a dataframe with the embeddings
-    embeddings_df = pd.DataFrame(embeddings, columns=[f'embedding_{i}' for i in range(embeddings.shape[1])])
+#     # create a dataframe with the embeddings
+#     embeddings_df = pd.DataFrame(embeddings, columns=[f'embedding_{i}' for i in range(embeddings.shape[1])])
     
-    # Add the repo column back for merging
-    embeddings_df['repo'] = repo_list
+#     # Add the repo column back for merging
+#     embeddings_df['repo'] = repo_list
     
-    context.log.info(f"Finished generating embeddings. Final shape: {embeddings_df.shape}")
-    return embeddings_df
+#     context.log.info(f"Finished generating embeddings. Final shape: {embeddings_df.shape}")
+#     return embeddings_df
 
 # Define the keyword groups and their corresponding feature column names
 KEYWORD_FEATURE_MAP = {
@@ -481,37 +481,37 @@ def create_project_repos_description_features_asset(env_prefix: str):
 
         context.log.info(f"Aggregation complete. Result has {len(final_features_df)} unique repos.")
 
-        # generate semantic embeddings
-        try:
-            context.log.info("Aggregating corpus text...")
-            corpus_df = aggregate_corpus_text(features_df, context) # Use the original raw df
+        # # generate semantic embeddings
+        # try:
+        #     context.log.info("Aggregating corpus text...")
+        #     corpus_df = aggregate_corpus_text(features_df, context) # Use the original raw df
 
-            # The raw features_df is now redundant. Delete it to free up memory.
-            context.log.info(f"Dropping raw features_df from memory to conserve resources...")
-            del features_df
-            gc.collect() # Ask the garbage collector to free up the memory now
-            context.log.info("Memory from raw features_df has been released.")
+        #     # The raw features_df is now redundant. Delete it to free up memory.
+        #     context.log.info(f"Dropping raw features_df from memory to conserve resources...")
+        #     del features_df
+        #     gc.collect() # Ask the garbage collector to free up the memory now
+        #     context.log.info("Memory from raw features_df has been released.")
 
-            context.log.info("Generating semantic embeddings...")
-            embeddings_df = generate_embeddings(corpus_df, context)
-        except Exception as e:
-            context.log.error(f"Failed during embedding generation: {e}")
-            raise
+        #     context.log.info("Generating semantic embeddings...")
+        #     embeddings_df = generate_embeddings(corpus_df, context)
+        # except Exception as e:
+        #     context.log.error(f"Failed during embedding generation: {e}")
+        #     raise
 
-        # merge all features together
-        if embeddings_df.empty:
-            context.log.info("No embeddings generated. No features to merge.")
-            raise
+        # # merge all features together
+        # if embeddings_df.empty:
+        #     context.log.info("No embeddings generated. No features to merge.")
+        #     raise
 
-        context.log.info("Merging keyword features with semantic embeddings...")
-        final_features_df = pd.merge(final_features_df, embeddings_df, on='repo', how='left')
+        # context.log.info("Merging keyword features with semantic embeddings...")
+        # final_features_df = pd.merge(final_features_df, embeddings_df, on='repo', how='left')
 
-        # Fill any NaNs created if a repo had no text for embeddings
-        embedding_cols = [col for col in final_features_df if col.startswith('embedding_')]
-        final_features_df[embedding_cols] = final_features_df[embedding_cols].fillna(0)
-        context.log.info(f"Merged {len(embedding_cols)} embedding columns into final_features_df.")
+        # # Fill any NaNs created if a repo had no text for embeddings
+        # embedding_cols = [col for col in final_features_df if col.startswith('embedding_')]
+        # final_features_df[embedding_cols] = final_features_df[embedding_cols].fillna(0)
+        # context.log.info(f"Merged {len(embedding_cols)} embedding columns into final_features_df.")
         
-        context.log.info(f"Final combined feature set created with {len(final_features_df)} rows.")
+        # context.log.info(f"Final combined feature set created with {len(final_features_df)} rows.")
 
         # Define dtypes for the output table
         output_dtype_mapping = {

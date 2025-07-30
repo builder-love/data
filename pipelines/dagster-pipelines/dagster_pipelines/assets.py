@@ -4592,7 +4592,7 @@ def create_project_repos_frontend_framework_files_asset(env_prefix: str):
     return _project_repos_frontend_framework_files_env_specific
 
 # Define config files and exclusion keywords at a broader scope
-CONFIG_FILES = ["mkdocs.yml", "docusaurus.config.js", "hugo.toml", "config.toml", "_config.yml"]
+CONFIG_FILES = [".readthedocs.yaml", "docusaurus.config.js", "conf.py", ".gitbook.yaml"]
 KEYWORDS_TO_EXCLUDE = ["readme", "license", "contributors", "contribution", "changelog", "upgrading", "upgrade", "history", "changes", "contributing"]
 def get_documentation_files(context: dg.OpExecutionContext, gh_pat: str | None, session: requests.Session, repo_url: str, repo_source: str) -> list[dict]:
     """
@@ -4686,7 +4686,6 @@ def get_documentation_files(context: dg.OpExecutionContext, gh_pat: str | None, 
                         })
         else:
             found_files = []
-            context.log.info(f"No documentation files found for {repo_url}. Skipping this repo.")
     except requests.exceptions.RequestException as e:
         context.log.error(f"Failed to process repo {repo_url}: {e}")
     except Exception as e:
@@ -4733,7 +4732,15 @@ def create_project_repos_documentation_files_asset(env_prefix: str):
         session.mount("http://", adapter)
 
         with cloud_sql_engine.connect() as conn:
-            repo_df = pd.DataFrame(conn.execute(text(f"SELECT repo, repo_source FROM {clean_schema}.latest_active_distinct_project_repos_with_code")).fetchall())
+            repo_df = pd.DataFrame(conn.execute(text(f"""
+                SELECT 
+                    r.repo, r.repo_source 
+                FROM 
+                    {clean_schema}.latest_active_distinct_project_repos_with_code r
+                LEFT JOIN {clean_schema}.latest_project_repos_is_fork f
+                ON r.repo = f.repo
+                WHERE f.is_fork = false
+            """)).fetchall())
 
         if repo_df.empty:
             context.log.info("No active repositories found to process.")
