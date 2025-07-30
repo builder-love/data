@@ -50,7 +50,7 @@ steps:
 # 4. Build the Docker image, connecting to the proxy network.
 - name: 'gcr.io/cloud-builders/docker' # Use the docker builder as it's the primary operation
   id: 'build-and-push-app'
-  waitFor: ['install-proxy', 'Create .env File'] # Keep your existing waits if needed
+  waitFor: ['Create .env File'] # Keep your existing waits if needed
   entrypoint: 'bash' # We'll run a multi-line bash script
   args:
     - '-c'
