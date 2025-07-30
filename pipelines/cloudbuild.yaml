@@ -13,31 +13,23 @@ availableSecrets:
     env: 'BB_KEY'
 
 steps:
-- name: 'gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.15.1-alpine'
-  id: 'Debug - Find Proxy Executable'
-  entrypoint: 'sh'
-  args:
-    - '-c'
-    - 'which cloud-sql-proxy'
-# 1. Start Proxy as a background service
-- name: 'gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.15.1-alpine'
+# 1. Download, permission, and run the proxy in the background.
+# This step creates a proxy connection that subsequent steps can use.
+- name: 'gcr.io/cloud-builders/gcloud'
   id: 'Start-Proxy-Service'
   entrypoint: 'sh'
   args:
-    - '-c'
-    - 'cloud-sql-proxy --structured-logs --health-check data-pipelines-450611:us-central1:builder-love &'
+  - '-c'
+  - |
+    wget https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.15.1/cloud-sql-proxy.linux.amd64 -O cloud-sql-proxy
+    chmod +x cloud-sql-proxy
+    ./cloud-sql-proxy --structured-logs --health-check data-pipelines-450611:us-central1:builder-love &
   waitFor: ['-']
 
+# 2. Wait for the proxy's health check to be ready (this step is optional but recommended).
 - name: 'gcr.io/cloud-builders/curl'
   id: 'Wait-for-Proxy'
-  args:
-  - '--fail'
-  - '--retry'
-  - '30'
-  - '--retry-delay'
-  - '1'
-  - '--retry-connrefused'
-  - 'http://127.0.0.1:9090/ready'
+  args: ['--fail', '--retry', '20', '--retry-delay', '1', 'http://127.0.0.1:9090/ready']
   waitFor: ['Start-Proxy-Service']
 
 # 3. Create .env file inside the 'pipelines' directory.
