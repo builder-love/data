@@ -81,11 +81,6 @@ steps:
       bitbucket_api_key=$$BB_KEY
       EOT
 
-      # print the .env file
-      echo "--- Contents of .env file ---"
-      cat pipelines/.env
-      echo "--- End of .env file contents ---"
-
       # Part 5: Run the docker build
       echo "--- Building Docker image ---"
       docker build \
