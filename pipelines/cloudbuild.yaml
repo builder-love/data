@@ -31,7 +31,7 @@ steps:
   - '--retry-delay'
   - '1'
   - '--retry-connrefused'
-  - 'http://127.0.0.1:9091/ready'
+  - 'http://127.0.0.1:9090/ready'
   waitFor: ['Start-Proxy-Service']
 
 # 3. Create .env file inside the 'pipelines' directory.
