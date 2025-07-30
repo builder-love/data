@@ -59,11 +59,13 @@ steps:
       curl -o cloud-sql-proxy "https://storage.googleapis.com/cloud-sql-proxy/v2/cloud-sql-proxy.linux.amd64"
       chmod +x cloud-sql-proxy
 
+      # echo the proxy version
+      echo "Cloud SQL Proxy version:"
+      ./cloud-sql-proxy --version
+
       # Start the Cloud SQL Proxy in the background
       # Use your specific instance connection name and port
-      ./cloud-sql-proxy \
-        -instances=data-pipelines-450611:us-central1:builder-love=tcp:5432 \
-        --address=127.0.0.1 &
+      ./cloud-sql-proxy -instances=data-pipelines-450611:us-central1:builder-love=tcp:5432
       
       # Give the proxy a moment to fully initialize
       sleep 5 
