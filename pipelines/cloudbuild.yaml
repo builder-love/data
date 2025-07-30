@@ -14,7 +14,7 @@ availableSecrets:
     env: 'BB_KEY'
 
 steps:
-- name: 'gcr.io/cloud-sql-connectors/cloud-sql-proxy:v2.11.0-alpine'
+- name: 'gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.15.1-alpine'
   id: 'Start Proxy'
   entrypoint: 'sh'
   args:
