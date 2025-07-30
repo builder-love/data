@@ -18,7 +18,6 @@ steps:
   id: 'Debug Proxy Startup'
   args:
     - '--structured-logs'
-    - '--verbose'
     - '--project=$PROJECT_ID'
     - '$$INSTANCE_CONNECTION_NAME'
   secretEnv: ['INSTANCE_CONNECTION_NAME']
