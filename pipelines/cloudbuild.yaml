@@ -65,11 +65,27 @@ steps:
 
       # Start the Cloud SQL Proxy in the background
       # Use your specific instance connection name and port
-      ./cloud-sql-proxy data-pipelines-450611:us-central1:builder-love
+      ./cloud-sql-proxy data-pipelines-450611:us-central1:builder-love &
       
       # Give the proxy a moment to fully initialize
       sleep 5 
-      echo "Cloud SQL Proxy started. Proceeding with Docker build."
+
+      # # Wait for the proxy to be healthy
+      # echo "--- Waiting for proxy health check ---"
+      # sleep 5 # Give it a moment to initialize
+      # for i in {1..20}; do
+      #   # Use the -s (silent) flag for curl in the loop
+      #   if curl -s http://127.0.0.1:9090/ready; then
+      #     echo "Proxy is ready!"
+      #     break
+      #   fi
+      #   if [ $i -eq 20 ]; then
+      #     echo "Proxy did not become ready in time"
+      #     exit 1
+      #   fi
+      #   echo "Proxy not ready, waiting..."
+      #   sleep 1
+      # done
 
       # --- Docker Build Operations ---
       docker build \
