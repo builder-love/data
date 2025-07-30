@@ -13,45 +13,42 @@ availableSecrets:
     env: 'BB_KEY'
 
 steps:
-# - name: 'gcr.io/cloud-builders/wget'
-#   id: 'install-proxy'
-#   entrypoint: sh
-#   args:
-#     - -c
-#       - |
-#         wget -P /workspace -O cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/2.18.0
-#         chmod +x /workspace/cloud-sql-proxy
 
-# 3. Create .env file inside the 'pipelines' directory.
-- name: 'bash'
-  id: 'Create .env File'
-  secretEnv:
-  - 'DB_USER'
-  - 'DB_PASSWORD'
-  - 'GCP_PROJECT_ID'
-  - 'GH_PAT'
-  - 'BB_KEY'
-  env:
-  - 'DAGSTER_ENV=stg'
-  - 'DAGSTER_HOME=/opt/dagster/app'
-  - 'DB_NAME=postgres'
-  - 'DB_HOST=127.0.0.1' # This points to the proxy.
-  script: |
-    echo "DAGSTER_ENV=$DAGSTER_ENV" > pipelines/.env
-    echo "DAGSTER_HOME=$DAGSTER_HOME" >> pipelines/.env
-    echo "cloud_sql_postgres_db=$DB_NAME" >> pipelines/.env
-    echo "cloud_sql_postgres_host=$DB_HOST" >> pipelines/.env
-    echo "cloud_sql_user=$$DB_USER" >> pipelines/.env
-    echo "cloud_sql_password=$$DB_PASSWORD" >> pipelines/.env
-    echo "gcp_project_id=$$GCP_PROJECT_ID" >> pipelines/.env
-    echo "go_blockchain_ecosystem=$$GH_PAT" >> pipelines/.env
-    echo "bitbucket_api_key=$$BB_KEY" >> pipelines/.env
+# Create .env file inside the 'pipelines' directory.
+# - name: 'bash'
+#   id: 'Create .env File'
+#   secretEnv:
+#   - 'DB_USER'
+#   - 'DB_PASSWORD'
+#   - 'GCP_PROJECT_ID'
+#   - 'GH_PAT'
+#   - 'BB_KEY'
+#   env:
+#   - 'DAGSTER_ENV=stg'
+#   - 'DAGSTER_HOME=/opt/dagster/app'
+#   - 'DB_NAME=postgres'
+#   - 'DB_HOST=127.0.0.1' # This points to the proxy.
+#   script: |
+#     echo "DAGSTER_ENV=$DAGSTER_ENV" > pipelines/.env
+#     echo "DAGSTER_HOME=$DAGSTER_HOME" >> pipelines/.env
+#     echo "cloud_sql_postgres_db=$DB_NAME" >> pipelines/.env
+#     echo "cloud_sql_postgres_host=$DB_HOST" >> pipelines/.env
+#     echo "cloud_sql_user=$$DB_USER" >> pipelines/.env
+#     echo "cloud_sql_password=$$DB_PASSWORD" >> pipelines/.env
+#     echo "gcp_project_id=$$GCP_PROJECT_ID" >> pipelines/.env
+#     echo "go_blockchain_ecosystem=$$GH_PAT" >> pipelines/.env
+#     echo "bitbucket_api_key=$$BB_KEY" >> pipelines/.env
 
 # 4. Build the Docker image, connecting to the proxy network.
 - name: 'gcr.io/cloud-builders/docker' # Use the docker builder as it's the primary operation
   id: 'build-and-push-app'
-  waitFor: ['Create .env File'] # Keep your existing waits if needed
   entrypoint: 'bash' # We'll run a multi-line bash script
+  secretEnv: ['DB_USER', 'DB_PASSWORD', 'GCP_PROJECT_ID', 'GH_PAT', 'BB_KEY']
+  env:
+  - 'DAGSTER_ENV=stg'
+  - 'DAGSTER_HOME=/opt/dagster/app'
+  - 'DB_NAME=postgres'
+  - 'DB_HOST=127.0.0.1'
   args:
     - '-c'
     - |
@@ -75,24 +72,40 @@ steps:
       # Give the proxy a moment to fully initialize
       sleep 5 
 
-      # --- Docker Build Operations ---
+      # Create the .env file
+      echo "--- Creating .env file ---"
+      cat <<EOT > pipelines/.env
+      DAGSTER_ENV=$$DAGSTER_ENV
+      DAGSTER_HOME=$$DAGSTER_HOME
+      cloud_sql_postgres_db=$$DB_NAME
+      cloud_sql_postgres_host=$$DB_HOST
+      cloud_sql_user=$$DB_USER
+      cloud_sql_password=$$DB_PASSWORD
+      gcp_project_id=$$GCP_PROJECT_ID
+      go_blockchain_ecosystem=$$GH_PAT
+      bitbucket_api_key=$$BB_KEY
+      EOT
+
+      # print the .env file
+      echo "--- Contents of .env file ---"
+      cat pipelines/.env
+      echo "--- End of .env file contents ---"
+
+      # Part 5: Run the docker build
+      echo "--- Building Docker image ---"
       docker build \
         -t us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA \
         -t us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest \
         ./pipelines
-      
-      # --- Docker Push Operations ---
-      echo "Pushing Docker images..."
-      docker push us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA
-      docker push us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest
 
-      echo "Docker build and push completed."
+      echo "Docker build completed."
 
-# 5. Push the built image to Artifact Registry.
+# Push the built image to Artifact Registry.
 - name: 'gcr.io/cloud-builders/docker'
   args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app', '--all-tags']
+  waitFor: ['build-and-push-app']
 
-# 6. Deploy the new image to your GKE cluster.
+# Deploy the new image to your GKE cluster.
 - name: 'gcr.io/cloud-builders/gke-deploy'
   args:
   - 'run'
