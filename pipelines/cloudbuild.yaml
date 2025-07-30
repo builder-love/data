@@ -14,20 +14,13 @@ availableSecrets:
     env: 'BB_KEY'
 
 steps:
-- name: 'gcr.io/cloud-builders/wget'
-  id: 'Download Proxy'
-  args: ['https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.16.1/cloud-sql-proxy.linux.amd64', '-O', '/workspace/cloud-sql-proxy']
-
-- name: 'gcr.io/cloud-builders/gcloud'
-  id: 'Make Proxy Executable'
-  args: ['compute', 'ssh', 'builder-love@cloudbuild', '--command=chmod +x /workspace/cloud-sql-proxy']
-
-- name: 'gcr.io/cloud-builders/gcloud'
+- name: 'gcr.io/cloud-sql-connectors/cloud-sql-proxy'
   id: 'Start Proxy'
-  entrypoint: 'bash'
+  detached: true
   args:
-    - '-c'
-    - '/workspace/cloud-sql-proxy --project=$PROJECT_ID --quiet $$INSTANCE_CONNECTION_NAME &'
+    - '--project=$PROJECT_ID'
+    - '--quiet'
+    - '$$INSTANCE_CONNECTION_NAME'
   secretEnv: ['INSTANCE_CONNECTION_NAME']
 
 - name: 'gcr.io/cloud-builders/gcloud'
