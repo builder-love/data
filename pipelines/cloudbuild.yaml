@@ -47,6 +47,28 @@ steps:
     exit 1
   waitFor: ['Start Proxy Container']
 
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Debug Proxy State'
+  entrypoint: 'bash'
+  args:
+  - -c
+  - |
+    set -e # Exit immediately if a command fails
+    echo "--- 1. Checking Proxy Container Status ---"
+    docker ps -a
+    
+    # Get the IP address for the port scan
+    PROXY_IP=$$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' proxy-service)
+    echo "Proxy IP is $$PROXY_IP"
+    
+    echo "\n--- 2. Scanning Port 5432 on Proxy Container ---"
+    # We run nmap from a temporary container on the same network
+    docker run --rm --network=dbt-build-net instrumentisto/nmap -p 5432 $$PROXY_IP
+    
+    echo "\n--- 3. Retrieving Proxy Container Logs (Most Important) ---"
+    docker logs proxy-service
+  waitFor: ['Wait for Proxy']
+
 # 4. Get the IP address of the running proxy container.
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Get Proxy IP'
@@ -55,7 +77,7 @@ steps:
     - -c
     - |
       docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' proxy-service > /workspace/proxy_ip.txt
-  waitFor: ['Wait for Proxy']
+  waitFor: ['Debug Proxy State']
 
 # 5. Create the .env file in the build context.
 - name: 'bash'
