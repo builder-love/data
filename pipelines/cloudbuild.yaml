@@ -50,24 +50,40 @@ steps:
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Debug Proxy State'
   entrypoint: 'bash'
+  # 💡 Add secrets needed for the psql connection test
+  secretEnv: ['DB_USER', 'DB_PASSWORD']
   args:
   - -c
   - |
-    sleep 5
     set -e # Exit immediately if a command fails
+    echo "Waiting 10 seconds for proxy to be fully ready..."
+    sleep 10
+    
     echo "--- 1. Checking Proxy Container Status ---"
     docker ps -a
     
-    # Get the IP address for the port scan
     PROXY_IP=$$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' proxy-service)
     echo "Proxy IP is $$PROXY_IP"
     
     echo "\n--- 2. Scanning Port 5432 on Proxy Container ---"
-    # We run nmap from a temporary container on the same network
     docker run --rm --network=dbt-build-net instrumentisto/nmap -p 5432 $$PROXY_IP
     
-    echo "\n--- 3. Retrieving Proxy Container Logs (Most Important) ---"
-    docker logs --tail 100 proxy-service
+    echo "\n--- 3. Retrieving Proxy Container Logs ---"
+    docker logs proxy-service
+
+    # 💡 New connection test logic starts here
+    echo "\n--- 4. Testing Live DB Connection via Proxy ---"
+    
+    echo "Installing PostgreSQL client..."
+    apt-get update >/dev/null && apt-get install -y postgresql-client >/dev/null
+    
+    # Set the password for the psql client to use
+    export PGPASSWORD=$$DB_PASSWORD
+    
+    echo "Attempting to connect to $$PROXY_IP:5432 and run 'SELECT 1'..."
+    psql -h $$PROXY_IP -p 5432 -U $$DB_USER -d postgres -c "SELECT * from raw_stg.latest_project_repos_documentation_files limit 1;"
+    
+    echo "--- Live DB Connection Test Succeeded ---"
   waitFor: ['Start Proxy Container']
 
 # 4. Get the IP address of the running proxy container.
