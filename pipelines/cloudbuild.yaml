@@ -37,8 +37,8 @@ steps:
     # Attach this build to our custom network
     '--network=dbt-build-net',
     # Pass secrets and configuration as build arguments
-    '--build-arg', 'DB_USER=${DB_USER}',
-    '--build-arg', 'DB_PASSWORD=${DB_PASSWORD}',
+    '--build-arg', 'DB_USER=$${DB_USER}',
+    '--build-arg', 'DB_PASSWORD=$${DB_PASSWORD}',
     # IMPORTANT: The host is now the name of our proxy container
     '--build-arg', 'DB_HOST=proxy-service',
     '--build-arg', 'DB_NAME=postgres',
