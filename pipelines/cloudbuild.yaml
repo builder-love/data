@@ -20,7 +20,7 @@ steps:
     # The instance connection name
     'data-pipelines-450611:us-central1:builder-love',
     # Run as a daemon/detached container
-    '--daemon',
+    '-d',
     # Give the container a specific name so we can reference it
     '--name', 'proxy-service',
     # Attach it to our custom network
