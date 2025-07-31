@@ -35,7 +35,7 @@ steps:
       -v $(pwd)/sa_key.json:/key.json:ro \
       gcr.io/cloud-sql-connectors/cloud-sql-proxy \
       --credentials-file=/key.json \
-      data-pipelines-450611:us-central1:builder-love=tcp:5432
+      data-pipelines-450611:us-central1:builder-love
   waitFor: ['Create Network']
   # This step runs in the background, but we will wait for it to finish in the next step
 
