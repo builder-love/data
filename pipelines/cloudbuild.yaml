@@ -5,6 +5,8 @@ availableSecrets:
     env: 'DB_USER'
   - versionName: projects/$PROJECT_ID/secrets/cloud_sql_password/versions/latest
     env: 'DB_PASSWORD'
+  - versionName: projects/$PROJECT_ID/secrets/cloud-sql-proxy-key/versions/latest
+    env: 'SA_KEY'
 
 steps:
 
@@ -17,14 +19,24 @@ steps:
 # We use the official proxy image.
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Start Proxy Container'
-  args: [
-    'run',
-    '-d',
-    '--name', 'proxy-service',
-    '--network', 'dbt-build-net',
-    'gcr.io/cloud-sql-connectors/cloud-sql-proxy',
-    'data-pipelines-450611:us-central1:builder-love'
-  ]
+  secretEnv: ['SA_KEY']
+  entrypoint: 'bash'
+  args:
+  - -c
+  - |
+    # 💡 3. Write the secret to a file that can be mounted
+    echo "$$SA_KEY" > sa_key.json
+
+    # 💡 4. Run the proxy, mounting the key file and adding the --credentials-file flag
+    docker run \
+      -d \
+      --name proxy-service \
+      --network dbt-build-net \
+      -v $(pwd)/sa_key.json:/key.json:ro \
+      gcr.io/cloud-sql-connectors/cloud-sql-proxy \
+      --credentials-file=/key.json \
+      data-pipelines-450611:us-central1:builder-love=tcp:5432
+  waitFor: ['Create Network']
   # This step runs in the background, but we will wait for it to finish in the next step
 
 # 3. Wait for the proxy container to be network-ready.
