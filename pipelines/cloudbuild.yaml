@@ -1,112 +1,64 @@
-# cloudbuild.yaml
+# cloudbuild.yaml (Networked Build)
 availableSecrets:
   secretManager:
   - versionName: projects/$PROJECT_ID/secrets/cloud_sql_user/versions/latest
     env: 'DB_USER'
   - versionName: projects/$PROJECT_ID/secrets/cloud_sql_password/versions/latest
     env: 'DB_PASSWORD'
-  - versionName: projects/$PROJECT_ID/secrets/gcp_project_id/versions/latest
-    env: 'GCP_PROJECT_ID'
-  - versionName: projects/$PROJECT_ID/secrets/go_blockchain_ecosystem/versions/latest
-    env: 'GH_PAT'
-  - versionName: projects/$PROJECT_ID/secrets/bitbucket_api_key/versions/latest
-    env: 'BB_KEY'
 
 steps:
+# 1. Create a dedicated network for the build process.
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Create Network'
+  args: ['network', 'create', 'dbt-build-net']
 
-# Create .env file inside the 'pipelines' directory.
-# - name: 'bash'
-#   id: 'Create .env File'
-#   secretEnv:
-#   - 'DB_USER'
-#   - 'DB_PASSWORD'
-#   - 'GCP_PROJECT_ID'
-#   - 'GH_PAT'
-#   - 'BB_KEY'
-#   env:
-#   - 'DAGSTER_ENV=stg'
-#   - 'DAGSTER_HOME=/opt/dagster/app'
-#   - 'DB_NAME=postgres'
-#   - 'DB_HOST=127.0.0.1' # This points to the proxy.
-#   script: |
-#     echo "DAGSTER_ENV=$DAGSTER_ENV" > pipelines/.env
-#     echo "DAGSTER_HOME=$DAGSTER_HOME" >> pipelines/.env
-#     echo "cloud_sql_postgres_db=$DB_NAME" >> pipelines/.env
-#     echo "cloud_sql_postgres_host=$DB_HOST" >> pipelines/.env
-#     echo "cloud_sql_user=$$DB_USER" >> pipelines/.env
-#     echo "cloud_sql_password=$$DB_PASSWORD" >> pipelines/.env
-#     echo "gcp_project_id=$$GCP_PROJECT_ID" >> pipelines/.env
-#     echo "go_blockchain_ecosystem=$$GH_PAT" >> pipelines/.env
-#     echo "bitbucket_api_key=$$BB_KEY" >> pipelines/.env
+# 2. Start the Cloud SQL Proxy in its own container on the new network.
+# We use the official proxy image.
+- name: 'gcr.io/cloud-sql-connectors/cloud-sql-proxy'
+  id: 'Start Proxy Container'
+  args: [
+    # The instance connection name
+    'data-pipelines-450611:us-central1:builder-love',
+    # Run as a daemon/detached container
+    '--daemon',
+    # Give the container a specific name so we can reference it
+    '--name', 'proxy-service',
+    # Attach it to our custom network
+    '--network', 'dbt-build-net'
+  ]
+  # This step runs in the background, so we don't wait for it to finish.
 
-# 4. Build the Docker image, connecting to the proxy network.
-- name: 'gcr.io/cloud-builders/docker' # Use the docker builder as it's the primary operation
-  id: 'build-and-push-app'
-  entrypoint: 'bash' # We'll run a multi-line bash script
-  secretEnv: ['DB_USER', 'DB_PASSWORD', 'GCP_PROJECT_ID', 'GH_PAT', 'BB_KEY']
-  env:
-  - 'DAGSTER_ENV=stg'
-  - 'DAGSTER_HOME=/opt/dagster/app'
-  - 'DB_NAME=postgres'
-  - 'DB_HOST=127.0.0.1'
-  - 'DOCKER_BUILDKIT=1'
-  args:
-    - '-c'
-    - |
-      # first install the proxy using curl
-      curl -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.18.0/cloud-sql-proxy.linux.amd64
-      chmod +x cloud-sql-proxy
+# 3. Build the main application image.
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Build App Image'
+  secretEnv: ['DB_USER', 'DB_PASSWORD']
+  args: [
+    'build',
+    # Attach this build to our custom network
+    '--network=dbt-build-net',
+    # Pass secrets and configuration as build arguments
+    '--build-arg', 'DB_USER=${DB_USER}',
+    '--build-arg', 'DB_PASSWORD=${DB_PASSWORD}',
+    # IMPORTANT: The host is now the name of our proxy container
+    '--build-arg', 'DB_HOST=proxy-service',
+    '--build-arg', 'DB_NAME=postgres',
+    '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA',
+    '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest',
+    './pipelines'
+  ]
+  waitFor: ['Start Proxy Container'] # Ensure proxy is started before building
 
-      # echo the proxy version
-      echo "Cloud SQL Proxy version:"
-      ./cloud-sql-proxy --version
+# 4. Stop and remove the proxy container (important for cleanup).
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Stop Proxy Container'
+  args: ['rm', '-f', 'proxy-service']
+  # This step runs even if the build fails, ensuring cleanup.
+  waitFor: ['Build App Image']
 
-      # Start the Cloud SQL Proxy in the background
-      # Use your specific instance connection name and port
-      ./cloud-sql-proxy data-pipelines-450611:us-central1:builder-love &
-      
-      # Give the proxy a moment to fully initialize
-      sleep 5 
-
-      # Create the .env file
-      echo "--- Creating .env file ---"
-      cat <<EOT > pipelines/.env
-      DAGSTER_ENV=$$DAGSTER_ENV
-      DAGSTER_HOME=$$DAGSTER_HOME
-      cloud_sql_postgres_db=$$DB_NAME
-      cloud_sql_postgres_host=$$DB_HOST
-      cloud_sql_user=$$DB_USER
-      cloud_sql_password=$$DB_PASSWORD
-      gcp_project_id=$$GCP_PROJECT_ID
-      go_blockchain_ecosystem=$$GH_PAT
-      bitbucket_api_key=$$BB_KEY
-      EOT
-
-      # use the .env file to test connection to the database
-      echo "--- Installing PostgreSQL client ---"
-      apt-get update && apt-get install -y postgresql-client
-      echo "--- Testing database connection ---"
-
-      PGPASSWORD="$$DB_PASSWORD" psql -h "$$DB_HOST" -p 5432 -U "$$DB_USER" -d "$$DB_NAME" -c "SELECT data_timestamp from raw_stg.latest_project_repos_documentation_files limit 1;"
-      if [ $? -ne 0 ]; then
-        echo "Failed to connect to the database. Exiting build."
-        exit 1
-      fi
-
-      # Part 5: Run the docker build
-      echo "--- Building Docker image ---"
-      docker build \
-        --network=host \
-        -t us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA \
-        -t us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest \
-        ./pipelines
-
-      echo "Docker build completed."
-
-# Push the built image to Artifact Registry.
+# 5. Push the final image.
 - name: 'gcr.io/cloud-builders/docker'
   args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app', '--all-tags']
-  waitFor: ['build-and-push-app']
+  waitFor: ['Stop Proxy Container'] # Wait for build and cleanup
 
 # Deploy the new image to your GKE cluster.
 - name: 'gcr.io/cloud-builders/gke-deploy'
