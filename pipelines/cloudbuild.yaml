@@ -21,6 +21,7 @@ steps:
       # 💡 IMPORTANT: The host is the name of our proxy container.
       cloud_sql_postgres_host=proxy-service
       EOT
+
 # 2. Create a dedicated network for the build process.
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Create Network'
