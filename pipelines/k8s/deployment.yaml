@@ -18,7 +18,7 @@ spec:
       # Your Dagster application container
       - name: dagster-webserver
         # The image will be dynamically set by Cloud Build
-        image: gcr.io/your-gcp-project/dagster-app:latest
+        image: us-central1-docker.pkg.dev/data-pipelines-450611/dagster-repo/dagster-app:latest
         command: ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000"]
         ports:
         - containerPort: 3000

@@ -24,10 +24,10 @@ steps:
   args:
   - -c
   - |
-    # 💡 3. Write the secret to a file that can be mounted
+    # 3. Write the secret to a file that can be mounted
     echo "$$SA_KEY" > sa_key.json
 
-    # 💡 4. Run the proxy, mounting the key file and adding the --credentials-file flag
+    # 4. Run the proxy, mounting the key file and adding the --credentials-file flag
     docker run \
       -d \
       --name proxy-service \
@@ -64,14 +64,12 @@ steps:
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Debug Proxy State'
   entrypoint: 'bash'
-  # 💡 Add secrets needed for the psql connection test
+  # Add secrets needed for the psql connection test
   secretEnv: ['DB_USER', 'DB_PASSWORD']
   args:
   - -c
   - |
     set -e # Exit immediately if a command fails
-    echo "Waiting 5 seconds for proxy to be fully ready..."
-    sleep 5
     
     echo "--- 1. Checking Proxy Container Status ---"
     docker ps -a
