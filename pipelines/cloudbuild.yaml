@@ -42,24 +42,24 @@ steps:
   # This step runs in the background, but we will wait for it to finish in the next step
 
 # 3. Wait for the proxy container to be network-ready.
-# - name: 'gcr.io/cloud-builders/docker'
-#   id: 'Wait for Proxy'
-#   entrypoint: 'bash'
-#   args:
-#   - -c
-#   - |
-#     for i in {1..10}; do
-#       # We run a temporary container on the same network to test DNS resolution
-#       if docker run --rm --network=dbt-build-net alpine ping -c 1 proxy-service; then
-#         echo "Proxy is reachable."
-#         exit 0
-#       fi
-#       echo "Waiting for proxy DNS... attempt $$i"
-#       sleep 2
-#     done
-#     echo "Proxy was not reachable after 20 seconds."
-#     exit 1
-#   waitFor: ['Start Proxy Container']
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Wait for Proxy'
+  entrypoint: 'bash'
+  args:
+  - -c
+  - |
+    for i in {1..10}; do
+      # We run a temporary container on the same network to test DNS resolution
+      if docker run --rm --network=dbt-build-net alpine ping -c 1 proxy-service; then
+        echo "Proxy is reachable."
+        exit 0
+      fi
+      echo "Waiting for proxy DNS... attempt $$i"
+      sleep 2
+    done
+    echo "Proxy was not reachable after 20 seconds."
+    exit 1
+  waitFor: ['Start Proxy Container']
 
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Debug Proxy State'
@@ -85,20 +85,20 @@ steps:
     echo "\n--- 3. Retrieving Proxy Container Logs ---"
     docker logs proxy-service
 
-    # 💡 New connection test logic starts here
-    echo "\n--- 4. Testing Live DB Connection via Proxy ---"
+    # # 💡 New connection test logic starts here
+    # echo "\n--- 4. Testing Live DB Connection via Proxy ---"
     
-    echo "Installing PostgreSQL client..."
-    apt-get update >/dev/null && apt-get install -y postgresql-client >/dev/null
+    # echo "Installing PostgreSQL client..."
+    # apt-get update >/dev/null && apt-get install -y postgresql-client >/dev/null
     
-    # Set the password for the psql client to use
-    export PGPASSWORD=$$DB_PASSWORD
+    # # Set the password for the psql client to use
+    # export PGPASSWORD=$$DB_PASSWORD
     
-    echo "Attempting to connect to $$PROXY_IP:5432 and run 'SELECT 1'..."
-    psql -h $$PROXY_IP -p 5432 -U $$DB_USER -d postgres -c "SELECT data_timestamp from raw_stg.latest_project_repos_documentation_files limit 1;"
+    # echo "Attempting to connect to $$PROXY_IP:5432 and run 'SELECT 1'..."
+    # psql -h $$PROXY_IP -p 5432 -U $$DB_USER -d postgres -c "SELECT data_timestamp from raw_stg.latest_project_repos_documentation_files limit 1;"
     
-    echo "--- Live DB Connection Test Succeeded ---"
-  waitFor: ['Start Proxy Container']
+    # echo "--- Live DB Connection Test Succeeded ---"
+  waitFor: ['Wait for Proxy']
 
 # 4. Get the IP address of the running proxy container.
 - name: 'gcr.io/cloud-builders/docker'
