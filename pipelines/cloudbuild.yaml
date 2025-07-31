@@ -23,7 +23,7 @@ steps:
     '--name', 'proxy-service',
     '--network', 'dbt-build-net',
     'gcr.io/cloud-sql-connectors/cloud-sql-proxy',
-    'data-pipelines-450611:us-central1:builder-love'
+    'data-pipelines-450611:us-central1:builder-love=tcp:5432'
   ]
   # This step runs in the background, but we will wait for it to finish in the next step
 
