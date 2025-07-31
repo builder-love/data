@@ -49,6 +49,7 @@ steps:
   - 'DAGSTER_HOME=/opt/dagster/app'
   - 'DB_NAME=postgres'
   - 'DB_HOST=127.0.0.1'
+  - 'DOCKER_BUILDKIT=1'
   args:
     - '-c'
     - |
@@ -95,6 +96,7 @@ steps:
       # Part 5: Run the docker build
       echo "--- Building Docker image ---"
       docker build \
+        --network=host \
         -t us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA \
         -t us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest \
         ./pipelines
