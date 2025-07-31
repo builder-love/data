@@ -19,7 +19,6 @@ steps:
   args: ['network', 'create', 'dbt-build-net']
 
 # 2. Start the Cloud SQL Proxy in its own container on the new network.
-# We use the official proxy image.
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Start Proxy Container'
   secretEnv: ['SA_KEY']
