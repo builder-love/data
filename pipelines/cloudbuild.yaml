@@ -7,7 +7,27 @@ availableSecrets:
     env: 'DB_PASSWORD'
 
 steps:
-# 1. Create the .env file in the build context.
+
+# 1. Create a dedicated network for the build process.
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Create Network'
+  args: ['network', 'create', 'dbt-build-net']
+
+# 2. Start the Cloud SQL Proxy in its own container on the new network.
+# We use the official proxy image.
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Start Proxy Container'
+  args: [
+    'run',
+    '-d',
+    '--name', 'proxy-service',
+    '--network', 'dbt-build-net',
+    'gcr.io/cloud-sql-connectors/cloud-sql-proxy',
+    'data-pipelines-450611:us-central1:builder-love'
+  ]
+  # This step runs in the background, so we don't wait for it to finish.
+
+# 3. Create the .env file in the build context.
 - name: 'bash'
   id: 'Create .env File'
   secretEnv: ['DB_USER', 'DB_PASSWORD']
@@ -21,24 +41,15 @@ steps:
       cloud_sql_postgres_host=proxy-service.
       EOT
 
-# 2. Create a dedicated network for the build process.
-- name: 'gcr.io/cloud-builders/docker'
-  id: 'Create Network'
-  args: ['network', 'create', 'dbt-build-net']
-
-# 3. Start the Cloud SQL Proxy in its own container on the new network.
-# We use the official proxy image.
-- name: 'gcr.io/cloud-builders/docker'
-  id: 'Start Proxy Container'
-  args: [
-    'run',
-    '-d',
-    '--name', 'proxy-service',
-    '--network', 'dbt-build-net',
-    'gcr.io/cloud-sql-connectors/cloud-sql-proxy',
-    'data-pipelines-450611:us-central1:builder-love'
-  ]
-  # This step runs in the background, so we don't wait for it to finish.
+# # 4. Get the IP address of the running proxy container.
+# - name: 'gcr.io/cloud-builders/docker'
+#   id: 'Get Proxy IP'
+#   entrypoint: 'bash'
+#   args:
+#     - -c
+#     - |
+#       docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' proxy-service > /workspace/proxy_ip.txt
+#   waitFor: ['Start Proxy Container']
 
 # 4. Build the main application image.
 - name: 'gcr.io/cloud-builders/docker'
