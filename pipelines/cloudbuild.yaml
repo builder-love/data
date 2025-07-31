@@ -68,8 +68,8 @@ steps:
   - -c
   - |
     set -e # Exit immediately if a command fails
-    echo "Waiting 10 seconds for proxy to be fully ready..."
-    sleep 10
+    echo "Waiting 5 seconds for proxy to be fully ready..."
+    sleep 5
     
     echo "--- 1. Checking Proxy Container Status ---"
     docker ps -a
@@ -93,7 +93,7 @@ steps:
     export PGPASSWORD=$$DB_PASSWORD
     
     echo "Attempting to connect to $$PROXY_IP:5432 and run 'SELECT 1'..."
-    psql -h $$PROXY_IP -p 5432 -U $$DB_USER -d postgres -c "SELECT * from raw_stg.latest_project_repos_documentation_files limit 1;"
+    psql -h $$PROXY_IP -p 5432 -U $$DB_USER -d postgres -c "SELECT data_timestamp from raw_stg.latest_project_repos_documentation_files limit 1;"
     
     echo "--- Live DB Connection Test Succeeded ---"
   waitFor: ['Start Proxy Container']
