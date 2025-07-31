@@ -85,19 +85,6 @@ steps:
     echo "\n--- 3. Retrieving Proxy Container Logs ---"
     docker logs proxy-service
 
-    # # 💡 New connection test logic starts here
-    # echo "\n--- 4. Testing Live DB Connection via Proxy ---"
-    
-    # echo "Installing PostgreSQL client..."
-    # apt-get update >/dev/null && apt-get install -y postgresql-client >/dev/null
-    
-    # # Set the password for the psql client to use
-    # export PGPASSWORD=$$DB_PASSWORD
-    
-    # echo "Attempting to connect to $$PROXY_IP:5432 and run 'SELECT 1'..."
-    # psql -h $$PROXY_IP -p 5432 -U $$DB_USER -d postgres -c "SELECT data_timestamp from raw_stg.latest_project_repos_documentation_files limit 1;"
-    
-    # echo "--- Live DB Connection Test Succeeded ---"
   waitFor: ['Wait for Proxy']
 
 # 4. Get the IP address of the running proxy container.
@@ -151,17 +138,20 @@ steps:
 
 # 8. Push the final image.
 - name: 'gcr.io/cloud-builders/docker'
+  id: 'Push Image to GCR'
   args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app', '--all-tags']
   waitFor: ['Stop Proxy Container'] # Wait for build and cleanup
 
 # Deploy the new image to your GKE cluster.
 - name: 'gcr.io/cloud-builders/gke-deploy'
+  id: 'Deploy to GKE'
   args:
   - 'run'
   - '--filename=pipelines/k8s/'
   - '--image=us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app=us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA'
   - '--location=us-central1-c'
   - '--cluster=dagster-cluster'
+  waitFor: ['Push Image to GCR']
 
 images:
 - 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA'
