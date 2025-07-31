@@ -53,7 +53,7 @@ steps:
   args:
   - -c
   - |
-    sleep 10
+    sleep 5
     set -e # Exit immediately if a command fails
     echo "--- 1. Checking Proxy Container Status ---"
     docker ps -a
@@ -67,7 +67,7 @@ steps:
     docker run --rm --network=dbt-build-net instrumentisto/nmap -p 5432 $$PROXY_IP
     
     echo "\n--- 3. Retrieving Proxy Container Logs (Most Important) ---"
-    docker logs proxy-service
+    docker logs --tail 100 proxy-service
   waitFor: ['Start Proxy Container']
 
 # 4. Get the IP address of the running proxy container.
