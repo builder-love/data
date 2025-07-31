@@ -68,7 +68,7 @@ steps:
       cloud_sql_user=$$DB_USER
       cloud_sql_password=$$DB_PASSWORD
       cloud_sql_postgres_db=postgres
-      cloud_sql_postgres_host=proxy-service
+      cloud_sql_postgres_host=proxy-service.
       EOT
   waitFor: ['Wait for Proxy']
 
