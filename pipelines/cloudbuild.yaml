@@ -53,7 +53,7 @@ steps:
   args:
   - -c
   - |
-    wait 10
+    sleep 10
     set -e # Exit immediately if a command fails
     echo "--- 1. Checking Proxy Container Status ---"
     docker ps -a
