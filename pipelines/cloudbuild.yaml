@@ -18,8 +18,8 @@ steps:
   id: 'Start Proxy Container'
   args: [
     'run',
-    'gcr.io/cloud-sql-connectors/cloud-sql-proxy',
     '-d',
+    'gcr.io/cloud-sql-connectors/cloud-sql-proxy',
     '--name', 'proxy-service',
     '--network', 'dbt-build-net',
     'data-pipelines-450611:us-central1:builder-love'
