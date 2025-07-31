@@ -24,9 +24,10 @@ WORKDIR /opt/dagster/app/dbt-pipelines
 # Use the build arguments to compile dbt.
 # We set them as environment variables for this single RUN command.
 RUN set -a && . ../.env && set +a && \
-    export DBT_PROFILES_DIR=. && \
-    dbt deps && \
-    dbt debug && \
+    dbt deps 
+RUN set -a && . ../.env && set +a && \ 
+    dbt debug 
+RUN set -a && . ../.env && set +a && \ 
     dbt compile --threads 16 --target stg --target-path "target/stg" && \
     dbt compile --threads 16 --target prod --target-path "target/prod"
 

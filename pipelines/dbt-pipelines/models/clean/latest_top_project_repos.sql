@@ -32,6 +32,7 @@ where LOWER(lpr.project_title) NOT IN (
     'general',
     'ethereum l2s',
     'ethereum virtual machine stack',
+    'ethereum execution',
     'evm compatible l1 and l2',
     'evm compatible layer 1s',
     'evm compatible layer 1s, 2s, and dapps',
