@@ -14,17 +14,15 @@ steps:
 
 # 2. Start the Cloud SQL Proxy in its own container on the new network.
 # We use the official proxy image.
-- name: 'gcr.io/cloud-sql-connectors/cloud-sql-proxy'
+- name: 'gcr.io/cloud-builders/docker'
   id: 'Start Proxy Container'
   args: [
-    # The instance connection name
-    'data-pipelines-450611:us-central1:builder-love',
-    # Run as a daemon/detached container
+    'run',
+    'gcr.io/cloud-sql-connectors/cloud-sql-proxy',
     '-d',
-    # Give the container a specific name so we can reference it
     '--name', 'proxy-service',
-    # Attach it to our custom network
-    '--network', 'dbt-build-net'
+    '--network', 'dbt-build-net',
+    'data-pipelines-450611:us-central1:builder-love'
   ]
   # This step runs in the background, so we don't wait for it to finish.
 
