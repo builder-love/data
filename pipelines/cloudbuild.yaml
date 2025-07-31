@@ -28,24 +28,24 @@ steps:
   # This step runs in the background, but we will wait for it to finish in the next step
 
 # 3. Wait for the proxy container to be network-ready.
-- name: 'gcr.io/cloud-builders/docker'
-  id: 'Wait for Proxy'
-  entrypoint: 'bash'
-  args:
-  - -c
-  - |
-    for i in {1..10}; do
-      # We run a temporary container on the same network to test DNS resolution
-      if docker run --rm --network=dbt-build-net alpine ping -c 1 proxy-service; then
-        echo "Proxy is reachable."
-        exit 0
-      fi
-      echo "Waiting for proxy DNS... attempt $$i"
-      sleep 2
-    done
-    echo "Proxy was not reachable after 20 seconds."
-    exit 1
-  waitFor: ['Start Proxy Container']
+# - name: 'gcr.io/cloud-builders/docker'
+#   id: 'Wait for Proxy'
+#   entrypoint: 'bash'
+#   args:
+#   - -c
+#   - |
+#     for i in {1..10}; do
+#       # We run a temporary container on the same network to test DNS resolution
+#       if docker run --rm --network=dbt-build-net alpine ping -c 1 proxy-service; then
+#         echo "Proxy is reachable."
+#         exit 0
+#       fi
+#       echo "Waiting for proxy DNS... attempt $$i"
+#       sleep 2
+#     done
+#     echo "Proxy was not reachable after 20 seconds."
+#     exit 1
+#   waitFor: ['Start Proxy Container']
 
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Debug Proxy State'
@@ -67,7 +67,7 @@ steps:
     
     echo "\n--- 3. Retrieving Proxy Container Logs (Most Important) ---"
     docker logs proxy-service
-  waitFor: ['Wait for Proxy']
+  waitFor: ['Start Proxy Container']
 
 # 4. Get the IP address of the running proxy container.
 - name: 'gcr.io/cloud-builders/docker'
