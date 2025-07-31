@@ -7,26 +7,40 @@ availableSecrets:
     env: 'DB_PASSWORD'
 
 steps:
-# 1. Create a dedicated network for the build process.
+# 1. Create the .env file in the build context.
+- name: 'bash'
+  id: 'Create .env File'
+  secretEnv: ['DB_USER', 'DB_PASSWORD']
+  args:
+    - -c
+    - |
+      cat <<EOT > pipelines/.env
+      cloud_sql_user=$$DB_USER
+      cloud_sql_password=$$DB_PASSWORD
+      cloud_sql_postgres_db=postgres
+      # 💡 IMPORTANT: The host is the name of our proxy container.
+      cloud_sql_postgres_host=proxy-service
+      EOT
+# 2. Create a dedicated network for the build process.
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Create Network'
   args: ['network', 'create', 'dbt-build-net']
 
-# 2. Start the Cloud SQL Proxy in its own container on the new network.
+# 3. Start the Cloud SQL Proxy in its own container on the new network.
 # We use the official proxy image.
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Start Proxy Container'
   args: [
     'run',
     '-d',
-    'gcr.io/cloud-sql-connectors/cloud-sql-proxy',
     '--name', 'proxy-service',
     '--network', 'dbt-build-net',
+    'gcr.io/cloud-sql-connectors/cloud-sql-proxy',
     'data-pipelines-450611:us-central1:builder-love'
   ]
   # This step runs in the background, so we don't wait for it to finish.
 
-# 3. Build the main application image.
+# 4. Build the main application image.
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Build App Image'
   secretEnv: ['DB_USER', 'DB_PASSWORD']
@@ -34,26 +48,20 @@ steps:
     'build',
     # Attach this build to our custom network
     '--network=dbt-build-net',
-    # Pass secrets and configuration as build arguments
-    '--build-arg', 'DB_USER=$${DB_USER}',
-    '--build-arg', 'DB_PASSWORD=$${DB_PASSWORD}',
-    # IMPORTANT: The host is now the name of our proxy container
-    '--build-arg', 'DB_HOST=proxy-service',
-    '--build-arg', 'DB_NAME=postgres',
     '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA',
     '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest',
     './pipelines'
   ]
   waitFor: ['Start Proxy Container'] # Ensure proxy is started before building
 
-# 4. Stop and remove the proxy container (important for cleanup).
+# 5. Stop and remove the proxy container (important for cleanup).
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Stop Proxy Container'
   args: ['rm', '-f', 'proxy-service']
   # This step runs even if the build fails, ensuring cleanup.
   waitFor: ['Build App Image']
 
-# 5. Push the final image.
+# 6. Push the final image.
 - name: 'gcr.io/cloud-builders/docker'
   args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app', '--all-tags']
   waitFor: ['Stop Proxy Container'] # Wait for build and cleanup
