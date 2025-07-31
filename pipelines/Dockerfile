@@ -14,8 +14,8 @@ RUN apt-get update && apt-get install -y dnsutils iputils-ping iproute2 && \
     echo "\n--- 3. Testing Hostname Resolution ---" && \
     # We use '|| true' so the build doesn't fail if resolution fails,
     # allowing us to see all the debug output.
-    nslookup proxy-service || true && \
-    ping -c 4 proxy-service || true
+    nslookup proxy-service && \
+    ping -c 4 proxy-service
 
 WORKDIR /opt/dagster/app
 
