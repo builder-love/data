@@ -6,6 +6,17 @@ FROM python:3.13-slim AS builder
 # Install build-time dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 
+RUN apt-get update && apt-get install -y dnsutils iputils-ping iproute2 && \
+    echo "--- 1. Inspecting Network Interfaces ---" && \
+    ip addr && \
+    echo "\n--- 2. Inspecting DNS Configuration ---" && \
+    cat /etc/resolv.conf && \
+    echo "\n--- 3. Testing Hostname Resolution ---" && \
+    # We use '|| true' so the build doesn't fail if resolution fails,
+    # allowing us to see all the debug output.
+    nslookup proxy-service || true && \
+    ping -c 4 proxy-service || true
+
 WORKDIR /opt/dagster/app
 
 # Install Python packages
