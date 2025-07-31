@@ -1,3 +1,6 @@
+# speciify the service account
+serviceAccount: 'projects/$PROJECT_ID/serviceAccounts/cloud-build-deployer@$PROJECT_ID.iam.gserviceaccount.com'
+
 # cloudbuild.yaml (Networked Build)
 availableSecrets:
   secretManager:
