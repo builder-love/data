@@ -47,32 +47,35 @@ steps:
     exit 1
   waitFor: ['Start Proxy Container']
 
-# # 5. Get the IP address of the running proxy container.
-# - name: 'gcr.io/cloud-builders/docker'
-#   id: 'Get Proxy IP'
-#   entrypoint: 'bash'
-#   args:
-#     - -c
-#     - |
-#       docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' proxy-service > /workspace/proxy_ip.txt
-#   waitFor: ['Start Proxy Container']
+# 4. Get the IP address of the running proxy container.
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Get Proxy IP'
+  entrypoint: 'bash'
+  args:
+    - -c
+    - |
+      docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' proxy-service > /workspace/proxy_ip.txt
+  waitFor: ['Wait for Proxy']
 
-  # 4. Create the .env file in the build context.
+# 5. Create the .env file in the build context.
 - name: 'bash'
   id: 'Create .env File'
   secretEnv: ['DB_USER', 'DB_PASSWORD']
   args:
     - -c
     - |
+      # Read the IP address from the file created in the previous step
+      PROXY_IP=$(cat /workspace/proxy_ip.txt)
+      echo "--- Using Proxy IP: $$PROXY_IP ---"
       cat <<EOT > pipelines/.env
       cloud_sql_user=$$DB_USER
       cloud_sql_password=$$DB_PASSWORD
       cloud_sql_postgres_db=postgres
-      cloud_sql_postgres_host=proxy-service.
+      cloud_sql_postgres_host=$$PROXY_IP
       EOT
-  waitFor: ['Wait for Proxy']
+  waitFor: ['Get Proxy IP']
 
-# 5. Build the main application image.
+# 6. Build the main application image.
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Build App Image'
   secretEnv: ['DB_USER', 'DB_PASSWORD']
@@ -86,14 +89,14 @@ steps:
   ]
   waitFor: ['Create .env File'] # Ensure proxy is started before building
 
-# 6. Stop and remove the proxy container (important for cleanup).
+# 7. Stop and remove the proxy container (important for cleanup).
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Stop Proxy Container'
   args: ['rm', '-f', 'proxy-service']
   # This step runs even if the build fails, ensuring cleanup.
   waitFor: ['Build App Image']
 
-# 7. Push the final image.
+# 8. Push the final image.
 - name: 'gcr.io/cloud-builders/docker'
   args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app', '--all-tags']
   waitFor: ['Stop Proxy Container'] # Wait for build and cleanup
