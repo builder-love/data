@@ -1,12 +1,6 @@
 # Dockerfile (for Networked Build)
 
 # --- Builder Stage ---
-# Declare the arguments that will be passed in from the 'docker build' command.
-ARG DB_HOST
-ARG DB_NAME
-ARG DB_USER
-ARG DB_PASSWORD
-
 FROM python:3.13-slim AS builder
 
 # Install build-time dependencies
@@ -22,16 +16,15 @@ RUN uv pip install --system --no-cache -r requirements.txt
 # Copy all application code
 COPY . .
 
+COPY .env .
+
 # Change to the dbt project directory
 WORKDIR /opt/dagster/app/dbt-pipelines
 
 # Use the build arguments to compile dbt.
 # We set them as environment variables for this single RUN command.
-RUN export DBT_PROFILES_DIR=. && \
-    export cloud_sql_postgres_host=$DB_HOST && \
-    export cloud_sql_postgres_db=$DB_NAME && \
-    export cloud_sql_user=$DB_USER && \
-    export cloud_sql_password=$DB_PASSWORD && \
+RUN set -a && . ../.env && set +a && \
+    export DBT_PROFILES_DIR=. && \
     dbt deps && \
     dbt debug && \
     dbt compile --threads 16 --target stg --target-path "target/stg" && \
