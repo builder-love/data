@@ -23,23 +23,23 @@ spec:
         ports:
         - containerPort: 3000
         env:
-        - name: DAGSTER_POSTGRES_USER
+        - name: cloud_sql_user
           valueFrom:
             secretKeyRef:
               name: cloudsql-db-credentials
               key: username
-        - name: DAGSTER_POSTGRES_PASSWORD
+        - name: cloud_sql_password
           valueFrom:
             secretKeyRef:
               name: cloudsql-db-credentials
               key: password
-        - name: DAGSTER_POSTGRES_DB
+        - name: cloud_sql_postgres_db
           valueFrom:
             secretKeyRef:
               name: cloudsql-db-credentials
               key: database
         # This now points to the sidecar proxy
-        - name: DAGSTER_POSTGRES_HOSTNAME
+        - name: cloud_sql_postgres_host
           value: "127.0.0.1"
 
       # Cloud SQL Auth Proxy sidecar container
@@ -47,6 +47,6 @@ spec:
         image: gcr.io/cloudsql-docker/gce-proxy:1.33.9
         command:
           - "/cloud_sql_proxy"
-          - "-instances=data-pipelines-450611:us-central1:builder-love=tcp:5432" # Get this from your Cloud SQL instance page
+          - "-instances=data-pipelines-450611:us-central1:builder-love" # Get this from your Cloud SQL instance page
         securityContext:
           runAsNonRoot: true
