@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from sqlalchemy import create_engine
-from dagster import resource, EnvVar
+from dagster import resource, EnvVar, ConfigurableResource
 from dagster_dbt import DbtCliResource
 from google.cloud import storage
 from google.auth.exceptions import DefaultCredentialsError
@@ -117,3 +117,21 @@ def gcs_storage_client_resource(context):
     except exceptions.DefaultCredentialsError as e:
         context.log.error(f"Credentials error with key file {keyfile_path}: {e}")
         raise
+
+class github_api_resource(ConfigurableResource):
+    """A resource for connecting to the github API."""
+
+    key_a: str = EnvVar("GITHUB_API_TREBOR")
+    key_b: str = EnvVar("GITHUB_API_JACKATJ")
+
+    def get_client(self, key_name: str):
+        if key_name == "github_finegrain_trebor":
+            api_key = self.key_a
+        elif key_name == "github_finegrain_jackatj":
+            api_key = self.key_b
+        else:
+            raise ValueError(f"Unknown key name: {key_name}")
+
+        # Return a configured client or just the key
+        print(f"Using API Key: ...{api_key[-4:]}")
+        return api_key

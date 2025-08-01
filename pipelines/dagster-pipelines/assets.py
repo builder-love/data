@@ -17,6 +17,12 @@ from urllib.parse import urlparse
 from datetime import datetime, timezone
 import numpy as np
 import traceback
+from dagster import Config
+from .resources import github_api_resource 
+
+# Define the config schema for the github api resource
+class GithubAssetConfig(Config):
+    key_name: str
 
 ########################################################################################################################
 # lookup and swap github legacy contributor node id for the new format contributor node id
@@ -246,12 +252,12 @@ def create_latest_active_distinct_github_project_repos_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="latest_active_distinct_github_project_repos",
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
         group_name="clean_data",
         tags={"github_api": "True"},
         automation_condition=dg.AutomationCondition.eager(),
     )
-    def _latest_active_distinct_github_project_repos_env_specific(context) -> dg.MaterializeResult:
+    def _latest_active_distinct_github_project_repos_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
         # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config
@@ -417,7 +423,8 @@ def create_latest_active_distinct_github_project_repos_asset(env_prefix: str):
         # Process GitHub Repos
         context.log.info("Processing GitHub repos...")
         github_urls = distinct_repo_df[distinct_repo_df['repo_source'] == 'github']['repo'].tolist()
-        gh_pat = os.getenv('go_blockchain_ecosystem')
+        # use the class object to set the right github api key from definitions.py
+        gh_pat = github_api.get_client(config.key_name)
         github_results_dict, count_http_errors = get_github_repo_status(github_urls, gh_pat, 'github')
 
         # Convert dictionary to DataFrame, now including is_archived
@@ -482,11 +489,11 @@ def create_github_project_repos_stargaze_count_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,  # <<< This is the key change for namespacing
         name="github_project_repos_stargaze_count", # This is the base name of the asset
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
         group_name="ingestion", # Group name
         tags={"github_api": "True"},
     )
-    def _github_project_repos_stargaze_count_env_specific(context) -> dg.MaterializeResult:
+    def _github_project_repos_stargaze_count_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
         # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config  
@@ -497,7 +504,7 @@ def create_github_project_repos_stargaze_count_asset(env_prefix: str):
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
         # get the github personal access token
-        gh_pat = os.environ.get("go_blockchain_ecosystem")
+        gh_pat = github_api.get_client(config.key_name)
 
         def get_non_github_repo_stargaze_count(repo_url, repo_source):
 
@@ -817,7 +824,7 @@ def create_github_project_repos_stargaze_count_asset(env_prefix: str):
         github_urls = repo_df[repo_df['repo_source'] == 'github']['repo'].tolist()
 
         # get github pat
-        gh_pat = os.getenv('go_blockchain_ecosystem')
+        gh_pat = github_api.get_client(config.key_name)
 
         results = get_github_repo_stargaze_count(github_urls, gh_pat)
 
@@ -879,11 +886,11 @@ def create_github_project_repos_fork_count_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="github_project_repos_fork_count",
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
         group_name="ingestion",
         tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
     )
-    def _github_project_repos_fork_count_env_specific(context) -> dg.MaterializeResult:
+    def _github_project_repos_fork_count_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
         # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config  
@@ -894,7 +901,7 @@ def create_github_project_repos_fork_count_asset(env_prefix: str):
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
         # get the github personal access token
-        gh_pat = os.environ.get("go_blockchain_ecosystem")
+        gh_pat = github_api.get_client(config.key_name)
 
         def get_non_github_repo_fork_count(repo_url, repo_source):
 
@@ -1257,11 +1264,11 @@ def create_github_project_repos_languages_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="github_project_repos_languages",
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
         group_name="ingestion",
         tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
     )
-    def _github_project_repos_languages_env_specific(context) -> dg.MaterializeResult:
+    def _github_project_repos_languages_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
         # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config  
@@ -1272,7 +1279,7 @@ def create_github_project_repos_languages_asset(env_prefix: str):
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
         # get the github personal access token
-        gh_pat = os.environ.get("go_blockchain_ecosystem")
+        gh_pat = github_api.get_client(config.key_name)
 
         def get_non_github_repo_languages(repo_url, repo_source):
 
@@ -1755,11 +1762,11 @@ def create_github_project_repos_commits_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="github_project_repos_commits",
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
         group_name="ingestion",
         tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
     )
-    def _github_project_repos_commits_env_specific(context) -> dg.MaterializeResult:
+    def _github_project_repos_commits_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
         # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config  
@@ -1770,7 +1777,7 @@ def create_github_project_repos_commits_asset(env_prefix: str):
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
         # get the github personal access token
-        gh_pat = os.environ.get("go_blockchain_ecosystem")
+        gh_pat = github_api.get_client(config.key_name)
 
         def get_non_github_repo_commits(repo_url, repo_source):
 
@@ -2234,11 +2241,11 @@ def create_github_project_repos_watcher_count_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="github_project_repos_watcher_count",
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
         group_name="ingestion",
         tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
     )
-    def _github_project_repos_watcher_count_env_specific(context) -> dg.MaterializeResult:
+    def _github_project_repos_watcher_count_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
         # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config  
@@ -2249,7 +2256,7 @@ def create_github_project_repos_watcher_count_asset(env_prefix: str):
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
         # get the github personal access token
-        gh_pat = os.environ.get("go_blockchain_ecosystem")
+        gh_pat = github_api.get_client(config.key_name)
 
         def get_non_github_repo_watcher_count(repo_url, repo_source):
 
@@ -2660,11 +2667,11 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="github_project_repos_is_fork",
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
         group_name="ingestion",
         tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
     )
-    def _github_project_repos_is_fork_env_specific(context) -> dg.MaterializeResult:
+    def _github_project_repos_is_fork_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
         # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config  
@@ -2675,7 +2682,7 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
         # get the github personal access token
-        gh_pat = os.environ.get("go_blockchain_ecosystem")
+        gh_pat = github_api.get_client(config.key_name)
 
         def get_non_github_repo_is_fork(repo_url, repo_source):
 
@@ -3102,11 +3109,11 @@ def create_project_repos_description_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,  # <<< This is the key change for namespacing
         name="project_repos_description", # This is the base name of the asset
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
         group_name="ingestion", # Group name
         tags={"github_api": "True"},
     )
-    def _project_repos_description_env_specific(context) -> dg.MaterializeResult:
+    def _project_repos_description_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
         # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config  
@@ -3117,7 +3124,7 @@ def create_project_repos_description_asset(env_prefix: str):
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
         # get the github personal access token
-        gh_pat = os.environ.get("go_blockchain_ecosystem")
+        gh_pat = github_api.get_client(config.key_name)
 
         def get_non_github_repo_description(repo_url, repo_source):
 
@@ -3427,7 +3434,7 @@ def create_project_repos_description_asset(env_prefix: str):
         github_urls = repo_df[repo_df['repo_source'] == 'github']['repo'].tolist()
 
         # get github pat
-        gh_pat = os.getenv('go_blockchain_ecosystem')
+        gh_pat = github_api.get_client(config.key_name)
 
         results = get_github_repo_description(github_urls, gh_pat)
 
@@ -3494,7 +3501,7 @@ def create_project_repos_readmes_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="project_repos_readmes",
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
         group_name="ingestion",
         tags={"github_api": "True"},
         description="""
@@ -3502,7 +3509,7 @@ def create_project_repos_readmes_asset(env_prefix: str):
         cleaning them of images/links and truncating if they exceed a defined maximum length.
         """
     )
-    def _project_repos_readmes_env_specific(context: dg.OpExecutionContext) -> dg.MaterializeResult:
+    def _project_repos_readmes_env_specific(context: dg.OpExecutionContext, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config
         raw_schema = env_config["raw_schema"]
@@ -3510,9 +3517,9 @@ def create_project_repos_readmes_asset(env_prefix: str):
 
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
-        gh_pat = os.environ.get("go_blockchain_ecosystem")
+        gh_pat = github_api.get_client(config.key_name)
         if not gh_pat:
-            context.log.warning("GitHub Personal Access Token (go_blockchain_ecosystem) not found in environment variables.")
+            context.log.warning("GitHub Personal Access Token not found in environment variables.")
 
         readme_filenames_to_try = ["README.md", "readme.md", "README.rst", "README.txt"]
 
@@ -3921,7 +3928,7 @@ def create_project_repos_package_files_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="project_repos_package_files",
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
         group_name="ingestion",
         tags={"github_api": "True"},
         description="""
@@ -3929,7 +3936,7 @@ def create_project_repos_package_files_asset(env_prefix: str):
         across all active repositories and stores their content.
         """
     )
-    def _project_repos_package_files_env_specific(context: dg.OpExecutionContext) -> dg.MaterializeResult:
+    def _project_repos_package_files_env_specific(context: dg.OpExecutionContext, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config
         raw_schema = env_config["raw_schema"]
@@ -3937,9 +3944,9 @@ def create_project_repos_package_files_asset(env_prefix: str):
 
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
-        gh_pat = os.environ.get("go_blockchain_ecosystem")
+        gh_pat = github_api.get_client(config.key_name)
         if not gh_pat:
-            context.log.warning("GitHub Personal Access Token (go_blockchain_ecosystem) not found.")
+            context.log.warning("GitHub Personal Access Token not found.")
 
         def fetch_content_via_get(url: str) -> str | None:
             """Helper to fetch content from a direct URL."""
@@ -4159,7 +4166,7 @@ def create_project_repos_app_dev_framework_files_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="project_repos_app_dev_framework_files",
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
         group_name="ingestion",
         tags={"github_api": "True"},
         description="""
@@ -4167,7 +4174,7 @@ def create_project_repos_app_dev_framework_files_asset(env_prefix: str):
         across all active repositories and stores their content.
         """
     )
-    def _project_repos_app_dev_framework_files_env_specific(context: dg.OpExecutionContext) -> dg.MaterializeResult:
+    def _project_repos_app_dev_framework_files_env_specific(context: dg.OpExecutionContext, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config
         raw_schema = env_config["raw_schema"]
@@ -4175,9 +4182,9 @@ def create_project_repos_app_dev_framework_files_asset(env_prefix: str):
 
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
-        gh_pat = os.environ.get("go_blockchain_ecosystem")
+        gh_pat = github_api.get_client(config.key_name)
         if not gh_pat:
-            context.log.warning("GitHub Personal Access Token (go_blockchain_ecosystem) not found.")
+            context.log.warning("GitHub Personal Access Token not found.")
 
         def fetch_content_via_get(url: str) -> str | None:
             """Helper to fetch content from a direct URL."""
@@ -4383,7 +4390,7 @@ def create_project_repos_frontend_framework_files_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="project_repos_frontend_framework_files",
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
         group_name="ingestion",
         tags={"github_api": "True"},
         description="""
@@ -4391,7 +4398,7 @@ def create_project_repos_frontend_framework_files_asset(env_prefix: str):
         across all active repositories and stores their content.
         """
     )
-    def _project_repos_frontend_framework_files_env_specific(context: dg.OpExecutionContext) -> dg.MaterializeResult:
+    def _project_repos_frontend_framework_files_env_specific(context: dg.OpExecutionContext, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config
         raw_schema = env_config["raw_schema"]
@@ -4399,9 +4406,9 @@ def create_project_repos_frontend_framework_files_asset(env_prefix: str):
 
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
-        gh_pat = os.environ.get("go_blockchain_ecosystem")
+        gh_pat = github_api.get_client(config.key_name)
         if not gh_pat:
-            context.log.warning("GitHub Personal Access Token (go_blockchain_ecosystem) not found.")
+            context.log.warning("GitHub Personal Access Token not found.")
 
         def fetch_content_via_get(url: str) -> str | None:
             """Helper to fetch content from a direct URL."""
@@ -4699,7 +4706,7 @@ def create_project_repos_documentation_files_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="project_repos_documentation_files",
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
         group_name="ingestion",
         tags={"github_api": "True"},
         description="""
@@ -4707,7 +4714,7 @@ def create_project_repos_documentation_files_asset(env_prefix: str):
         excluding README.md and LICENSE.md, and stores their content.
         """
     )
-    def _project_repos_documentation_files_env_specific(context: dg.OpExecutionContext) -> dg.MaterializeResult:
+    def _project_repos_documentation_files_env_specific(context: dg.OpExecutionContext, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config
         raw_schema = env_config["raw_schema"]
@@ -4715,9 +4722,9 @@ def create_project_repos_documentation_files_asset(env_prefix: str):
 
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
-        gh_pat = os.environ.get("go_blockchain_ecosystem")
+        gh_pat = github_api.get_client(config.key_name)
         if not gh_pat:
-            context.log.warning("GitHub Personal Access Token (go_blockchain_ecosystem) not found.")
+            context.log.warning("GitHub Personal Access Token not found.")
 
         # Create a session object with a retry policy
         session = requests.Session()
@@ -4796,11 +4803,11 @@ def create_github_project_repos_contributors_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="github_project_repos_contributors",
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
         group_name="ingestion",
         tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
     )
-    def _github_project_repos_contributors_env_specific(context) -> dg.MaterializeResult:
+    def _github_project_repos_contributors_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
         env_config = context.resources.active_env_config  
         raw_schema = env_config["raw_schema"]  
         clean_schema = env_config["clean_schema"] 
@@ -4814,7 +4821,7 @@ def create_github_project_repos_contributors_asset(env_prefix: str):
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
 
         # get the github personal access token
-        gh_pat = os.environ.get("go_blockchain_ecosystem")
+        gh_pat = github_api.get_client(config.key_name)
 
         # capture the timestamp at start for writing to batch to the database
         batch_timestamp = pd.Timestamp.now()
@@ -5128,11 +5135,11 @@ def create_latest_contributor_data_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="latest_contributor_data",
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
         group_name="ingestion",
         automation_condition=dg.AutomationCondition.eager(),
     )
-    def _latest_contributor_data_env_specific(context) -> dg.MaterializeResult:
+    def _latest_contributor_data_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
         # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config  
@@ -5460,7 +5467,7 @@ def create_latest_contributor_data_asset(env_prefix: str):
         node_ids = distinct_contributor_node_ids_df['contributor_node_id'].tolist()
 
         # get github pat
-        gh_pat = os.getenv('go_blockchain_ecosystem')
+        gh_pat = github_api.get_client(config.key_name)
 
         # check if gh_pat is not None
         if gh_pat is None:
@@ -5764,11 +5771,11 @@ def create_contributor_follower_count_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="contributor_follower_count",
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
         group_name="ingestion",
         tags={"github_api": "True"}
     )
-    def _contributor_follower_count_env_specific(context) -> dg.MaterializeResult: # Renamed asset
+    def _contributor_follower_count_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult: # Renamed asset
         env_config = context.resources.active_env_config  
         raw_schema = env_config["raw_schema"]  
         clean_schema = env_config["clean_schema"] 
@@ -5779,10 +5786,10 @@ def create_contributor_follower_count_asset(env_prefix: str):
         context.log.info("Starting contributor_follower_count asset.")
         fallback_filename = f"/tmp/contributor_follower_count_fallback_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.parquet"
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
-        gh_pat = os.getenv('go_blockchain_ecosystem')
+        gh_pat = github_api.get_client(config.key_name)
 
         if gh_pat is None:
-            context.log.warning("No GitHub PAT found (go_blockchain_ecosystem env var).")
+            context.log.warning("No GitHub PAT found.")
             return dg.MaterializeResult(metadata={"row_count": dg.MetadataValue.int(0)})
 
         with cloud_sql_engine.connect() as conn:
@@ -6102,11 +6109,11 @@ def create_latest_contributor_following_count_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="latest_contributor_following_count",
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
         group_name="ingestion",
         tags={"github_api": "True"}
     )
-    def _latest_contributor_following_count_env_specific(context) -> dg.MaterializeResult:
+    def _latest_contributor_following_count_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
         env_config = context.resources.active_env_config  
         raw_schema = env_config["raw_schema"]  
         clean_schema = env_config["clean_schema"] 
@@ -6121,7 +6128,7 @@ def create_latest_contributor_following_count_asset(env_prefix: str):
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
 
         # define the github pat
-        gh_pat = os.getenv('go_blockchain_ecosystem')
+        gh_pat = github_api.get_client(config.key_name)
 
         # check if gh_pat is not None
         if gh_pat is None:
@@ -6441,12 +6448,12 @@ def create_latest_contributor_activity_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="latest_contributor_activity",
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
         group_name="ingestion",
         tags={"github_api": "True"},
         description="Retrieves GitHub user ID, login, and their latest activity (aiming for top 100) using the GitHub GraphQL API."
     )
-    def _latest_contributor_activity_env_specific(context) -> dg.MaterializeResult:
+    def _latest_contributor_activity_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
         env_config = context.resources.active_env_config  
         raw_schema = env_config["raw_schema"]  
         clean_schema = env_config["clean_schema"] 
@@ -6456,10 +6463,10 @@ def create_latest_contributor_activity_asset(env_prefix: str):
 
         fallback_filename = f"/tmp/contributor_activity_fallback_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.parquet"
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
-        gh_pat = os.getenv('go_blockchain_ecosystem')
+        gh_pat = github_api.get_client(config.key_name)
 
         if gh_pat is None:
-            context.log.warning("No GitHub PAT found (go_blockchain_ecosystem env var). Skipping asset.")
+            context.log.warning("No GitHub PAT found. Skipping asset.")
             return dg.MaterializeResult(metadata={"row_count": dg.MetadataValue.int(0)})
         
         with cloud_sql_engine.connect() as conn:

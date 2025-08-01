@@ -8,7 +8,8 @@ from .resources import (
     dbt_prod_resource,
     active_env_config_resource,
     electric_capital_ecosystems_repo,
-    gcs_storage_client_resource
+    gcs_storage_client_resource,
+    github_api_resource
 )
 # import assets from assets.py
 from .assets import ( # Adjust module path if they are in different files
@@ -80,6 +81,31 @@ from .load_data_jobs import (
 )
 from .api_data import refresh_api_schema
 
+# --- Map base asset names to their job/schedule parameters ---
+# Keys must match the keys in common_asset_creators.
+asset_job_schedule_params_map = {
+    "update_crypto_ecosystems_repo_and_run_export": {"base_job_name": "update_crypto_ecosystems_repo_and_run_export_refresh", "base_job_desc": "Updates the crypto-ecosystems repo...", "job_tags": {"create_local_data_file": "True"}, "cron_str": "0 19 * * 3", "base_schedule_name": "update_crypto_ecosystems_repo_and_run_export_schedule"},
+    "crypto_ecosystems_project_json": {"base_job_name": "crypto_ecosystems_project_json_refresh", "base_job_desc": "Reads the local exports.jsonl file...", "job_tags": {}, "cron_str": "0 20 * * 3", "base_schedule_name": "crypto_ecosystems_project_json_schedule"},
+    "latest_active_distinct_github_project_repos": {"base_job_name": "latest_active_distinct_project_repos_refresh", "base_job_desc": "Queries the latest distinct list of repos...", "job_tags": {"github_api_key1": "True"}, "cron_str": "10 0 7,21 * *", "base_schedule_name": "latest_active_distinct_project_repos_schedule", "github_key_name": "github_finegrain_trebor"},
+    "github_project_repos_stargaze_count": {"base_job_name": "project_repos_stargaze_count_refresh", "base_job_desc": "Gets the stargaze count...", "job_tags": {"github_api_key1": "True"}, "cron_str": "10 0 * * 0", "base_schedule_name": "project_repos_stargaze_count_schedule", "github_key_name": "github_finegrain_trebor"},
+    "github_project_repos_fork_count": {"base_job_name": "project_repos_fork_count_refresh", "base_job_desc": "Gets the fork count...", "job_tags": {"github_api_key1": "True"}, "cron_str": "10 0 * * 6", "base_schedule_name": "project_repos_fork_count_schedule", "github_key_name": "github_finegrain_trebor"},
+    "github_project_repos_languages": {"base_job_name": "project_repos_languages_refresh", "base_job_desc": "Gets the languages...", "job_tags": {"github_api_key1": "True"}, "cron_str": "0 0 16 * *", "base_schedule_name": "project_repos_languages_schedule", "github_key_name": "github_finegrain_trebor"},
+    "github_project_repos_commits": {"base_job_name": "project_repos_commit_count_refresh", "base_job_desc": "Gets the commit count...", "job_tags": {"github_api_key1": "True"}, "cron_str": "10 0 * * 5", "base_schedule_name": "project_repos_commit_count_schedule", "github_key_name": "github_finegrain_trebor"},
+    "github_project_repos_watcher_count": {"base_job_name": "project_repos_watcher_count_refresh", "base_job_desc": "Gets the watcher count...", "job_tags": {"github_api_key1": "True"}, "cron_str": "10 0 * * 1", "base_schedule_name": "project_repos_watcher_count_schedule", "github_key_name": "github_finegrain_trebor"},
+    "github_project_repos_is_fork": {"base_job_name": "project_repos_is_fork_refresh", "base_job_desc": "Gets the is_fork status...", "job_tags": {"github_api_key1": "True"}, "cron_str": "10 0 * * 2", "base_schedule_name": "project_repos_is_fork_schedule", "github_key_name": "github_finegrain_trebor"},
+    "github_project_repos_contributors": {"base_job_name": "project_repos_contributors_refresh", "base_job_desc": "Gets the contributors...", "job_tags": {"github_api_key2": "True"}, "cron_str": "0 0 20 * *", "base_schedule_name": "project_repos_contributors_schedule", "github_key_name": "github_finegrain_jackatj"},
+    "project_repos_description": {"base_job_name": "project_repos_description_refresh", "base_job_desc": "Gets the repo description...", "job_tags": {"github_api_key1": "True"}, "cron_str": "0 0 26 * *", "base_schedule_name": "project_repos_description_schedule", "github_key_name": "github_finegrain_trebor"},
+    "project_repos_readmes": {"base_job_name": "project_repos_readmes_refresh", "base_job_desc": "Gets the repo readmes...", "job_tags": {"github_api_key1": "True"}, "cron_str": "0 0 27 * *", "base_schedule_name": "project_repos_readmes_schedule", "github_key_name": "github_finegrain_trebor"},
+    "project_repos_package_files": {"base_job_name": "project_repos_package_files_refresh", "base_job_desc": "Gets the repo package files...", "job_tags": {"github_api_key1": "True"}, "cron_str": "10 0 24 * *", "base_schedule_name": "project_repos_package_files_schedule", "github_key_name": "github_finegrain_trebor"},
+    "project_repos_app_dev_framework_files": {"base_job_name": "project_repos_app_dev_framework_files_refresh", "base_job_desc": "Gets the repo app dev framework files...", "job_tags": {"github_api_key1": "True"}, "cron_str": "10 0 25 * *", "base_schedule_name": "project_repos_app_dev_framework_files_schedule", "github_key_name": "github_finegrain_trebor"},
+    "project_repos_frontend_framework_files": {"base_job_name": "project_repos_frontend_framework_files_refresh", "base_job_desc": "Gets the repo frontend framework files...", "job_tags": {"github_api_key1": "True"}, "cron_str": "10 0 26 * *", "base_schedule_name": "project_repos_frontend_framework_files_schedule", "github_key_name": "github_finegrain_trebor"},
+    "project_repos_documentation_files": {"base_job_name": "project_repos_documentation_files_refresh", "base_job_desc": "Gets the repo documentation files...", "job_tags": {"github_api_key1": "True"}, "cron_str": "10 0 27 * *", "base_schedule_name": "project_repos_documentation_files_schedule", "github_key_name": "github_finegrain_trebor"},
+    "process_compressed_contributors_data": {"base_job_name": "process_compressed_contributors_data_refresh", "base_job_desc": "Extracts, decompresses, and inserts data...", "job_tags": {"github_api_key1": "True"}, "cron_str": "0 3 * * *", "base_schedule_name": "process_compressed_contributors_data_schedule", "github_key_name": "github_finegrain_trebor"},
+    "latest_contributor_data": {"base_job_name": "latest_contributor_data_refresh", "base_job_desc": "Queries the latest list of contributors...", "job_tags": {"github_api_key1": "True"}, "cron_str": "0 10 8,22 * *", "base_schedule_name": "latest_contributor_data_schedule", "github_key_name": "github_finegrain_trebor"},
+    "contributor_follower_count": {"base_job_name": "contributor_follower_count_refresh", "base_job_desc": "Queries follower count...", "job_tags": {"github_api_key1": "True"}, "cron_str": "10 0 9 * *", "base_schedule_name": "contributor_follower_count_schedule", "github_key_name": "github_finegrain_trebor"},
+    "latest_contributor_following_count": {"base_job_name": "latest_contributor_following_count_refresh", "base_job_desc": "Queries following count...", "job_tags": {"github_api_key1": "True"}, "cron_str": "10 0 12 * *", "base_schedule_name": "latest_contributor_following_count_schedule", "github_key_name": "github_finegrain_trebor"},
+    "latest_contributor_activity": {"base_job_name": "latest_contributor_activity_refresh", "base_job_desc": "Queries recent activity...", "job_tags": {"github_api_key2": "True"}, "cron_str": "10 0 13 * *", "base_schedule_name": "latest_contributor_activity_schedule", "github_key_name": "github_finegrain_jackatj"},
+}
 
 ## ------------------------------------------ define common assets, jobs, and schedules --------------------------------- ##
 # --- Define mapping from base asset names to their CREATOR functions ---
@@ -123,11 +149,23 @@ prod_assets_by_base_name = {}
 
 for base_name, creator_fn in common_asset_creators.items():
     try:
-        stg_asset = creator_fn(env_prefix="stg")
+        # Get the parameters for the current asset from the map
+        params = asset_job_schedule_params_map.get(base_name)
+        if not params:
+            raise ValueError(f"Missing parameters for asset: {base_name}")
+
+        # Get the specific GitHub key name for this asset
+        key_name_for_asset = params.get("github_key_name")
+        if not key_name_for_asset:
+            raise ValueError(f"Missing 'github_key_name' config for asset: {base_name}")
+
+        # Create the configuration dictionary to apply to the asset
+        asset_config = {"key_name": key_name_for_asset}
+        stg_asset = creator_fn(env_prefix="stg").with_config(asset_config)
         stg_prefixed_common_assets.append(stg_asset)
         stg_assets_by_base_name[base_name] = stg_asset
 
-        prod_asset = creator_fn(env_prefix="prod")
+        prod_asset = creator_fn(env_prefix="prod").with_config(asset_config)
         prod_prefixed_common_assets.append(prod_asset)
         prod_assets_by_base_name[base_name] = prod_asset
     except TypeError as e:
@@ -137,33 +175,6 @@ for base_name, creator_fn in common_asset_creators.items():
     except Exception as e:
         print(f"Unexpected error creating asset for base_name '{base_name}': {e}")
         raise
-
-# --- Map base asset names to their job/schedule parameters ---
-# Keys must match the keys in common_asset_creators.
-asset_job_schedule_params_map = {
-    "update_crypto_ecosystems_repo_and_run_export": {"base_job_name": "update_crypto_ecosystems_repo_and_run_export_refresh", "base_job_desc": "Updates the crypto-ecosystems repo...", "job_tags": {"create_local_data_file": "True"}, "cron_str": "0 19 * * 3", "base_schedule_name": "update_crypto_ecosystems_repo_and_run_export_schedule"},
-    "crypto_ecosystems_project_json": {"base_job_name": "crypto_ecosystems_project_json_refresh", "base_job_desc": "Reads the local exports.jsonl file...", "job_tags": {}, "cron_str": "0 20 * * 3", "base_schedule_name": "crypto_ecosystems_project_json_schedule"},
-    "latest_active_distinct_github_project_repos": {"base_job_name": "latest_active_distinct_project_repos_refresh", "base_job_desc": "Queries the latest distinct list of repos...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 7,21 * *", "base_schedule_name": "latest_active_distinct_project_repos_schedule"},
-    "github_project_repos_stargaze_count": {"base_job_name": "project_repos_stargaze_count_refresh", "base_job_desc": "Gets the stargaze count...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 * * 0", "base_schedule_name": "project_repos_stargaze_count_schedule"},
-    "github_project_repos_fork_count": {"base_job_name": "project_repos_fork_count_refresh", "base_job_desc": "Gets the fork count...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 * * 6", "base_schedule_name": "project_repos_fork_count_schedule"},
-    "github_project_repos_languages": {"base_job_name": "project_repos_languages_refresh", "base_job_desc": "Gets the languages...", "job_tags": {"github_api": "True"}, "cron_str": "0 0 16 * *", "base_schedule_name": "project_repos_languages_schedule"},
-    "github_project_repos_commits": {"base_job_name": "project_repos_commit_count_refresh", "base_job_desc": "Gets the commit count...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 * * 5", "base_schedule_name": "project_repos_commit_count_schedule"},
-    "github_project_repos_watcher_count": {"base_job_name": "project_repos_watcher_count_refresh", "base_job_desc": "Gets the watcher count...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 * * 1", "base_schedule_name": "project_repos_watcher_count_schedule"},
-    "github_project_repos_is_fork": {"base_job_name": "project_repos_is_fork_refresh", "base_job_desc": "Gets the is_fork status...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 * * 2", "base_schedule_name": "project_repos_is_fork_schedule"},
-    "github_project_repos_contributors": {"base_job_name": "project_repos_contributors_refresh", "base_job_desc": "Gets the contributors...", "job_tags": {"github_api": "True"}, "cron_str": "0 0 20 * *", "base_schedule_name": "project_repos_contributors_schedule"},
-    "project_repos_description": {"base_job_name": "project_repos_description_refresh", "base_job_desc": "Gets the repo description...", "job_tags": {"github_api": "True"}, "cron_str": "0 0 26 * *", "base_schedule_name": "project_repos_description_schedule"},
-    "project_repos_readmes": {"base_job_name": "project_repos_readmes_refresh", "base_job_desc": "Gets the repo readmes...", "job_tags": {"github_api": "True"}, "cron_str": "0 0 27 * *", "base_schedule_name": "project_repos_readmes_schedule"},
-    "project_repos_package_files": {"base_job_name": "project_repos_package_files_refresh", "base_job_desc": "Gets the repo package files...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 24 * *", "base_schedule_name": "project_repos_package_files_schedule"},
-    "project_repos_app_dev_framework_files": {"base_job_name": "project_repos_app_dev_framework_files_refresh", "base_job_desc": "Gets the repo app dev framework files...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 25 * *", "base_schedule_name": "project_repos_app_dev_framework_files_schedule"},
-    "project_repos_frontend_framework_files": {"base_job_name": "project_repos_frontend_framework_files_refresh", "base_job_desc": "Gets the repo frontend framework files...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 26 * *", "base_schedule_name": "project_repos_frontend_framework_files_schedule"},
-    "project_repos_documentation_files": {"base_job_name": "project_repos_documentation_files_refresh", "base_job_desc": "Gets the repo documentation files...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 27 * *", "base_schedule_name": "project_repos_documentation_files_schedule"},
-    "process_compressed_contributors_data": {"base_job_name": "process_compressed_contributors_data_refresh", "base_job_desc": "Extracts, decompresses, and inserts data...", "job_tags": {"github_api": "True"}, "cron_str": "0 3 * * *", "base_schedule_name": "process_compressed_contributors_data_schedule"},
-    "latest_contributor_data": {"base_job_name": "latest_contributor_data_refresh", "base_job_desc": "Queries the latest list of contributors...", "job_tags": {"github_api": "True"}, "cron_str": "0 10 8,22 * *", "base_schedule_name": "latest_contributor_data_schedule"},
-    "contributor_follower_count": {"base_job_name": "contributor_follower_count_refresh", "base_job_desc": "Queries follower count...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 9 * *", "base_schedule_name": "contributor_follower_count_schedule"},
-    "latest_contributor_following_count": {"base_job_name": "latest_contributor_following_count_refresh", "base_job_desc": "Queries following count...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 12 * *", "base_schedule_name": "latest_contributor_following_count_schedule"},
-    "latest_contributor_activity": {"base_job_name": "latest_contributor_activity_refresh", "base_job_desc": "Queries recent activity...", "job_tags": {"github_api": "True"}, "cron_str": "10 0 13 * *", "base_schedule_name": "latest_contributor_activity_schedule"},
-}
-
 
 ## ------------------------------------------ create jobs and schedules for each environment --------------------------------- ##
 # --- Generate Staging Jobs and Schedules ---
@@ -279,6 +290,7 @@ defs = Definitions(
         "electric_capital_ecosystems_repo": electric_capital_ecosystems_repo,
         "gcs_storage_client_resource": gcs_storage_client_resource.configured({
             "gcp_keyfile_path": os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-        })
+        }),
+        "github_api": github_api_resource(),
     },
 )
