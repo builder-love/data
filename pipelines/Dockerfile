@@ -31,6 +31,10 @@ RUN uv pip install --system --no-cache -r requirements.txt
 # Copy all application code
 COPY . .
 
+# Create DAGSTER_HOME and copy the instance config
+RUN mkdir -p /opt/dagster/dagster_home
+COPY dagster.yaml /opt/dagster/dagster_home/
+
 # Change to the dbt project directory
 WORKDIR /opt/dagster/app/dbt-pipelines
 
@@ -54,7 +58,6 @@ FROM python:3.13-slim
 RUN groupadd --system app && useradd --system --gid app appuser
 
 WORKDIR /opt/dagster/app
-RUN chown -R appuser:app /opt/dagster/app
 
 USER appuser
 
@@ -62,6 +65,6 @@ USER appuser
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 # Copy the application code, which now includes the compiled dbt models
-COPY --from=builder --chown=appuser:app /opt/dagster/app .
+COPY --from=builder --chown=appuser:app /opt/dagster /opt/dagster
 
 EXPOSE 3000
