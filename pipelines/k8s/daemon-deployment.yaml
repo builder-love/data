@@ -1,0 +1,51 @@
+# k8s/daemon-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dagster-daemon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dagster-daemon
+  template:
+    metadata:
+      labels:
+        app: dagster-daemon
+    spec:
+      serviceAccountName: dagster-ksa
+      containers:
+      # Your Dagster daemon container
+      - name: dagster-daemon
+        image: us-central1-docker.pkg.dev/data-pipelines-450611/dagster-repo/dagster-app:latest
+        command: ["dagster-daemon", "run"]
+        env:
+        - name: cloud_sql_user
+          valueFrom:
+            secretKeyRef:
+              name: cloudsql-db-credentials
+              key: username
+        - name: cloud_sql_password
+          valueFrom:
+            secretKeyRef:
+              name: cloudsql-db-credentials
+              key: password
+        - name: cloud_sql_postgres_db
+          valueFrom:
+            secretKeyRef:
+              name: cloudsql-db-credentials
+              key: database
+        # This now points to the sidecar proxy
+        - name: cloud_sql_postgres_host
+          value: "127.0.0.1"
+        - name: DAGSTER_ENV
+          value: "stg"
+
+      # Cloud SQL Auth Proxy sidecar container (same as in the webserver)
+      - name: cloudsql-proxy
+        image: gcr.io/cloudsql-docker/gce-proxy:1.33.9
+        command:
+          - "/cloud_sql_proxy"
+          - "-instances=data-pipelines-450611:us-central1:builder-love=tcp:5432"
+        securityContext:
+          runAsNonRoot: true
