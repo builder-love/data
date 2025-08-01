@@ -43,6 +43,8 @@ spec:
           value: "127.0.0.1"
         - name: DAGSTER_ENV
           value: "stg"
+        - name: DAGSTER_HOME
+          value: "/opt/dagster/dagster_home"
 
       # Cloud SQL Auth Proxy sidecar container
       - name: cloudsql-proxy
