@@ -38,13 +38,30 @@ spec:
             secretKeyRef:
               name: cloudsql-db-credentials
               key: database
-        # This now points to the sidecar proxy
+        # This points to the sidecar proxy
         - name: cloud_sql_postgres_host
           value: "127.0.0.1"
+        # set env and home for dagster
         - name: DAGSTER_ENV
           value: "stg"
         - name: DAGSTER_HOME
           value: "/opt/dagster/dagster_home"
+        # set the github api tokens
+        - name: GITHUB_API_TREBOR
+          valueFrom:
+            secretKeyRef:
+              name: github-api-secrets
+              key: github_finegrain_trebor
+        - name: GITHUB_API_JACKATJ
+          valueFrom:
+            secretKeyRef:
+              name: github-api-secrets
+              key: github_finegrain_jackatj
+        - name: BITBUCKET_API
+          valueFrom:
+            secretKeyRef:
+              name: bitbucket-api-secrets
+              key: bitbucket_api_key
 
       # Cloud SQL Auth Proxy sidecar container
       - name: cloudsql-proxy
