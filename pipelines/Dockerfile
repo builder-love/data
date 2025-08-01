@@ -31,8 +31,6 @@ RUN uv pip install --system --no-cache -r requirements.txt
 # Copy all application code
 COPY . .
 
-COPY .env .
-
 # Change to the dbt project directory
 WORKDIR /opt/dagster/app/dbt-pipelines
 
@@ -45,6 +43,9 @@ RUN set -a && . ../.env && set +a && \
 RUN set -a && . ../.env && set +a && \ 
     dbt compile --threads 16 --target stg --target-path "target/stg" && \
     dbt compile --threads 16 --target prod --target-path "target/prod"
+
+# After dbt compile is finished, remove the .env file so it's not copied to the final image.
+RUN rm ../.env
 
 # --- Final Stage ---
 FROM python:3.13-slim
