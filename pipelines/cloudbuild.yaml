@@ -148,7 +148,8 @@ steps:
   args:
   - 'run'
   - '--filename=pipelines/k8s/'
-  - '--image=us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app=us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA'
+  - '--image'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app=us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA'
   - '--location=us-central1-c'
   - '--cluster=dagster-cluster'
   waitFor: ['Push Image to GCR']
