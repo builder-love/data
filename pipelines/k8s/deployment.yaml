@@ -41,12 +41,14 @@ spec:
         # This now points to the sidecar proxy
         - name: cloud_sql_postgres_host
           value: "127.0.0.1"
+        - name: DAGSTER_ENV
+          value: "stg"
 
       # Cloud SQL Auth Proxy sidecar container
       - name: cloudsql-proxy
         image: gcr.io/cloudsql-docker/gce-proxy:1.33.9
         command:
           - "/cloud_sql_proxy"
-          - "-instances=data-pipelines-450611:us-central1:builder-love" # Get this from your Cloud SQL instance page
+          - "-instances=data-pipelines-450611:us-central1:builder-love=tcp:5432" # Get this from your Cloud SQL instance page
         securityContext:
           runAsNonRoot: true
