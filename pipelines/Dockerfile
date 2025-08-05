@@ -40,14 +40,11 @@ WORKDIR /opt/dagster/app/dbt-pipelines
 
 # Use the build arguments to compile dbt.
 # We set them as environment variables for this single RUN command.
-RUN --mount=type=secret,id=build_env,target=/opt/dagster/app/.env \
-    set -a && . ../.env && set +a && \
+RUN set -a && . ../.env && set +a && \
     dbt deps 
-RUN --mount=type=secret,id=build_env,target=/opt/dagster/app/.env \
-    set -a && . ../.env && set +a && \
+RUN set -a && . ../.env && set +a && \ 
     dbt debug 
-RUN --mount=type=secret,id=build_env,target=/opt/dagster/app/.env \
-    set -a && . ../.env && set +a && \
+RUN set -a && . ../.env && set +a && \
     if [ "$DAGSTER_ENV" = "prod" ]; then \
         echo "--- Compiling for PRODUCTION ---" && \
         dbt compile --threads 16 --target prod --target-path "target/prod"; \
@@ -55,6 +52,9 @@ RUN --mount=type=secret,id=build_env,target=/opt/dagster/app/.env \
         echo "--- Compiling for STAGING ---" && \
         dbt compile --threads 16 --target stg --target-path "target/stg"; \
     fi
+
+# After dbt compile is finished, remove the .env file so it's not copied to the final image.
+RUN rm ../.env
 
 # --- Final Stage ---
 FROM python:3.13-slim

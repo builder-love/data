@@ -17,8 +17,6 @@ Dockerfile
 # Dagster local development
 dagster_home/
 env.list
-.env
-pipelines/.env
 local_*.log
 
 # IDE / OS specific
