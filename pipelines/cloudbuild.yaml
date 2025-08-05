@@ -107,7 +107,7 @@ steps:
       # Read the IP address from the file created in the previous step
       PROXY_IP=$(cat /workspace/proxy_ip.txt)
       echo "--- Using Proxy IP: $$PROXY_IP ---"
-      cat <<EOT > pipelines/.env
+      cat <<EOT > /workspace/build.env
       cloud_sql_user=$$DB_USER
       cloud_sql_password=$$DB_PASSWORD
       cloud_sql_postgres_db=postgres
@@ -115,18 +115,20 @@ steps:
       EOT
   waitFor: ['Get Proxy IP']
 
-# 6. Build the main application image.
+# 6. Build the main application image using the mounted .env file.
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Build App Image'
-  secretEnv: ['DB_USER', 'DB_PASSWORD']
-  args: [
-    'build',
-    # Attach this build to our custom network
-    '--network=dbt-build-net',
-    '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA',
-    '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest',
-    './pipelines'
-  ]
+  entrypoint: 'bash'
+  args:
+  - -c
+  - |
+    export DOCKER_BUILDKIT=1
+    docker build \
+      --network=dbt-build-net \
+      --secret id=build_env,src=/workspace/build.env \
+      -t us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA \
+      -t us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest \
+      ./pipelines
   waitFor: ['Create .env File'] # Ensure proxy is started before building
 
 # 7. Stop and remove the proxy container (important for cleanup).
