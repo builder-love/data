@@ -85,7 +85,7 @@ from .api_data import refresh_api_schema
 # Keys must match the keys in common_asset_creators.
 asset_job_schedule_params_map = {
     "update_crypto_ecosystems_repo_and_run_export": {"base_job_name": "update_crypto_ecosystems_repo_and_run_export_refresh", "base_job_desc": "Updates the crypto-ecosystems repo...", "job_tags": {"create_local_data_file": "True"}, "cron_str": "0 19 * * 3", "base_schedule_name": "update_crypto_ecosystems_repo_and_run_export_schedule"},
-    "crypto_ecosystems_project_json": {"base_job_name": "crypto_ecosystems_project_json_refresh", "base_job_desc": "Reads the local exports.jsonl file...", "job_tags": {}, "cron_str": "0 20 * * 3", "base_schedule_name": "crypto_ecosystems_project_json_schedule"},
+    "crypto_ecosystems_project_json": {"base_job_name": "crypto_ecosystems_project_json_refresh", "base_job_desc": "Reads the local exports.jsonl file...", "cron_str": "0 20 * * 3", "base_schedule_name": "crypto_ecosystems_project_json_schedule"},
     "latest_active_distinct_github_project_repos": {"base_job_name": "latest_active_distinct_project_repos_refresh", "base_job_desc": "Queries the latest distinct list of repos...", "job_tags": {"github_api_key1": "True"}, "cron_str": "10 0 7,21 * *", "base_schedule_name": "latest_active_distinct_project_repos_schedule", "github_key_name": "github_finegrain_trebor"},
     "github_project_repos_stargaze_count": {"base_job_name": "project_repos_stargaze_count_refresh", "base_job_desc": "Gets the stargaze count...", "job_tags": {"github_api_key1": "True"}, "cron_str": "10 0 * * 0", "base_schedule_name": "project_repos_stargaze_count_schedule", "github_key_name": "github_finegrain_trebor"},
     "github_project_repos_fork_count": {"base_job_name": "project_repos_fork_count_refresh", "base_job_desc": "Gets the fork count...", "job_tags": {"github_api_key1": "True"}, "cron_str": "10 0 * * 6", "base_schedule_name": "project_repos_fork_count_schedule", "github_key_name": "github_finegrain_trebor"},
@@ -100,7 +100,7 @@ asset_job_schedule_params_map = {
     "project_repos_app_dev_framework_files": {"base_job_name": "project_repos_app_dev_framework_files_refresh", "base_job_desc": "Gets the repo app dev framework files...", "job_tags": {"github_api_key1": "True"}, "cron_str": "10 0 25 * *", "base_schedule_name": "project_repos_app_dev_framework_files_schedule", "github_key_name": "github_finegrain_trebor"},
     "project_repos_frontend_framework_files": {"base_job_name": "project_repos_frontend_framework_files_refresh", "base_job_desc": "Gets the repo frontend framework files...", "job_tags": {"github_api_key1": "True"}, "cron_str": "10 0 26 * *", "base_schedule_name": "project_repos_frontend_framework_files_schedule", "github_key_name": "github_finegrain_trebor"},
     "project_repos_documentation_files": {"base_job_name": "project_repos_documentation_files_refresh", "base_job_desc": "Gets the repo documentation files...", "job_tags": {"github_api_key1": "True"}, "cron_str": "10 0 27 * *", "base_schedule_name": "project_repos_documentation_files_schedule", "github_key_name": "github_finegrain_trebor"},
-    "process_compressed_contributors_data": {"base_job_name": "process_compressed_contributors_data_refresh", "base_job_desc": "Extracts, decompresses, and inserts data...", "job_tags": {"github_api_key1": "True"}, "cron_str": "0 3 * * *", "base_schedule_name": "process_compressed_contributors_data_schedule", "github_key_name": "github_finegrain_trebor"},
+    "process_compressed_contributors_data": {"base_job_name": "process_compressed_contributors_data_refresh", "base_job_desc": "Extracts, decompresses, and inserts data...", "cron_str": "0 3 * * *", "base_schedule_name": "process_compressed_contributors_data_schedule"},
     "latest_contributor_data": {"base_job_name": "latest_contributor_data_refresh", "base_job_desc": "Queries the latest list of contributors...", "job_tags": {"github_api_key1": "True"}, "cron_str": "0 10 8,22 * *", "base_schedule_name": "latest_contributor_data_schedule", "github_key_name": "github_finegrain_trebor"},
     "contributor_follower_count": {"base_job_name": "contributor_follower_count_refresh", "base_job_desc": "Queries follower count...", "job_tags": {"github_api_key1": "True"}, "cron_str": "10 0 9 * *", "base_schedule_name": "contributor_follower_count_schedule", "github_key_name": "github_finegrain_trebor"},
     "latest_contributor_following_count": {"base_job_name": "latest_contributor_following_count_refresh", "base_job_desc": "Queries following count...", "job_tags": {"github_api_key1": "True"}, "cron_str": "10 0 12 * *", "base_schedule_name": "latest_contributor_following_count_schedule", "github_key_name": "github_finegrain_trebor"},
@@ -149,29 +149,14 @@ prod_assets_by_base_name = {}
 
 for base_name, creator_fn in common_asset_creators.items():
     try:
-        # Get the parameters for the current asset from the map
-        params = asset_job_schedule_params_map.get(base_name)
-        if not params:
-            raise ValueError(f"Missing parameters for asset: {base_name}")
-
-        # Get the specific GitHub key name for this asset
-        key_name_for_asset = params.get("github_key_name")
-        if not key_name_for_asset:
-            raise ValueError(f"Missing 'github_key_name' config for asset: {base_name}")
-
-        # Create the configuration dictionary to apply to the asset
-        asset_config = {"key_name": key_name_for_asset}
-        stg_asset = creator_fn(env_prefix="stg").with_config(asset_config)
+        # The creator function no longer takes 'config'
+        stg_asset = creator_fn(env_prefix="stg")
         stg_prefixed_common_assets.append(stg_asset)
         stg_assets_by_base_name[base_name] = stg_asset
 
-        prod_asset = creator_fn(env_prefix="prod").with_config(asset_config)
+        prod_asset = creator_fn(env_prefix="prod")
         prod_prefixed_common_assets.append(prod_asset)
         prod_assets_by_base_name[base_name] = prod_asset
-    except TypeError as e:
-        # This might happen if a creator function is not found or is not callable
-        print(f"Error calling creator function for base_name '{base_name}': {e}. Ensure it's imported and correct in common_asset_creators.")
-        raise
     except Exception as e:
         print(f"Unexpected error creating asset for base_name '{base_name}': {e}")
         raise
@@ -185,24 +170,40 @@ for base_name, params in asset_job_schedule_params_map.items():
     if base_name in stg_assets_by_base_name:
         stg_asset_to_job = stg_assets_by_base_name[base_name]
 
+        # Build the config dictionary specifically for this job
+        job_config = {}
+        if "github_key_name" in params:
+            job_config = {
+                "ops": {
+                    # This gets the underlying op name for the asset, e.g., "stg__my_asset"
+                    stg_asset_to_job.op.name: {
+                        "config": {
+                            "key_name": params["github_key_name"]
+                        }
+                    }
+                }
+            }
+
         stg_job = create_env_specific_asset_job_from_prefixed(
             prefixed_asset_def=stg_asset_to_job,
             base_job_name=params["base_job_name"],
             base_description=params["base_job_desc"],
-            tags=params["job_tags"]
+            tags=params.get("job_tags", {}), # Use .get for safety
+            config=job_config  # Pass the constructed config to the job helper
         )
         stg_jobs_list.append(stg_job)
+        
         stg_schedule = create_env_specific_schedule(stg_job, params["cron_str"], params["base_schedule_name"])
         stg_schedules_list.append(stg_schedule)
     else:
-        print(f"Warning: Asset creator for base_name '{base_name}' not found in stg_assets_by_base_name during STG job/schedule creation. Ensure it's in common_asset_creators and asset_job_schedule_params_map.")
+        # A warning if an asset in the map doesn't have a creator function
+        print(f"Warning: Asset creator for base_name '{base_name}' not found in stg_assets_by_base_name during STG job/schedule creation.")
 
-# Add one-off jobs/schedules to STAGING (as per your decision for them to be in both envs)
-# (Copied from previous correct version, ensure imports are correct)
+# Add one-off jobs/schedules to STAGING
 if 'update_crypto_ecosystems_raw_file_job' in globals() and isinstance(update_crypto_ecosystems_raw_file_job, JobDefinition):
     stg_jobs_list.append(update_crypto_ecosystems_raw_file_job)
     if 'update_crypto_ecosystems_raw_file_schedule' in globals() and isinstance(update_crypto_ecosystems_raw_file_schedule, ScheduleDefinition): stg_schedules_list.append(update_crypto_ecosystems_raw_file_schedule)
-if 'refresh_prod_schema' in globals() and isinstance(refresh_prod_schema, JobDefinition): # Must act on STG schema here
+if 'refresh_prod_schema' in globals() and isinstance(refresh_prod_schema, JobDefinition):
     stg_jobs_list.append(refresh_prod_schema)
     if 'refresh_prod_schema_schedule' in globals() and isinstance(refresh_prod_schema_schedule, ScheduleDefinition): stg_schedules_list.append(refresh_prod_schema_schedule)
 if 'refresh_api_schema' in globals() and isinstance(refresh_api_schema, JobDefinition):
@@ -217,20 +218,34 @@ prod_schedules_list = [prod_normalized_dbt_assets_schedule, prod_latest_dbt_asse
 for base_name, params in asset_job_schedule_params_map.items():
     if base_name in prod_assets_by_base_name:
         prod_asset_to_job = prod_assets_by_base_name[base_name]
+
+        job_config = {}
+        if "github_key_name" in params:
+            job_config = {
+                "ops": {
+                    prod_asset_to_job.op.name: {
+                        "config": {
+                            "key_name": params["github_key_name"]
+                        }
+                    }
+                }
+            }
+
         prod_job = create_env_specific_asset_job_from_prefixed(
             prefixed_asset_def=prod_asset_to_job,
             base_job_name=params["base_job_name"],
             base_description=params["base_job_desc"],
-            tags=params["job_tags"]
+            tags=params.get("job_tags", {}),
+            config=job_config
         )
         prod_jobs_list.append(prod_job)
+        
         prod_schedule = create_env_specific_schedule(prod_job, params["cron_str"], params["base_schedule_name"])
         prod_schedules_list.append(prod_schedule)
     else:
-        print(f"Warning: Asset creator for base_name '{base_name}' not found in prod_assets_by_base_name during PROD job/schedule creation. Ensure it's in common_asset_creators and asset_job_schedule_params_map.")
+        print(f"Warning: Asset creator for base_name '{base_name}' not found in prod_assets_by_base_name during PROD job/schedule creation.")
 
-# Add one-off jobs/schedules to PRODUCTION (as per your decision for them to be in both envs)
-# (Copied from previous correct version, ensure imports are correct)
+# Add one-off jobs/schedules to PRODUCTION
 if 'update_crypto_ecosystems_raw_file_job' in globals() and isinstance(update_crypto_ecosystems_raw_file_job, JobDefinition):
     prod_jobs_list.append(update_crypto_ecosystems_raw_file_job)
     if 'update_crypto_ecosystems_raw_file_schedule' in globals() and isinstance(update_crypto_ecosystems_raw_file_schedule, ScheduleDefinition): prod_schedules_list.append(update_crypto_ecosystems_raw_file_schedule)

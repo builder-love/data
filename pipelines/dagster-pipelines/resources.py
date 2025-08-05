@@ -119,7 +119,7 @@ def gcs_storage_client_resource(context):
         raise
 
 class github_api_resource(ConfigurableResource):
-    """A resource for connecting to the github API."""
+    """A resource for selecting from multiple tokens to access the github API."""
 
     key_a: str = EnvVar("GITHUB_API_TREBOR")
     key_b: str = EnvVar("GITHUB_API_JACKATJ")
