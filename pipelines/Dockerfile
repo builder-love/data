@@ -38,16 +38,16 @@ COPY dagster.yaml /opt/dagster/dagster_home/
 # Change to the dbt project directory
 WORKDIR /opt/dagster/app/dbt-pipelines
 
-# Explicitly copy the .env file, bypassing a potential .dockerignore rule
-COPY .env ../.env
-
 # Use the build arguments to compile dbt.
 # We set them as environment variables for this single RUN command.
-RUN set -a && . ../.env && set +a && \
+RUN --mount=type=secret,id=build_env,target=/opt/dagster/app/.env \
+    set -a && . ../.env && set +a && \
     dbt deps 
-RUN set -a && . ../.env && set +a && \ 
+RUN --mount=type=secret,id=build_env,target=/opt/dagster/app/.env \
+    set -a && . ../.env && set +a && \
     dbt debug 
-RUN set -a && . ../.env && set +a && \
+RUN --mount=type=secret,id=build_env,target=/opt/dagster/app/.env \
+    set -a && . ../.env && set +a && \
     if [ "$DAGSTER_ENV" = "prod" ]; then \
         echo "--- Compiling for PRODUCTION ---" && \
         dbt compile --threads 16 --target prod --target-path "target/prod"; \
@@ -55,9 +55,6 @@ RUN set -a && . ../.env && set +a && \
         echo "--- Compiling for STAGING ---" && \
         dbt compile --threads 16 --target stg --target-path "target/stg"; \
     fi
-
-# After dbt compile is finished, remove the .env file so it's not copied to the final image.
-RUN rm ../.env
 
 # --- Final Stage ---
 FROM python:3.13-slim
