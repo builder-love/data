@@ -257,12 +257,15 @@ def create_latest_active_distinct_github_project_repos_asset(env_prefix: str):
         tags={"github_api": "True"},
         automation_condition=dg.AutomationCondition.eager(),
     )
-    def _latest_active_distinct_github_project_repos_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
+    def _latest_active_distinct_github_project_repos_env_specific(context, config: GithubAssetConfig) -> dg.MaterializeResult:
         # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config
         raw_schema = env_config["raw_schema"]
         clean_schema = env_config["clean_schema"]
+
+        # Access resources from the context object
+        github_api = context.resources.github_api
 
         # tell the user what environment they are running in
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
@@ -423,7 +426,7 @@ def create_latest_active_distinct_github_project_repos_asset(env_prefix: str):
         # Process GitHub Repos
         context.log.info("Processing GitHub repos...")
         github_urls = distinct_repo_df[distinct_repo_df['repo_source'] == 'github']['repo'].tolist()
-        # use the class object to set the right github api key from definitions.py
+        # Access config directly from the typed config object
         gh_pat = github_api.get_client(config.key_name)
         github_results_dict, count_http_errors = get_github_repo_status(github_urls, gh_pat, 'github')
 
@@ -493,12 +496,15 @@ def create_github_project_repos_stargaze_count_asset(env_prefix: str):
         group_name="ingestion", # Group name
         tags={"github_api": "True"},
     )
-    def _github_project_repos_stargaze_count_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
+    def _github_project_repos_stargaze_count_env_specific(context, config: GithubAssetConfig) -> dg.MaterializeResult:
         # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config  
         raw_schema = env_config["raw_schema"]  
         clean_schema = env_config["clean_schema"] 
+
+        # Access resources from the context object
+        github_api = context.resources.github_api
 
         # tell the user what environment they are running in
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
@@ -890,12 +896,15 @@ def create_github_project_repos_fork_count_asset(env_prefix: str):
         group_name="ingestion",
         tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
     )
-    def _github_project_repos_fork_count_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
+    def _github_project_repos_fork_count_env_specific(context, config: GithubAssetConfig) -> dg.MaterializeResult:
         # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config  
         raw_schema = env_config["raw_schema"]  
         clean_schema = env_config["clean_schema"] 
+
+        # Access resources from the context object
+        github_api = context.resources.github_api
 
         # tell the user what environment they are running in
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
@@ -1268,12 +1277,15 @@ def create_github_project_repos_languages_asset(env_prefix: str):
         group_name="ingestion",
         tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
     )
-    def _github_project_repos_languages_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
+    def _github_project_repos_languages_env_specific(context, config: GithubAssetConfig) -> dg.MaterializeResult:
         # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config  
         raw_schema = env_config["raw_schema"]  
         clean_schema = env_config["clean_schema"] 
+
+        # Access resources from the context object
+        github_api = context.resources.github_api
 
         # tell the user what environment they are running in
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
@@ -1766,12 +1778,15 @@ def create_github_project_repos_commits_asset(env_prefix: str):
         group_name="ingestion",
         tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
     )
-    def _github_project_repos_commits_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
+    def _github_project_repos_commits_env_specific(context, config: GithubAssetConfig) -> dg.MaterializeResult:
         # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config  
         raw_schema = env_config["raw_schema"]  
         clean_schema = env_config["clean_schema"]  
+
+        # Access resources from the context object
+        github_api = context.resources.github_api
 
         # tell the user what environment they are running in
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
@@ -2245,12 +2260,15 @@ def create_github_project_repos_watcher_count_asset(env_prefix: str):
         group_name="ingestion",
         tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
     )
-    def _github_project_repos_watcher_count_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
+    def _github_project_repos_watcher_count_env_specific(context, config: GithubAssetConfig) -> dg.MaterializeResult:
         # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config  
         raw_schema = env_config["raw_schema"]  
         clean_schema = env_config["clean_schema"]  
+
+        # Access resources from the context object
+        github_api = context.resources.github_api
 
         # tell the user what environment they are running in
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
@@ -2671,12 +2689,15 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
         group_name="ingestion",
         tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
     )
-    def _github_project_repos_is_fork_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
+    def _github_project_repos_is_fork_env_specific(context, config: GithubAssetConfig) -> dg.MaterializeResult:
         # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config  
         raw_schema = env_config["raw_schema"]  
         clean_schema = env_config["clean_schema"] 
+
+        # Access resources from the context object
+        github_api = context.resources.github_api
 
         # tell the user what environment they are running in
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
@@ -3113,12 +3134,15 @@ def create_project_repos_description_asset(env_prefix: str):
         group_name="ingestion", # Group name
         tags={"github_api": "True"},
     )
-    def _project_repos_description_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
+    def _project_repos_description_env_specific(context, config: GithubAssetConfig) -> dg.MaterializeResult:
         # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config  
         raw_schema = env_config["raw_schema"]  
         clean_schema = env_config["clean_schema"] 
+
+        # Access resources from the context object
+        github_api = context.resources.github_api
 
         # tell the user what environment they are running in
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
@@ -3509,11 +3533,14 @@ def create_project_repos_readmes_asset(env_prefix: str):
         cleaning them of images/links and truncating if they exceed a defined maximum length.
         """
     )
-    def _project_repos_readmes_env_specific(context: dg.OpExecutionContext, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
+    def _project_repos_readmes_env_specific(context, config: GithubAssetConfig) -> dg.MaterializeResult:
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config
         raw_schema = env_config["raw_schema"]
         clean_schema = env_config["clean_schema"]
+
+        # Access resources from the context object
+        github_api = context.resources.github_api
 
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
@@ -3936,11 +3963,14 @@ def create_project_repos_package_files_asset(env_prefix: str):
         across all active repositories and stores their content.
         """
     )
-    def _project_repos_package_files_env_specific(context: dg.OpExecutionContext, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
+    def _project_repos_package_files_env_specific(context, config: GithubAssetConfig) -> dg.MaterializeResult:
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config
         raw_schema = env_config["raw_schema"]
         clean_schema = env_config["clean_schema"]
+
+        # Access resources from the context object
+        github_api = context.resources.github_api
 
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
@@ -4174,11 +4204,14 @@ def create_project_repos_app_dev_framework_files_asset(env_prefix: str):
         across all active repositories and stores their content.
         """
     )
-    def _project_repos_app_dev_framework_files_env_specific(context: dg.OpExecutionContext, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
+    def _project_repos_app_dev_framework_files_env_specific(context, config: GithubAssetConfig) -> dg.MaterializeResult:
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config
         raw_schema = env_config["raw_schema"]
         clean_schema = env_config["clean_schema"]
+
+        # Access resources from the context object
+        github_api = context.resources.github_api
 
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
@@ -4398,11 +4431,14 @@ def create_project_repos_frontend_framework_files_asset(env_prefix: str):
         across all active repositories and stores their content.
         """
     )
-    def _project_repos_frontend_framework_files_env_specific(context: dg.OpExecutionContext, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
+    def _project_repos_frontend_framework_files_env_specific(context, config: GithubAssetConfig) -> dg.MaterializeResult:
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config
         raw_schema = env_config["raw_schema"]
         clean_schema = env_config["clean_schema"]
+
+        # Access resources from the context object
+        github_api = context.resources.github_api
 
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
@@ -4714,11 +4750,14 @@ def create_project_repos_documentation_files_asset(env_prefix: str):
         excluding README.md and LICENSE.md, and stores their content.
         """
     )
-    def _project_repos_documentation_files_env_specific(context: dg.OpExecutionContext, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
+    def _project_repos_documentation_files_env_specific(context, config: GithubAssetConfig) -> dg.MaterializeResult:
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config
         raw_schema = env_config["raw_schema"]
         clean_schema = env_config["clean_schema"]
+
+        # Access resources from the context object
+        github_api = context.resources.github_api
 
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
@@ -4807,10 +4846,13 @@ def create_github_project_repos_contributors_asset(env_prefix: str):
         group_name="ingestion",
         tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
     )
-    def _github_project_repos_contributors_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
+    def _github_project_repos_contributors_env_specific(context, config: GithubAssetConfig) -> dg.MaterializeResult:
         env_config = context.resources.active_env_config  
         raw_schema = env_config["raw_schema"]  
         clean_schema = env_config["clean_schema"] 
+
+        # Access resources from the context object
+        github_api = context.resources.github_api
 
         # tell the user what environment they are running in
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
@@ -5139,12 +5181,15 @@ def create_latest_contributor_data_asset(env_prefix: str):
         group_name="ingestion",
         automation_condition=dg.AutomationCondition.eager(),
     )
-    def _latest_contributor_data_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
+    def _latest_contributor_data_env_specific(context, config: GithubAssetConfig) -> dg.MaterializeResult:
         # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config  
         raw_schema = env_config["raw_schema"]  
         clean_schema = env_config["clean_schema"] 
+
+        # Access resources from the context object
+        github_api = context.resources.github_api
 
         # tell the user what environment they are running in
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
@@ -5771,14 +5816,17 @@ def create_contributor_follower_count_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="contributor_follower_count",
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},  
         group_name="ingestion",
         tags={"github_api": "True"}
     )
-    def _contributor_follower_count_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult: # Renamed asset
+    def _contributor_follower_count_env_specific(context, config: GithubAssetConfig) -> dg.MaterializeResult: # Renamed asset
         env_config = context.resources.active_env_config  
         raw_schema = env_config["raw_schema"]  
         clean_schema = env_config["clean_schema"] 
+
+        # Access resources from the context object
+        github_api = context.resources.github_api
 
         # tell the user what environment they are running in
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
@@ -6113,10 +6161,13 @@ def create_latest_contributor_following_count_asset(env_prefix: str):
         group_name="ingestion",
         tags={"github_api": "True"}
     )
-    def _latest_contributor_following_count_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
+    def _latest_contributor_following_count_env_specific(context, config: GithubAssetConfig) -> dg.MaterializeResult:
         env_config = context.resources.active_env_config  
         raw_schema = env_config["raw_schema"]  
         clean_schema = env_config["clean_schema"] 
+
+        # Access resources from the context object
+        github_api = context.resources.github_api
 
         # tell the user what environment they are running in
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
@@ -6453,10 +6504,13 @@ def create_latest_contributor_activity_asset(env_prefix: str):
         tags={"github_api": "True"},
         description="Retrieves GitHub user ID, login, and their latest activity (aiming for top 100) using the GitHub GraphQL API."
     )
-    def _latest_contributor_activity_env_specific(context, config: GithubAssetConfig, github_api: github_api_resource) -> dg.MaterializeResult:
+    def _latest_contributor_activity_env_specific(context, config: GithubAssetConfig) -> dg.MaterializeResult:
         env_config = context.resources.active_env_config  
         raw_schema = env_config["raw_schema"]  
         clean_schema = env_config["clean_schema"] 
+
+        # Access resources from the context object
+        github_api = context.resources.github_api
 
         # tell the user what environment they are running in
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")

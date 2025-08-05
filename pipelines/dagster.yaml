@@ -5,7 +5,10 @@ run_coordinator:
   config:
     max_concurrent_runs: 25
     tag_concurrency_limits:
-      - key: "github_api"
+      - key: "github_api_key1"
+        value: "True"
+        limit: 1
+      - key: "github_api_key2"
         value: "True"
         limit: 1
 

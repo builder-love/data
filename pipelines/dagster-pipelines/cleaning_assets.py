@@ -5,10 +5,14 @@ import pandas as pd
 from sqlalchemy import text
 import json
 from dagster_dbt import DagsterDbtTranslator, DbtCliResource, dbt_assets, DbtCliResource
-from dagster import AssetKey, op, Out, Output, In, Nothing, AssetMaterialization, MetadataValue, AssetExecutionContext
+from dagster import AssetKey, op, Out, Output, In, Nothing, AssetMaterialization, MetadataValue, AssetExecutionContext, Config
 from .resources import dbt_stg_resource, dbt_prod_resource
 import gzip
 from pathlib import Path
+
+# Define a simple, empty Config class for assets that don't need specific config keys.
+class EmptyConfig(Config):
+    pass
 
 # get the environment and set configs
 # Read the environment variable, defaulting to 'stg' for local development
@@ -514,6 +518,7 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
             context.log.error(f"An unexpected error occurred: {e}", exc_info=True)
             raise e # Re-raise any other exception to fail the Dagster asset run
 
+    # return empty config
     return _process_compressed_contributors_data_env_specific
 
 ########################################################################################################################

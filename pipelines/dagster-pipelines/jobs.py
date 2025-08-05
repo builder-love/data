@@ -22,7 +22,8 @@ def create_env_specific_asset_job_from_prefixed(
     prefixed_asset_def: AssetsDefinition, # This is an already prefixed asset (e.g., stg_my_asset)
     base_job_name: str,                   # e.g., "project_repos_stargaze_count_refresh"
     base_description: str,
-    tags: dict = None
+    tags: dict = None,
+    config: dict = None 
 ):
     """
     Creates an environment-specific job for a single common Python asset
@@ -35,7 +36,8 @@ def create_env_specific_asset_job_from_prefixed(
         name=f"{env_prefix}_{base_job_name}",
         selection=AssetSelection.assets(prefixed_asset_def), # Select the specific prefixed asset
         tags=tags if tags else {},
-        description=f"[{env_prefix.upper()}] {base_description}"
+        description=f"[{env_prefix.upper()}] {base_description}",
+        config=config
     )
 
 ## ------------------------------------- JOBS FOR CRYPTO ECOSYSTEMS ------------------------------------- ##
