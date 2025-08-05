@@ -39,7 +39,7 @@ COPY dagster.yaml /opt/dagster/dagster_home/
 WORKDIR /opt/dagster/app/dbt-pipelines
 
 # Explicitly copy the .env file, bypassing a potential .dockerignore rule
-# COPY .env ../.env
+COPY .env ../.env
 
 # Use the build arguments to compile dbt.
 # We set them as environment variables for this single RUN command.
