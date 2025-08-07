@@ -12,9 +12,9 @@ run_launcher:
 
     # Use env_secrets to load all keys from these secrets as env vars
     env_secrets:
-      - name: cloudsql-db-credentials
-      - name: github-api-secrets
-      - name: bitbucket-api-secrets
+      - cloudsql-db-credentials
+      - github-api-secrets
+      - bitbucket-api-secrets
 
     # Use env_vars for simple key-value strings ONLY
     env_vars:
