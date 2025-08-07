@@ -8,10 +8,7 @@ run_launcher:
     # Point to the ConfigMap
     instance_config_map: dagster-instance
     # Point to the secret holding the DB password
-    # get the file
     postgres_password_secret: cloudsql-db-credentials
-    # use the key
-    postgres_password_secret_key: password
     # This is true by default 
     load_incluster_config: true
     # Job image should match the one used by the daemon/webserver
