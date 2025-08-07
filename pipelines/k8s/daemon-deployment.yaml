@@ -24,17 +24,17 @@ spec:
           valueFrom:
             secretKeyRef:
               name: cloudsql-db-credentials
-              key: username
+              key: cloud_sql_user
         - name: cloud_sql_password
           valueFrom:
             secretKeyRef:
               name: cloudsql-db-credentials
-              key: password
+              key: cloud_sql_password
         - name: cloud_sql_postgres_db
           valueFrom:
             secretKeyRef:
               name: cloudsql-db-credentials
-              key: database
+              key: cloud_sql_postgres_db
         # This points to the sidecar proxy
         - name: cloud_sql_postgres_host
           value: "127.0.0.1"
