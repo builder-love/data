@@ -1,0 +1,60 @@
+# k8s/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dagster-instance
+data:
+  # Paste the entire content of your updated dagster.yaml here
+  dagster.yaml: |
+    run_launcher:
+        module: dagster_k8s
+        class: K8sRunLauncher
+        config:
+            # Use the gke service account
+            service_account_name: dagster-ksa
+            # Point to the ConfigMap
+            instance_config_map: dagster-instance
+            # Point to the secret holding the DB password
+            # get the file
+            postgres_password_secret: cloudsql-db-credentials
+            # use the key
+            postgres_password_secret_key: password
+            # This is true by default 
+            load_incluster_config: true
+            # Job image should match the one used by the daemon/webserver
+            job_image: us-central1-docker.pkg.dev/data-pipelines-450611/dagster-repo/dagster-app:latest
+
+        # This file configures the Dagster instance 
+    run_coordinator:
+        module: dagster.core.run_coordinator
+        class: QueuedRunCoordinator
+        config:
+            max_concurrent_runs: 25
+            tag_concurrency_limits:
+            - key: "github_api_key1"
+                value: "True"
+                limit: 1
+            - key: "github_api_key2"
+                value: "True"
+                limit: 1
+
+    telemetry:
+        enabled: false
+
+    retention:
+        schedule:
+            purge_after_days: 180
+        sensor:
+            purge_after_days:
+            skipped: 14
+            failure: 45
+            success: -1
+
+    storage:
+        postgres:
+            postgres_db:
+            hostname: { "env": "cloud_sql_postgres_host" }
+            username: { "env": "cloud_sql_user" }
+            password: { "env": "cloud_sql_password" }
+            db_name: { "env": "cloud_sql_postgres_db" } 
+            port: 5432
