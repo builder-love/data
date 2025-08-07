@@ -92,4 +92,4 @@ google-cloud-storage==3.2.0
 toml==0.10.2
 scikit-learn==1.7.1
 xgboost==3.0.2
-dagster-k8s==0.27.2
+dagster-k8s==0.27.3
