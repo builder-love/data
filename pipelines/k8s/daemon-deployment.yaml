@@ -48,12 +48,12 @@ spec:
           valueFrom:
             secretKeyRef:
               name: github-api-secrets
-              key: github_finegrain_trebor
+              key: GITHUB_API_TREBOR
         - name: GITHUB_API_JACKATJ
           valueFrom:
             secretKeyRef:
               name: github-api-secrets
-              key: github_finegrain_jackatj
+              key: GITHUB_API_JACKATJ
         - name: BITBUCKET_API
           valueFrom:
             secretKeyRef:
