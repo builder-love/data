@@ -25,7 +25,7 @@ run_launcher:
       pod_spec_config:
         containers:
           - name: cloudsql-proxy
-            image: gcr.io/cloudsql-docker/gce-proxy:1.33.9
+            image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:v2.18.0
             command:
               - "/cloud_sql_proxy"
               - "--quit-on-zero-connections"
