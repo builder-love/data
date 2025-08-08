@@ -28,6 +28,7 @@ run_launcher:
             image: gcr.io/cloudsql-docker/gce-proxy:1.33.9
             command:
               - "/cloud_sql_proxy"
+              - "--quit-on-zero-connections"
               - "-instances=data-pipelines-450611:us-central1:builder-love=tcp:5432"
             securityContext:
               runAsNonRoot: true
