@@ -36,7 +36,7 @@ data:
                         command:
                             - "cloud_sql_proxy"
                             - "--port=5432"
-                            - "instances=data-pipelines-450611:us-central1:builder-love"
+                            - "data-pipelines-450611:us-central1:builder-love"
                         securityContext:
                            runAsNonRoot: true
                         resources:
