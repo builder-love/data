@@ -22,7 +22,8 @@ run_launcher:
 
     # Nest the sidecar definition inside run_k8s_config
     run_k8s_config:
-      ttl_seconds_after_finished: 30
+      job_spec_config:
+        ttl_seconds_after_finished: 30
       pod_spec_config:
         init_containers:
           - name: cloudsql-proxy
