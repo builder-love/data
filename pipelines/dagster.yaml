@@ -23,15 +23,20 @@ run_launcher:
     # Nest the sidecar definition inside run_k8s_config
     run_k8s_config:
       pod_spec_config:
-        containers:
+        init_containers:
           - name: cloudsql-proxy
             image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.18.0
+            restart_policy: Always
             command:
-              - "/cloud_sql_proxy"
-              - "--quit-on-zero-connections"
-              - "-instances=data-pipelines-450611:us-central1:builder-love=tcp:5432"
+              - "cloud_sql_proxy"
+              - "--port=5432"
+              - "instances=data-pipelines-450611:us-central1:builder-love"
             securityContext:
               runAsNonRoot: true
+            resources:
+              requests:
+                memory: "1Gi"
+                cpu: "500m"
 
 # This file configures the Dagster instance 
 run_coordinator:
