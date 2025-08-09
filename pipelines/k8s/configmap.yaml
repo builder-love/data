@@ -14,7 +14,7 @@ data:
             instance_config_map: dagster-instance
             postgres_password_secret: cloudsql-db-credentials
             load_incluster_config: true
-            job_image: us-central1-docker.pkg.dev/data-pipelines-450611/dagster-repo/dagster-app:latest
+            job_image: IMAGE_PLACEHOLDER
 
             # Use env_secrets to load all keys from these secrets as env vars
             env_secrets:

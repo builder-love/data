@@ -142,14 +142,20 @@ steps:
   args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app', '--all-tags']
   waitFor: ['Stop Proxy Container'] # Wait for build and cleanup
 
-- name: 'gcr.io/cloud-builders/gke-deploy'
+# 9. Update the configmap.yaml with the new image.
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
   id: 'Update ConfigMap'
+  entrypoint: 'bash'
   args:
-    - 'apply'
-    - '--filename=pipelines/k8s/configmap.yaml'
-    - '--image=us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app=us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA'
-    - '--location=us-central1-c'
-    - '--cluster=dagster-cluster'
+    - '-c'
+    - |
+      echo "--- Substituting IMAGE_PLACEHOLDER in configmap.yaml with new image ---"
+      sed -i "s|IMAGE_PLACEHOLDER|us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA|g" pipelines/k8s/configmap.yaml
+      
+      echo "--- Applying the updated configmap.yaml to the cluster ---"
+      gcloud container clusters get-credentials dagster-cluster --zone us-central1-c
+      
+      kubectl apply -f pipelines/k8s/configmap.yaml
   waitFor: ['Push Image to GCR']
 
 # Deploy the new image to your GKE cluster.
