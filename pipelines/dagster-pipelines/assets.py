@@ -4918,7 +4918,7 @@ def create_github_project_repos_contributors_asset(env_prefix: str):
 
         etag_table_name = "github_project_repos_contributors_etags"
         
-        context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
+        context.log.info(f"------************** Updated: this process is running in {env_config['env']} environment. *****************---------")
         context.log.info(f"Checking if etag table exists...")
         _create_etag_table_if_not_exists(context, raw_schema, etag_table_name)
 
