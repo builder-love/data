@@ -4907,16 +4907,16 @@ def create_github_project_repos_contributors_asset(env_prefix: str):
         clean_schema = env_config["clean_schema"] 
         github_api = context.resources.github_api
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
-        logger = context.log
         gh_pat = github_api.get_client(config.key_name)
 
         etag_table_name = "github_project_repos_contributors_etags"
         
-        logger.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
+        context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
+        context.log.info(f"Checking if etag table exists...")
         _create_etag_table_if_not_exists(context, raw_schema, etag_table_name)
 
         run_timestamp = pd.Timestamp.now()
-        logger.info(f"Run timestamp set to: {run_timestamp}")
+        context.log.info(f"Run timestamp set to: {run_timestamp}")
 
         def get_next_page(response):
             link_header = response.headers.get('Link')
@@ -4945,13 +4945,13 @@ def create_github_project_repos_contributors_asset(env_prefix: str):
                         time.sleep(.5)
                         response = requests.get(current_url, headers=headers, params=params if current_url == api_url else None)
                         if current_url == api_url and response.status_code == 304:
-                            logger.info(f"[{repo_full_name}] Cache hit. Data not modified (304).")
+                            context.log.info(f"[{repo_full_name}] Cache hit. Data not modified (304).")
                             return "not_modified", None, etag
                         if current_url == api_url:
                             first_page_response_headers = response.headers
                         response.raise_for_status()
                         if response.status_code == 204:
-                            logger.info(f"[{repo_full_name}] No contributors found (204).")
+                            context.log.info(f"[{repo_full_name}] No contributors found (204).")
                             current_url = None
                             continue
                         contributors = response.json()
@@ -4962,36 +4962,35 @@ def create_github_project_repos_contributors_asset(env_prefix: str):
                         status_code = getattr(e.response, 'status_code', None)
 
                         if status_code == 404:
-                            logger.warning(f"[{repo_full_name}] Repository not found (404). Will not retry.")
+                            context.log.warning(f"[{repo_full_name}] Repository not found (404). Will not retry.")
                             return "failed", None, None # Immediately exit for this repo
 
-                        logger.warning(f"[{repo_full_name}] Request failed on attempt {attempt + 1}/{max_retries}. Status: {status_code}. Error: {e}")
+                        context.log.warning(f"[{repo_full_name}] Request failed on attempt {attempt + 1}/{max_retries}. Status: {status_code}. Error: {e}")
                         if attempt < max_retries - 1:
                             delay = (2 ** attempt) + random.uniform(0, 1)
                             time.sleep(delay)
                             break
                         else:
-                            logger.error(f"[{repo_full_name}] Max retries reached. Failing this repo.")
+                            context.log.error(f"[{repo_full_name}] Max retries reached. Failing this repo.")
                             return "failed", None, None
                 else:
                     new_etag = first_page_response_headers.get("ETag")
-                    logger.info(f"[{repo_full_name}] Successfully fetched {len(contributors_list)} contributors.")
+                    context.log.info(f"[{repo_full_name}] Successfully fetched {len(contributors_list)} contributors.")
                     return "updated", contributors_list, new_etag
             return "failed", None, None
 
         def write_batch_to_db(batch_data: list, timestamp: pd.Timestamp):
-            # This helper function is unchanged
             if not batch_data: return 0
-            logger.info(f"Preparing to write batch of {len(batch_data)} records.")
+            context.log.info(f"Preparing to write batch of {len(batch_data)} records.")
             df_batch = pd.DataFrame(batch_data)
             df_batch['data_timestamp'] = timestamp
             try:
                 with cloud_sql_engine.begin() as connection:
                     df_batch.to_sql('project_repos_contributors', connection, if_exists='append', index=False, schema=raw_schema, method='multi')
-                logger.info(f"Successfully wrote batch of {len(df_batch)} rows.")
+                context.log.info(f"Successfully wrote batch of {len(df_batch)} rows.")
                 return len(df_batch)
             except SQLAlchemyError as e:
-                logger.error(f"Database error writing batch: {e}", exc_info=True)
+                context.log.error(f"Database error writing batch: {e}", exc_info=True)
                 raise
 
         # --- Main Asset Logic ---
@@ -5005,7 +5004,7 @@ def create_github_project_repos_contributors_asset(env_prefix: str):
 
         for i, repo_url in enumerate(github_repos):
             repos_processed += 1
-            logger.info(f"\n--- Processing {i + 1}/{len(github_repos)}: {repo_url} ---")
+            context.log.info(f"\n--- Processing {i + 1}/{len(github_repos)}: {repo_url} ---")
             try:
                 owner, repo_name = urlparse(repo_url).path.strip("/").split("/")
                 existing_etag = etags_from_db.get(repo_url)
@@ -5027,7 +5026,7 @@ def create_github_project_repos_contributors_asset(env_prefix: str):
                     current_batch.clear()
             except Exception as e:
                 repos_failed += 1
-                logger.error(f"An unexpected error occurred while processing {repo_url}: {e}", exc_info=True)
+                context.log.error(f"An unexpected error occurred while processing {repo_url}: {e}", exc_info=True)
         
         if current_batch:
             total_rows_inserted += write_batch_to_db(current_batch, run_timestamp)
@@ -5040,7 +5039,7 @@ def create_github_project_repos_contributors_asset(env_prefix: str):
                 count_query = text(f"SELECT COUNT(*) FROM {raw_schema}.project_repos_contributors")
                 final_row_count = conn.execute(count_query).scalar_one_or_none() or 0
         except SQLAlchemyError as e:
-            logger.error(f"Database error fetching final metadata: {e}", exc_info=True)
+            context.log.error(f"Database error fetching final metadata: {e}", exc_info=True)
 
         return dg.MaterializeResult(
             metadata={
