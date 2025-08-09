@@ -5,7 +5,8 @@ from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 import pandas as pd
 import toml
-from sqlalchemy import text
+from sqlalchemy import text, create_engine, inspect
+from sqlalchemy.exc import SQLAlchemyError
 import sqlalchemy
 import re
 import time
@@ -4829,6 +4830,67 @@ def create_project_repos_documentation_files_asset(env_prefix: str):
         )
     return _project_repos_documentation_files_env_specific
 
+################################################### get repo contributors using github rest api ###################################################
+# Define a constant for batch size
+BATCH_SIZE = 50
+
+# --- Helper Functions for ETag Management ---
+def _create_etag_table_if_not_exists(context: dg.OpExecutionContext, schema: str, table_name: str):
+    """Checks for and creates the ETag tracking table if it doesn't exist."""
+    cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+    inspector = inspect(cloud_sql_engine)
+    if not inspector.has_table(table_name, schema=schema):
+        context.log.info(f"Table '{schema}.{table_name}' not found. Creating it...")
+        with cloud_sql_engine.connect() as conn:
+            conn.execute(text(f"""
+                CREATE TABLE {schema}.{table_name} (
+                    repo_url VARCHAR PRIMARY KEY,
+                    etag VARCHAR,
+                    data_timestamp TIMESTAMP WITHOUT TIME ZONE
+                );
+            """))
+            conn.commit()
+        context.log.info(f"Table '{schema}.{table_name}' created successfully.")
+
+def _get_etags_from_db(context: dg.OpExecutionContext, schema: str, table_name: str, repo_urls: list) -> dict:
+    """Fetches existing ETags for a list of repo URLs from the database."""
+    if not repo_urls:
+        return {}
+    
+    cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+    query = text(f"SELECT repo_url, etag FROM {schema}.{table_name} WHERE repo_url = ANY(:repo_urls)")
+    
+    with cloud_sql_engine.connect() as conn:
+        result = conn.execute(query, {"repo_urls": repo_urls})
+        return {row[0]: row[1] for row in result}
+
+def _update_etags_in_db(context: dg.OpExecutionContext, schema:str, table_name: str, etags_to_update: dict):
+    """Upserts ETags into the database using a temporary table method."""
+    if not etags_to_update:
+        return
+        
+    cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+    update_data = [
+        {"repo_url": repo, "etag": etag, "data_timestamp": pd.Timestamp.now()}
+        for repo, etag in etags_to_update.items()
+    ]
+    temp_table_name = f"temp_{table_name}_upsert"
+    df = pd.DataFrame(update_data)
+
+    with cloud_sql_engine.begin() as conn:
+        df.to_sql(temp_table_name, conn, if_exists='replace', index=False)
+        upsert_query = text(f"""
+            INSERT INTO {schema}.{table_name} (repo_url, etag, data_timestamp)
+            SELECT repo_url, etag, data_timestamp FROM {temp_table_name}
+            ON CONFLICT (repo_url) DO UPDATE SET
+                etag = EXCLUDED.etag,
+                data_timestamp = EXCLUDED.data_timestamp;
+        """)
+        conn.execute(upsert_query)
+        conn.execute(text(f"DROP TABLE {temp_table_name};"))
+    context.log.info(f"Successfully upserted {len(etags_to_update)} ETags into '{schema}.{table_name}'.")
+
+
 # define the asset that gets the contributors for a repo
 # to accomodate multiple environments, we will use a factory function
 def create_github_project_repos_contributors_asset(env_prefix: str):
@@ -4837,327 +4899,160 @@ def create_github_project_repos_contributors_asset(env_prefix: str):
         name="github_project_repos_contributors",
         required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
         group_name="ingestion",
-        tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
+        tags={"github_api": "True"},
     )
     def _github_project_repos_contributors_env_specific(context, config: GithubAssetConfig) -> dg.MaterializeResult:
         env_config = context.resources.active_env_config  
         raw_schema = env_config["raw_schema"]  
         clean_schema = env_config["clean_schema"] 
-
-        # Access resources from the context object
         github_api = context.resources.github_api
-
-        # tell the user what environment they are running in
-        context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
-
-        logger = context.log # Use Dagster logger
-
-        # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
-
-        # get the github personal access token
+        logger = context.log
         gh_pat = github_api.get_client(config.key_name)
 
-        # capture the timestamp at start for writing to batch to the database
-        batch_timestamp = pd.Timestamp.now()
+        etag_table_name = "github_project_repos_contributors_etags"
+        
+        logger.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
+        _create_etag_table_if_not_exists(context, raw_schema, etag_table_name)
 
-        # Define a fallback filename (consider making it unique per run)
-        fallback_filename = f"/tmp/contributors_fallback_{batch_timestamp.strftime('%Y%m%d_%H%M%S')}.parquet"
+        run_timestamp = pd.Timestamp.now()
+        logger.info(f"Run timestamp set to: {run_timestamp}")
 
         def get_next_page(response):
-            next_page = response.headers.get('Link')
-            if next_page:
-                links = next_page.split(',')
+            link_header = response.headers.get('Link')
+            if link_header:
+                links = link_header.split(',')
                 for link in links:
                     if 'rel="next"' in link:
-                        next_page_url = urlparse(link.split(';')[0].strip('<>')).geturl()
-                        next_page_url = next_page_url.replace('<', '').replace('>', '')
-                        # print(f"Next page found: {next_page_url}")
-                        return next_page_url
-                # print("No next page found")
-            else:
-                # print("Link header not found in response. No next page found.")
-                return None
+                        return link.split(';')[0].strip().strip('<>')
+            return None
 
-        def get_contributors_list(owner, repo_name, gh_pat):
-            """
-            Fetches contributors for a repository, handles pagination, and respects rate limits.
-
-            Args:
-            owner: Repository owner.
-            repo_name: Repository name.
-            headers: Request headers.
-
-            Returns:
-                The list of contributors.
-            """
+        def get_contributors_for_repo(owner: str, repo_name: str, etag: str | None) -> tuple:
             api_url = f"https://api.github.com/repos/{owner}/{repo_name}/contributors"
             contributors_list = []
-            page_num = 1
-            per_page = 100
-            max_retries = 5
-            count_403_errors = 0
-            count_502_errors = 0
+            max_retries = 7
+            repo_full_name = f"{owner}/{repo_name}"
+            headers = {"Authorization": f"Bearer {gh_pat}", "Accept": "application/vnd.github.v3+json"}
+            if etag:
+                headers["If-None-Match"] = etag
+            params = {"per_page": 100, "anon": "true"}
 
             for attempt in range(max_retries):
-                pagination_successful_this_attempt = True
-                return_204_no_contributors = False
-
-                while api_url is not None:
-                    # print(f"Fetching page {page_num} of contributors from {api_url}")
-
+                current_url = api_url
+                first_page_response_headers = None
+                while current_url:
                     try:
-                        # Prepare the request headers with your GitHub PAT
-                        # Prepare headers (only auth and accept)
-                        headers = {
-                            "Authorization": f"Bearer {gh_pat}",
-                            "Accept": "application/vnd.github.v3+json"
-                        }
-
-                        # Prepare parameters for pagination
-                        params = {
-                            "per_page": per_page,
-                            "anon": "true"
-                        }
-
-                        # standard time delay
-                        time.sleep(1)
-
-                        # Make the request
-                        response = requests.get(api_url, headers=headers, params=params)
-                        
-                        # get next page url
-                        if response is not None:
-                            if response.status_code == 204:
-                                print(f"204 No Content. No contributors found for {owner}/{repo_name}")
-                                api_url = None
-                                return_204_no_contributors = True
-                                break
-                        
-                            # get next page url
-                            next_page_url = get_next_page(response)
-
-                        # Now proceed with processing the response
+                        time.sleep(.5)
+                        response = requests.get(current_url, headers=headers, params=params if current_url == api_url else None)
+                        if current_url == api_url and response.status_code == 304:
+                            logger.info(f"[{repo_full_name}] Cache hit. Data not modified (304).")
+                            return "not_modified", None, etag
+                        if current_url == api_url:
+                            first_page_response_headers = response.headers
                         response.raise_for_status()
-
+                        if response.status_code == 204:
+                            logger.info(f"[{repo_full_name}] No contributors found (204).")
+                            current_url = None
+                            continue
                         contributors = response.json()
-
-                        # Only extend if contributors is not None and is a list
                         if isinstance(contributors, list):
                             contributors_list.extend(contributors)
-                            # print(f"Fetched {len(contributors_list)} contributors so far")
-                        else:
-                            logger.warning(f"[{repo_full_name_for_log}] Expected list, got {type(contributors)}. Response: {str(contributors)[:200]}...") # Log truncated response
-                            # Decide how to handle this - stop? continue? For now, stop pagination.
-                            api_url = None
-                            pagination_successful_this_attempt = False # Mark as potentially incomplete
-                            print(f"Expected list, got {type(contributors)}. Response: {str(contributors)[:200]}...")
-                            continue
-                        page_num += 1
-                        api_url = next_page_url
-
+                        current_url = get_next_page(response)
                     except requests.exceptions.RequestException as e:
-                        # Log the error
-                        logger.warning(f"[{repo_full_name_for_log}] RequestException on attempt {attempt + 1}/{max_retries} for URL {current_api_url}: {e}")
-                        pagination_successful_this_attempt = False
+                        status_code = getattr(e.response, 'status_code', None)
 
-                        # Safely get status_code and headers for logging and decisions
-                        status_code = getattr(getattr(e, 'response', None), 'status_code', None)
-                        headers = getattr(getattr(e, 'response', None), 'headers', {})
-                        # print(f"Status Code (if available): {status_code}")
-                        # (You can add back the rate limit info logging here if desired)
+                        if status_code == 404:
+                            logger.warning(f"[{repo_full_name}] Repository not found (404). Will not retry.")
+                            return "failed", None, None # Immediately exit for this repo
 
-                        # ===== CHECK FOR MAX RETRIES =====
-                        if attempt == max_retries - 1:
-                            logger.error(f"[{repo_full_name_for_log}] Max retries ({max_retries}) reached. Giving up on this repository. Last URL attempted: {current_api_url}")
-                            api_url = None # Set api_url to None to stop pagination loop AFTER this failed attempt
-                            # Break from the inner while loop. Since this was the last attempt,
-                            # the outer for loop will also terminate naturally.
+                        logger.warning(f"[{repo_full_name}] Request failed on attempt {attempt + 1}/{max_retries}. Status: {status_code}. Error: {e}")
+                        if attempt < max_retries - 1:
+                            delay = (2 ** attempt) + random.uniform(0, 1)
+                            time.sleep(delay)
                             break
-                        # ==================================
-
-                        # --- DETERMINE DELAY (if not max retries) ---
-                        delay = 1 # Default delay
-                        if status_code in (403, 429):
-                            count_403_errors += 1
-                            retry_after = headers.get('Retry-After')
-                            delay = int(retry_after) if retry_after else (1 * (2 ** attempt) + random.uniform(0, 1))
-                            print(f"Rate limited (Status {status_code}). Waiting for {delay:.2f} seconds before next attempt...")
-                        elif status_code in (502, 504):
-                            count_502_errors += 1
-                            delay = 1 * (2 ** attempt) + random.uniform(0, 1)
-                            print(f"Server error (Status {status_code}). Waiting for {delay:.2f} seconds before next attempt...")
-                        else: # Other RequestException or non-specific HTTPError
-                            delay = 1 * (2 ** attempt) + random.uniform(0, 1)
-                            print(f"Request error. Waiting for {delay:.2f} seconds before next attempt...")
-
-                        time.sleep(delay)
-
-                        # --- How to Retry ---
-                        # retry loop outside pagination loop
-                        # breaking the inner loop means the next attempt will restart pagination from page 1.
-                        print("Breaking inner pagination loop to proceed to the next retry attempt.")
-                        # We break the 'while' loop here. The 'for attempt' loop will then go to the next iteration.
-                        # This means the next attempt restarts pagination for this repo.
-                        break
-
-                    # Make sure they also set api_url = None and break if they should cause the function to give up on the repo.
-                    except KeyError as e:
-                        logger.error(f"[{repo_full_name_for_log}] KeyError processing response from {current_api_url}: {e}")
-                        pagination_successful_this_attempt = False
-                        api_url = None # Give up
-                        break
-                    except Exception as e:
-                        logger.error(f"[{repo_full_name_for_log}] Unexpected error processing response from {current_api_url}: {e}", exc_info=True)
-                        pagination_successful_this_attempt = False
-                        api_url = None # Give up
-                        break
-
-                # Check if pagination completed successfully this attempt
-                if pagination_successful_this_attempt and api_url is None:
-                    # The 'while' loop finished because api_url became None naturally (not via error break)
-                    print(f"Pagination completed successfully for {owner}/{repo_name} on attempt {attempt + 1}.")
-                    break # <<<--- EXIT THE OUTER 'for attempt:' LOOP ---<<<
-                elif attempt == max_retries - 1:
-                    # This attempt failed (pagination_successful flag is False), and it was the last attempt.
-                    print(f"Failed to fetch all pages for {owner}/{repo_name} after {max_retries} attempts.")
-                    # No break needed, outer 'for' loop terminates naturally.
-                elif api_url is None and return_204_no_contributors:
-                    print(f"No contributors found for {owner}/{repo_name} after {attempt + 1} attempts.")
-                    break
+                        else:
+                            logger.error(f"[{repo_full_name}] Max retries reached. Failing this repo.")
+                            return "failed", None, None
                 else:
-                    # This attempt failed, but more retries remain.
-                    print(f"Attempt {attempt + 1} failed, proceeding to next attempt.")
-                    # Let the outer 'for' loop continue.
+                    new_etag = first_page_response_headers.get("ETag")
+                    logger.info(f"[{repo_full_name}] Successfully fetched {len(contributors_list)} contributors.")
+                    return "updated", contributors_list, new_etag
+            return "failed", None, None
 
-            # End of 'for attempt...' loop
-            return contributors_list, count_403_errors, count_502_errors
+        def write_batch_to_db(batch_data: list, timestamp: pd.Timestamp):
+            # This helper function is unchanged
+            if not batch_data: return 0
+            logger.info(f"Preparing to write batch of {len(batch_data)} records.")
+            df_batch = pd.DataFrame(batch_data)
+            df_batch['data_timestamp'] = timestamp
+            try:
+                with cloud_sql_engine.begin() as connection:
+                    df_batch.to_sql('project_repos_contributors', connection, if_exists='append', index=False, schema=raw_schema, method='multi')
+                logger.info(f"Successfully wrote batch of {len(df_batch)} rows.")
+                return len(df_batch)
+            except SQLAlchemyError as e:
+                logger.error(f"Database error writing batch: {e}", exc_info=True)
+                raise
 
-        # Fetch all repo names from the database
+        # --- Main Asset Logic ---
         with cloud_sql_engine.connect() as conn:
-
-            query = text(f'''
-                                select repo, repo_source 
-                                from {clean_schema}.latest_active_distinct_project_repos 
-                                where is_active = true
-                            ''')
-            result = conn.execute(query)
-            df = pd.DataFrame(result.fetchall(), columns=result.keys())
-            github_repos = df[df['repo_source'] == 'github']['repo'].tolist()
-
-        # extract the repo names from repo_names list
-        # only get the repo name from the url: everything after https://github.com/
-        repo_names_no_url = [url.split("https://github.com/")[1] for url in github_repos]
-
-        print(f"number of github repos: {len(github_repos)}")
-
-        project_contributors = []
-        count_403_errors = 0
-        count_502_errors = 0
-        count_403_errors_sum = 0
-        count_502_errors_sum = 0
-        for i in range(len(github_repos)):  # Loop through all repos
-            try:
-                print(f"\n Processing {i} of {len(github_repos)}")
-                print(f"Repo URL: {github_repos[i]}")
-
-                owner = repo_names_no_url[i].split("/")[0]
-                repo_name = repo_names_no_url[i].split("/")[1]
-
-                # get the list of contributors
-                contributors_list, count_403_errors, count_502_errors = get_contributors_list(owner, repo_name, gh_pat)
-
-                # track http errors
-                count_403_errors_sum += count_403_errors
-                count_502_errors_sum += count_502_errors
-
-                # Compresses contributor data
-                contributors_json = json.dumps(contributors_list).encode('utf-8')
-                compressed_contributors_data = gzip.compress(contributors_json)
-
-                # add contributor list to the contributors_list array and associate with repo_url
-                project_contributors.append({"repo": github_repos[i], "contributor_list": compressed_contributors_data})
-
-            except Exception as e:
-                print(f"Error processing {github_repos[i]}: {e}")
-
-        # Create DataFrame from the list
-        project_contributors_df = pd.DataFrame(project_contributors)
+            query = text(f"SELECT repo FROM {clean_schema}.latest_active_distinct_project_repos WHERE is_active = true AND repo_source = 'github'")
+            github_repos = [row[0] for row in conn.execute(query)]
         
-        # add unix datetime column
-        project_contributors_df['data_timestamp'] = batch_timestamp
+        etags_from_db = _get_etags_from_db(context, raw_schema, etag_table_name, github_repos)
+        current_batch, etags_to_update = [], {}
+        total_rows_inserted, repos_processed, repos_updated, repos_skipped_304, repos_failed = 0, 0, 0, 0, 0
 
-        try:
-            logger.info(f"Attempting to write {len(project_contributors_df)} rows to {raw_schema}.project_repos_contributors...")
-            # Use chunksize and explicit transaction
-            with cloud_sql_engine.begin() as connection: # Starts transaction, handles commit/rollback
-                project_contributors_df.to_sql(
-                    'project_repos_contributors',
-                    connection, # Use the connection from the transaction context
-                    if_exists='append',
-                    index=False,
-                    schema=raw_schema,
-                    chunksize=10000,  # Adjust chunksize as needed (e.g., 500, 1000)
-                    method='multi'   # Often more efficient for PostgreSQL with chunksize
-                )
-            logger.info("Successfully wrote data to database.")
-
-        # Catch specific SQLAlchemy errors first if possible
-        except SQLAlchemyError as e:
-            logger.error(f"Database error during to_sql operation: {e}", exc_info=True)
-            logger.warning(f"Database write failed. Saving DataFrame to fallback file: {fallback_filename}")
+        for i, repo_url in enumerate(github_repos):
+            repos_processed += 1
+            logger.info(f"\n--- Processing {i + 1}/{len(github_repos)}: {repo_url} ---")
             try:
-                # Attempt to save as Parquet (often better for data types and compression)
-                project_contributors_df.to_parquet(fallback_filename, index=False)
-                logger.info(f"Successfully saved data to fallback file: {fallback_filename}")
-            except Exception as E:
-                logger.error(f"CRITICAL: Failed to save fallback data to {fallback_filename}: {E}", exc_info=True)
-            # The 'with engine.begin()' context manager automatically rolls back here
-            # Re-raise the error to fail the Dagster asset run
-            raise e
-        except Exception as e:
-            logger.error(f"Unexpected error during to_sql: {e}", exc_info=True)
-            logger.warning(f"Unexpected error during write. Saving DataFrame to fallback file: {fallback_filename}")
-            try:
-                # Attempt to save as Parquet
-                project_contributors_df.to_parquet(fallback_filename, index=False)
-                logger.info(f"Successfully saved data to fallback file: {fallback_filename}")
-            except Exception as E:
-                logger.error(f"CRITICAL: Failed to save fallback data to {fallback_filename}: {E}", exc_info=True)
-            # The context manager should still attempt rollback
-            raise e
-
-
-        # --- Metadata Capture (keep as is, but ensure connection is fresh if needed) ---
+                owner, repo_name = urlparse(repo_url).path.strip("/").split("/")
+                existing_etag = etags_from_db.get(repo_url)
+                status, contributors_list, new_etag = get_contributors_for_repo(owner, repo_name, existing_etag)
+                
+                if status == "updated":
+                    repos_updated += 1
+                    etags_to_update[repo_url] = new_etag
+                    compressed_data = gzip.compress(json.dumps(contributors_list).encode('utf-8'))
+                    current_batch.append({"repo": repo_url, "contributor_list": compressed_data})
+                elif status == "not_modified":
+                    repos_skipped_304 += 1
+                    etags_to_update[repo_url] = new_etag
+                elif status == "failed":
+                    repos_failed += 1
+                
+                if len(current_batch) >= BATCH_SIZE:
+                    total_rows_inserted += write_batch_to_db(current_batch, run_timestamp)
+                    current_batch.clear()
+            except Exception as e:
+                repos_failed += 1
+                logger.error(f"An unexpected error occurred while processing {repo_url}: {e}", exc_info=True)
+        
+        if current_batch:
+            total_rows_inserted += write_batch_to_db(current_batch, run_timestamp)
+        
+        _update_etags_in_db(context, raw_schema, etag_table_name, etags_to_update)
+        
         final_row_count = 0
-        preview_df = pd.DataFrame()
         try:
             with cloud_sql_engine.connect() as conn:
-                # Get final count
                 count_query = text(f"SELECT COUNT(*) FROM {raw_schema}.project_repos_contributors")
                 final_row_count = conn.execute(count_query).scalar_one_or_none() or 0
-
-                # Get preview
-                preview_query = text(f"SELECT repo, data_timestamp FROM {raw_schema}.project_repos_contributors ORDER BY data_timestamp DESC LIMIT 10")
-                preview_result = conn.execute(preview_query)
-                preview_df = pd.DataFrame(preview_result.fetchall(), columns=preview_result.keys())
-
-            logger.info(f"Final row count: {final_row_count}")
-
         except SQLAlchemyError as e:
-            logger.error(f"Database error fetching metadata: {e}", exc_info=True)
-            # Don't fail the whole asset if metadata fails, just log it.
+            logger.error(f"Database error fetching final metadata: {e}", exc_info=True)
 
         return dg.MaterializeResult(
             metadata={
-                "row_count": dg.MetadataValue.int(final_row_count),
-                "inserted_rows": dg.MetadataValue.int(len(project_contributors_df)), # Rows attempted in this run
-                "preview": dg.MetadataValue.md(preview_df.to_markdown(index=False) if not preview_df.empty else "No preview available."),
-                "count_403_errors": dg.MetadataValue.int(count_403_errors_sum),
-                "count_502_errors": dg.MetadataValue.int(count_502_errors_sum),
+                "Run Timestamp": dg.MetadataValue.text(str(run_timestamp)),
+                "Total Repos Processed": dg.MetadataValue.int(repos_processed),
+                "Repos Updated (New Data)": dg.MetadataValue.int(repos_updated),
+                "Repos Skipped (304 Not Modified)": dg.MetadataValue.int(repos_skipped_304),
+                "Repos Failed": dg.MetadataValue.int(repos_failed),
+                "Rows Inserted This Run": dg.MetadataValue.int(total_rows_inserted),
+                "Total Rows in Table": dg.MetadataValue.int(final_row_count),
             }
         )
-
     return _github_project_repos_contributors_env_specific
 
 

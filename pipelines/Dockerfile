@@ -73,3 +73,5 @@ COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/pytho
 COPY --from=builder --chown=appuser:app /opt/dagster /opt/dagster
 
 EXPOSE 3000
+
+CMD ["dagster", "dev", "--host", "0.0.0.0", "--port", "3000"]
