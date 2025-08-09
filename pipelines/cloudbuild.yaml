@@ -147,11 +147,9 @@ steps:
   args:
     - 'apply'
     - '--filename=pipelines/k8s/configmap.yaml'
-    - '--image=us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app=$IMAGE_WITH_SHA'
+    - '--image=us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app=us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA'
     - '--location=us-central1-c'
     - '--cluster=dagster-cluster'
-  env:
-    - 'IMAGE_WITH_SHA=us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA'
   waitFor: ['Push Image to GCR']
 
 # Deploy the new image to your GKE cluster.
