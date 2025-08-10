@@ -14,6 +14,10 @@ spec:
         app: dagster-webserver
     spec:
       serviceAccountName: dagster-ksa
+      volumes:
+      - name: dagster-instance-volume
+        configMap:
+          name: dagster-instance
       containers:
       # Your Dagster application container
       - name: dagster-webserver
@@ -22,6 +26,10 @@ spec:
         command: ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000"]
         ports:
         - containerPort: 3000
+        volumeMounts:
+        - name: dagster-instance-volume
+          mountPath: /opt/dagster/dagster_home/dagster.yaml
+          subPath: dagster.yaml
         env:
         - name: cloud_sql_user
           valueFrom:
