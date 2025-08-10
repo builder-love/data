@@ -137,9 +137,9 @@ steps:
   args:
     - '-c'
     - |
-      echo "--- Searching for 'create_github_project_repos_contributors_asset' in assets.py ---"
+      echo "--- Reading 'create_github_project_repos_contributors_asset' from assets.py ---"
       docker run --rm us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA \
-        sh -c "find / -name assets.py -exec sed -n '/def create_github_project_repos_contributors_asset/,/^\s*def/{/^\s*def/!p}' {} \;"
+        sh -c "sed -n '/def create_github_project_repos_contributors_asset/,/^\s*def/{/^\s*def/!p}' /opt/dagster/app/pipelines/dagster-pipelines/assets.py"
   waitFor: ['Build App Image']
   # end debugging
 
