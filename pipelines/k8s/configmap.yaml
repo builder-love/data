@@ -5,77 +5,68 @@ metadata:
   name: dagster-instance
 data:
   dagster.yaml: |
-	run_launcher:
-		module: dagster_k8s
-		class: K8sRunLauncher
-		config:
-			# k8s base config
-			service_account_name: dagster-ksa
-			instance_config_map: dagster-instance
-			postgres_password_secret: cloudsql-db-credentials
-			load_incluster_config: true
-			job_image: IMAGE_PLACEHOLDER
+    run_launcher:
+      module: dagster_k8s
+      class: K8sRunLauncher
+      config:
+        service_account_name: dagster-ksa
+        instance_config_map: dagster-instance
+        postgres_password_secret: cloudsql-db-credentials
+        load_incluster_config: true
+        job_image: IMAGE_PLACEHOLDER
+        env_secrets:
+          - cloudsql-db-credentials
+          - github-api-secrets
+          - bitbucket-api-secrets
+        env_vars:
+          - "cloud_sql_postgres_host=127.0.0.1"
+        run_k8s_config:
+          job_spec_config:
+            ttl_seconds_after_finished: 86400
+          pod_spec_config:
+            init_containers:
+              - name: cloudsql-proxy
+                image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.18.0
+                args:
+                  - "--port=5432"
+                  - "data-pipelines-450611:us-central1:builder-love"
+                securityContext:
+                  runAsNonRoot: true
+                resources:
+                  requests:
+                    memory: "1Gi"
+                    cpu: "500m"
 
-			# Use env_secrets to load all keys from these secrets as env vars
-			env_secrets:
-				- cloudsql-db-credentials
-				- github-api-secrets
-				- bitbucket-api-secrets
+    run_coordinator:
+      module: dagster.core.run_coordinator
+      class: QueuedRunCoordinator
+      config:
+        max_concurrent_runs: 25
+        tag_concurrency_limits:
+          - key: "github_api_key1"
+            value: "True"
+            limit: 1
+          - key: "github_api_key2"
+            value: "True"
+            limit: 1
 
-			# Use env_vars for simple key-value strings ONLY
-			env_vars:
-				- "cloud_sql_postgres_host=127.0.0.1"
+    telemetry:
+      enabled: false
 
-			# Nest the sidecar definition inside run_k8s_config
-			run_k8s_config:
-				job_spec_config:
-					ttl_seconds_after_finished: 86400
-				pod_spec_config:
-					init_containers:
-					- name: cloudsql-proxy
-						image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.18.0
-						restart_policy: Always
-						args:
-							- "--port=5432"
-							- "data-pipelines-450611:us-central1:builder-love"
-						securityContext:
-						   runAsNonRoot: true
-						resources:
-							requests:
-								memory: "1Gi"
-								cpu: "500m"
+    retention:
+      schedule:
+        purge_after_days: 180
+      sensor:
+        purge_after_days:
+          skipped: 14
+          failure: 45
+          success: -1
 
-	# This file configures the Dagster instance 
-	run_coordinator:
-		module: dagster.core.run_coordinator
-		class: QueuedRunCoordinator
-		config:
-			max_concurrent_runs: 25
-			tag_concurrency_limits:
-			- key: "github_api_key1"
-				value: "True"
-				limit: 1
-			- key: "github_api_key2"
-				value: "True"
-				limit: 1
-
-	telemetry:
-		enabled: false
-
-	retention:
-		schedule:
-			purge_after_days: 180
-		sensor:
-			purge_after_days:
-				skipped: 14
-				failure: 45
-				success: -1
-
-	storage:
-		postgres:
-			postgres_db:
-				hostname: { "env": "cloud_sql_postgres_host" }
-				username: { "env": "cloud_sql_user" }
-				password: { "env": "cloud_sql_password" }
-				db_name: { "env": "cloud_sql_postgres_db" } 
-				port: 5432
+    storage:
+      postgres:
+        postgres_db:
+          hostname: { "env": "cloud_sql_postgres_host" }
+          username: { "env": "cloud_sql_user" }
+          password: { "env": "cloud_sql_password" }
+          db_name: { "env": "cloud_sql_postgres_db" }
+          port: 5432
