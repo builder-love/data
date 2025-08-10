@@ -61,7 +61,7 @@ data:
         purge_after_days:
           skipped: 14
           failure: 45
-          success: -1
+          success: 180
 
     compute_logs:
       module: dagster_gcp.gcs
