@@ -33,7 +33,7 @@ COPY . .
 
 # Create DAGSTER_HOME and copy the instance config
 RUN mkdir -p /opt/dagster/dagster_home
-COPY dagster.yaml /opt/dagster/dagster_home/
+# COPY dagster.yaml /opt/dagster/dagster_home/
 
 # Change to the dbt project directory
 WORKDIR /opt/dagster/app/dbt-pipelines
