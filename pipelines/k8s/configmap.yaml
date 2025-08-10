@@ -27,6 +27,7 @@ data:
             init_containers:
               - name: cloudsql-proxy
                 image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.18.0
+                restart_policy: Always
                 args:
                   - "--port=5432"
                   - "data-pipelines-450611:us-central1:builder-love"
