@@ -129,26 +129,12 @@ steps:
   ]
   waitFor: ['Create .env File'] # Ensure proxy is started before building
 
-# 6.5 Verify the contents of the newly built image
-# debugging
-- name: 'gcr.io/cloud-builders/docker'
-  id: 'Verify Image Contents'
-  entrypoint: 'sh'
-  args:
-    - '-c'
-    - |
-      echo "--- Reading '_github_project_repos_contributors_env_specific' from assets.py ---"
-      docker run --rm us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA \
-        sh -c "sed -n '/def _github_project_repos_contributors_env_specific/,/^\s*def/{/^\s*def/!p}' /opt/dagster/app/dagster-pipelines/assets.py"
-  waitFor: ['Build App Image']
-  # end debugging
-
 # 7. Stop and remove the proxy container (important for cleanup).
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Stop Proxy Container'
   args: ['rm', '-f', 'proxy-service']
   # This step runs even if the build fails, ensuring cleanup.
-  waitFor: ['Verify Image Contents']
+  waitFor: ['Build App Image']
 
 # 8. Push the final image.
 - name: 'gcr.io/cloud-builders/docker'
