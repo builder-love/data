@@ -269,7 +269,7 @@ def create_latest_active_distinct_github_project_repos_asset(env_prefix: str):
         github_api = context.resources.github_api
 
         # tell the user what environment they are running in
-        context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
+        context.log.info(f"------************** updated: this process is running in {env_config['env']} environment. *****************---------")
 
         def get_non_github_repo_status(repo_url, repo_source):
             """
