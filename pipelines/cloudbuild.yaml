@@ -137,9 +137,9 @@ steps:
   args:
     - '-c'
     - |
-      echo "--- Reading 'create_github_project_repos_contributors_asset' from assets.py ---"
+      echo "--- Reading '_github_project_repos_contributors_env_specific' from assets.py ---"
       docker run --rm us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA \
-        sh -c "sed -n '/def create_github_project_repos_contributors_asset/,/^\s*def/{/^\s*def/!p}' /opt/dagster/app/dagster-pipelines/assets.py"
+        sh -c "sed -n '/def _github_project_repos_contributors_env_specific/,/^\s*def/{/^\s*def/!p}' /opt/dagster/app/dagster-pipelines/assets.py"
   waitFor: ['Build App Image']
   # end debugging
 
