@@ -69,7 +69,6 @@ data:
       config:
         bucket: "bl-dagster-compute-logs" 
         prefix: "dagster-compute-logs"
-        gcp_project: "data-pipelines-450611"
 
     storage:
       postgres:
