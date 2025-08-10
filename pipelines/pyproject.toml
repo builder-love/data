@@ -13,7 +13,9 @@ dependencies = [
     "psycopg2-binary",
     "gcsfs",
     "google-cloud-storage",
-    "toml"
+    "toml",
+    "dagster-gcp",
+    "dagster-k8s"
 ]
 
 [project.optional-dependencies]
