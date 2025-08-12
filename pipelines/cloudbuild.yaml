@@ -159,25 +159,20 @@ steps:
   args:
     - '-c'
     - |
-      # --- START DEBUGGING ---
-      echo "--- Printing substitution variables for debugging ---"
-      echo "BRANCH_NAME: '$BRANCH_NAME'"
-      echo "PROJECT_ID: '$PROJECT_ID'"
-      echo "SHORT_SHA: '$SHORT_SHA'"
-      echo "--- END DEBUGGING ---"
+      # Use sed to update the placeholder in the base ConfigMap
+      echo "--- Updating IMAGE_PLACEHOLDER in base ConfigMap ---"
+      sed -i "s|IMAGE_PLACEHOLDER|us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA|g" pipelines/k8s/base/configmap.yaml
       
       # Determine which overlay to use based on the branch -- define DAGSTER_ENV
       OVERLAY_DIR="pipelines/k8s/overlays/stg" # Default to staging
       if [ "$BRANCH_NAME" = "master" ]; then
         echo "--- Branch is master. Using PRODUCTION overlay. ---"
         OVERLAY_DIR="pipelines/k8s/overlays/prod"
+        sed -i "s|SCHEMA_PLACEHOLDER|dagster_instance_prod|g" pipelines/k8s/base/configmap.yaml
       else
         echo "--- Branch is '$BRANCH_NAME'. Using STAGING overlay. ---"
+        sed -i "s|SCHEMA_PLACEHOLDER|dagster_instance_stg|g" pipelines/k8s/base/configmap.yaml
       fi
-
-      # Use sed to update the placeholder in the base ConfigMap
-      echo "--- Updating IMAGE_PLACEHOLDER in base ConfigMap ---"
-      sed -i "s|IMAGE_PLACEHOLDER|us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA|g" pipelines/k8s/base/configmap.yaml
 
       # Use Kustomize to update the image in the Deployments
       echo "--- Setting deployment images for overlay: $$OVERLAY_DIR ---"
