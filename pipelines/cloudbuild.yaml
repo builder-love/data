@@ -159,6 +159,13 @@ steps:
   args:
     - '-c'
     - |
+      # --- START DEBUGGING ---
+      echo "--- Printing substitution variables for debugging ---"
+      echo "BRANCH_NAME: '$$BRANCH_NAME'"
+      echo "PROJECT_ID: '$$PROJECT_ID'"
+      echo "SHORT_SHA: '$$SHORT_SHA'"
+      echo "--- END DEBUGGING ---"
+      
       # Determine which overlay to use based on the branch -- define DAGSTER_ENV
       OVERLAY_DIR="pipelines/k8s/overlays/stg" # Default to staging
       if [ "$$BRANCH_NAME" = "main" ]; then
