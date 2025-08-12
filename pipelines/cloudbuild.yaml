@@ -189,6 +189,7 @@ steps:
       echo "--- Applying manifests from $$OVERLAY_DIR ---"
       gcloud container clusters get-credentials dagster-cluster --zone us-central1-c
       kubectl apply -k $$OVERLAY_DIR
+  waitFor: ['Push Image to GCR']
 
 images:
 - 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA'
