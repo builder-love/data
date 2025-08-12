@@ -153,7 +153,7 @@ steps:
   waitFor: ['Stop Proxy Container'] # Wait for build and cleanup
 
 # 9. Update the configmap.yaml with the new image, update the DAGSTER_ENV, and deploy.
-- name: 'gcr.io/google.com/cloudsdktool/gcloud'
+- name: 'gcr.io/cloud-builders/gcloud'
   id: 'Update Manifests and Deploy'
   entrypoint: 'bash'
   args:
