@@ -77,4 +77,5 @@ data:
           password: { "env": "cloud_sql_password" }
           db_name: { "env": "cloud_sql_postgres_db" }
           port: 5432
-          schema: prod
+          params:
+            options: "-c search_path=dagster_instance_prod"
