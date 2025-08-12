@@ -1,0 +1,11 @@
+# pipelines/k8s/base/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- cloudbuild-rbac.yaml
+- configmap.yaml
+- daemon-deployment.yaml
+- deployment.yaml
+- rbac.yaml
+- service.yaml
