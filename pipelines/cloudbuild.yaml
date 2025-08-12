@@ -104,6 +104,15 @@ steps:
   args:
     - -c
     - |
+      # Determine the environment based on the Git branch name
+      DETERMINED_ENV="stg" # Default to 'stg'
+      if [ "$$BRANCH_NAME" = "main" ]; then
+        echo "--- Main branch detected. Setting environment to PROD. ---"
+        DETERMINED_ENV="prod"
+      else
+        echo "--- Non-main branch ($$BRANCH_NAME) detected. Setting environment to STG. ---"
+      fi
+
       # Read the IP address from the file created in the previous step
       PROXY_IP=$(cat /workspace/proxy_ip.txt)
       echo "--- Using Proxy IP: $$PROXY_IP ---"
@@ -112,6 +121,7 @@ steps:
       cloud_sql_password=$$DB_PASSWORD
       cloud_sql_postgres_db=postgres
       cloud_sql_postgres_host=$$PROXY_IP
+      DAGSTER_ENV=$$DETERMINED_ENV
       EOT
   waitFor: ['Get Proxy IP']
 

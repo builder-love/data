@@ -133,5 +133,5 @@ class github_api_resource(ConfigurableResource):
             raise ValueError(f"Unknown key name: {key_name}")
 
         # Return a configured client or just the key
-        print(f"Using API Key: ...{api_key[-4:]}")
+        print(f"Using API Key: ...{api_key[-3:]}")
         return api_key
