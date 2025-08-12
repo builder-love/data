@@ -13,7 +13,7 @@ data:
         instance_config_map: dagster-instance
         postgres_password_secret: cloudsql-db-credentials
         load_incluster_config: true
-        job_image: "IMAGE_PLACEHOLDER"
+        job_image: IMAGE_PLACEHOLDER
         env_secrets:
           - cloudsql-db-credentials
           - github-api-secrets
