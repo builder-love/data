@@ -1,6 +1,7 @@
 import os
 
 from dagster import Definitions, with_resources, AssetSelection, define_asset_job, JobDefinition, ScheduleDefinition, AssetKey, asset, OpExecutionContext
+from dagster_gcp.gcs import GCSComputeLogManager
 # Import resources
 from .resources import (
     cloud_sql_postgres_resource,
@@ -279,6 +280,10 @@ else: # Default to staging
 # The 'if all_dbt_assets' check handles the case where the manifest was not found.
 final_assets = prefixed_common_assets + ([all_dbt_assets] if all_dbt_assets else [])
 
+# Dynamically set the GCS prefix based on the environment
+compute_log_prefix = f"dagster-compute-logs/{DAGSTER_ENV}"
+print(f"INFO: Configuring compute logs to be stored in GCS under prefix: {compute_log_prefix}")
+
 # Define a single, unified Definitions object
 defs = Definitions(
     assets=final_assets,
@@ -303,6 +308,10 @@ defs = Definitions(
         "dbt_stg_resource": dbt_stg_resource,
         "dbt_prod_resource": dbt_prod_resource,
         "electric_capital_ecosystems_repo": electric_capital_ecosystems_repo,
+        "compute_logs": GCSComputeLogManager(
+            bucket="bl-dagster-compute-logs", 
+            prefix=compute_log_prefix,
+        ),
         "gcs_storage_client_resource": gcs_storage_client_resource.configured({
             "gcp_keyfile_path": os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
         }),
