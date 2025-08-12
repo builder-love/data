@@ -48,8 +48,11 @@ RUN set -a && . ../.env && set +a && \
     if [ "$DAGSTER_ENV" = "prod" ]; then \
         echo "--- Compiling for PRODUCTION ---" && \
         dbt compile --threads 16 --target prod --target-path "target/prod"; \
-    else \
+    elif [ "$DAGSTER_ENV" = "stg" ]; then \
         echo "--- Compiling for STAGING ---" && \
+        dbt compile --threads 16 --target stg --target-path "target/stg"; \
+    else \
+        echo "--- Cannot determine environment. Compiling for STAGING ---" && \
         dbt compile --threads 16 --target stg --target-path "target/stg"; \
     fi
 
