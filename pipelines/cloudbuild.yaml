@@ -106,11 +106,11 @@ steps:
     - |
       # Determine the environment based on the Git branch name
       DETERMINED_ENV="stg" # Default to 'stg'
-      if [ "$$BRANCH_NAME" = "main" ]; then
-        echo "--- Main branch detected. Setting environment to PROD. ---"
+      if [ "$$BRANCH_NAME" = "master" ]; then
+        echo "--- Master branch detected. Setting environment to PROD. ---"
         DETERMINED_ENV="prod"
       else
-        echo "--- Non-main branch ($$BRANCH_NAME) detected. Setting environment to STG. ---"
+        echo "--- Non-master branch ($$BRANCH_NAME) detected. Setting environment to STG. ---"
       fi
 
       # Read the IP address from the file created in the previous step
@@ -168,8 +168,8 @@ steps:
       
       # Determine which overlay to use based on the branch -- define DAGSTER_ENV
       OVERLAY_DIR="pipelines/k8s/overlays/stg" # Default to staging
-      if [ "$BRANCH_NAME" = "main" ]; then
-        echo "--- Branch is main. Using PRODUCTION overlay. ---"
+      if [ "$BRANCH_NAME" = "master" ]; then
+        echo "--- Branch is master. Using PRODUCTION overlay. ---"
         OVERLAY_DIR="pipelines/k8s/overlays/prod"
       else
         echo "--- Branch is '$BRANCH_NAME'. Using STAGING overlay. ---"
