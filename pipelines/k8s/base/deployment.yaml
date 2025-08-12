@@ -1,17 +1,17 @@
-# k8s/daemon-deployment.yaml
+# k8s/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: dagster-daemon
+  name: dagster-webserver
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: dagster-daemon
+      app: dagster-webserver
   template:
     metadata:
       labels:
-        app: dagster-daemon
+        app: dagster-webserver
     spec:
       serviceAccountName: dagster-ksa
       volumes:
@@ -19,10 +19,13 @@ spec:
         configMap:
           name: dagster-instance
       containers:
-      # Your Dagster daemon container
-      - name: dagster-daemon
+      # Your Dagster application container
+      - name: dagster-webserver
+        # The image will be dynamically set by Cloud Build
         image: us-central1-docker.pkg.dev/data-pipelines-450611/dagster-repo/dagster-app:latest
-        command: ["dagster-daemon", "run"]
+        command: ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000"]
+        ports:
+        - containerPort: 3000
         volumeMounts:
         - name: dagster-instance-volume
           mountPath: /opt/dagster/dagster_home/dagster.yaml
@@ -46,9 +49,6 @@ spec:
         # This points to the sidecar proxy
         - name: cloud_sql_postgres_host
           value: "127.0.0.1"
-        # set env and home for dagster
-        - name: DAGSTER_ENV
-          value: "stg"
         - name: DAGSTER_HOME
           value: "/opt/dagster/dagster_home"
         # set the github api tokens
@@ -68,11 +68,11 @@ spec:
               name: bitbucket-api-secrets
               key: bitbucket_api_key
 
-      # Cloud SQL Auth Proxy sidecar container (same as in the webserver)
+      # Cloud SQL Auth Proxy sidecar container
       - name: cloudsql-proxy
         image: gcr.io/cloudsql-docker/gce-proxy:1.33.9
         command:
           - "/cloud_sql_proxy"
-          - "-instances=data-pipelines-450611:us-central1:builder-love=tcp:5432"
+          - "-instances=data-pipelines-450611:us-central1:builder-love=tcp:5432" # Get this from your Cloud SQL instance page
         securityContext:
           runAsNonRoot: true

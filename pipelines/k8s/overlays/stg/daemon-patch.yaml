@@ -1,0 +1,13 @@
+# k8s/overlays/stg/daemon-patch.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dagster-daemon
+spec:
+  template:
+    spec:
+      containers:
+      - name: dagster-daemon
+        env:
+        - name: DAGSTER_ENV
+          value: "stg"
