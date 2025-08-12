@@ -1,4 +1,4 @@
-# pipelines/k8s/base/configmap.yaml
+# pipelines/k8s/overlays/prod/configmap-patch.yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -77,3 +77,4 @@ data:
           password: { "env": "cloud_sql_password" }
           db_name: { "env": "cloud_sql_postgres_db" }
           port: 5432
+        schema: prod
