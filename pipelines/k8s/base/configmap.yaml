@@ -62,12 +62,12 @@ data:
           failure: 45
           success: 180
 
-    # compute_logs:
-    #   module: dagster_gcp.gcs
-    #   class: GCSComputeLogManager
-    #   config:
-    #     bucket: "bl-dagster-compute-logs" 
-    #     prefix: "dagster-compute-logs"
+    compute_logs:
+      module: dagster_gcp.gcs
+      class: GCSComputeLogManager
+      config:
+        bucket: "bl-dagster-compute-logs" 
+        prefix: "dagster-compute-logs"
 
     storage:
       postgres:
