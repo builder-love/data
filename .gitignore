@@ -129,6 +129,7 @@ celerybeat.pid
 
 # Environments
 .env
+pipelines/.env
 .venv
 .dbt_venv
 .api_venv
@@ -195,3 +196,4 @@ pipelines/.telemetry/
 pipelines/dbt-pipelines/target/
 pipelines/dbt-pipelines/logs/
 pipelines/dbt-pipelines/.dbt_packages/
+
