@@ -481,11 +481,7 @@ def create_project_repos_description_features_asset(env_prefix: str):
 
         context.log.info(f"Aggregation complete. Result has {len(final_features_df)} unique repos.")
 
-<<<<<<< HEAD:pipelines/dagster-pipelines/dagster_pipelines/features.py
         # # generate semantic embeddings
-=======
-        # generate semantic embeddings
->>>>>>> f3c9c1b5 (refactor pipeline project to use GKE container; removed redundant dbt_pipelines and dagster_pipelines folder structure; updated all packages to latest versions):pipelines/dagster-pipelines/features.py
         # try:
         #     context.log.info("Aggregating corpus text...")
         #     corpus_df = aggregate_corpus_text(features_df, context) # Use the original raw df
