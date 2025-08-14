@@ -106,6 +106,7 @@ steps:
     - |
       # Determine the environment based on the Git branch name
       DETERMINED_ENV="stg" # Default to 'stg'
+      echo "--- Branch name: $$BRANCH_NAME ---"
       if [ "$$BRANCH_NAME" = "master" ]; then
         echo "--- Master branch detected. Setting environment to PROD. ---"
         DETERMINED_ENV="prod"
