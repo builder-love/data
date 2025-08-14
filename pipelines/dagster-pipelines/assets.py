@@ -4635,7 +4635,7 @@ def create_project_repos_frontend_framework_files_asset(env_prefix: str):
     return _project_repos_frontend_framework_files_env_specific
 
 # Define config files and exclusion keywords at a broader scope
-CONFIG_FILES = ["mkdocs.yml", "docusaurus.config.js", "hugo.toml", "config.toml", "_config.yml"]
+CONFIG_FILES = [".readthedocs.yaml", "docusaurus.config.js", "conf.py", ".gitbook.yaml"]
 KEYWORDS_TO_EXCLUDE = ["readme", "license", "contributors", "contribution", "changelog", "upgrading", "upgrade", "history", "changes", "contributing"]
 def get_documentation_files(context: dg.OpExecutionContext, gh_pat: str | None, session: requests.Session, repo_url: str, repo_source: str) -> list[dict]:
     """
@@ -4705,13 +4705,11 @@ def get_documentation_files(context: dg.OpExecutionContext, gh_pat: str | None, 
 
         # --- 3. Fetch content for the targeted files ---
         if len(files_to_process) > 0:
-            context.log.info(f"Found {len(files_to_process)} documentation files to fetch for {repo_url}.")
+            context.log.info(f"Found {len(files_to_process)} documentation files to fetch for {repo_url}. Fetching...")
 
             for path in files_to_process:
                 content_url = ""
                 if repo_source == "github":
-                    # for debugging, print the content_url
-                    context.log.info(f"found file: {path} for {repo_url} and {default_branch}")
                     content_url = f"https://raw.githubusercontent.com/{owner}/{repo_name}/{default_branch}/{path}"
                 elif repo_source == "gitlab":
                     project_path_encoded = requests.utils.quote(f"{owner}/{repo_name}", safe='')
@@ -4727,11 +4725,12 @@ def get_documentation_files(context: dg.OpExecutionContext, gh_pat: str | None, 
                             "file_name": os.path.basename(path),
                             "file_content": content_response.text.replace('\x00', '')
                         })
+            
+            context.log.info(f"Successfully fetched {len(found_files)} documentation files for {repo_url}.")
         else:
             found_files = []
-            context.log.info(f"No documentation files found for {repo_url}. Skipping this repo.")
     except requests.exceptions.RequestException as e:
-        context.log.error(f"Failed to process repo {repo_url}: {e}")
+        context.log.warning(f"Failed to process repo {repo_url}: {e}")
     except Exception as e:
         context.log.error(f"An unexpected error occurred for repo {repo_url}: {e}")
 
@@ -4779,7 +4778,15 @@ def create_project_repos_documentation_files_asset(env_prefix: str):
         session.mount("http://", adapter)
 
         with cloud_sql_engine.connect() as conn:
-            repo_df = pd.DataFrame(conn.execute(text(f"SELECT repo, repo_source FROM {clean_schema}.latest_active_distinct_project_repos_with_code")).fetchall())
+            repo_df = pd.DataFrame(conn.execute(text(f"""
+                SELECT 
+                    r.repo, r.repo_source 
+                FROM 
+                    {clean_schema}.latest_active_distinct_project_repos_with_code r
+                LEFT JOIN {clean_schema}.latest_project_repos_is_fork f
+                ON r.repo = f.repo
+                WHERE f.is_fork = false
+            """)).fetchall())
 
         if repo_df.empty:
             context.log.info("No active repositories found to process.")

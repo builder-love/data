@@ -481,7 +481,7 @@ def create_project_repos_description_features_asset(env_prefix: str):
 
         context.log.info(f"Aggregation complete. Result has {len(final_features_df)} unique repos.")
 
-        # generate semantic embeddings
+        # # generate semantic embeddings
         # try:
         #     context.log.info("Aggregating corpus text...")
         #     corpus_df = aggregate_corpus_text(features_df, context) # Use the original raw df
@@ -511,7 +511,7 @@ def create_project_repos_description_features_asset(env_prefix: str):
         # final_features_df[embedding_cols] = final_features_df[embedding_cols].fillna(0)
         # context.log.info(f"Merged {len(embedding_cols)} embedding columns into final_features_df.")
         
-        context.log.info(f"Final combined feature set created with {len(final_features_df)} rows.")
+        # context.log.info(f"Final combined feature set created with {len(final_features_df)} rows.")
 
         # Define dtypes for the output table
         output_dtype_mapping = {
