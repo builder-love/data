@@ -602,6 +602,7 @@ def create_project_repos_corpus_asset(env_prefix: str):
         def log_memory_usage(stage: str):
             memory_mb = process.memory_info().rss / (1024 * 1024)
             context.log.info(f"Memory Usage ({stage}): {memory_mb:.2f} MB")
+
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config
         clean_schema = env_config["clean_schema"]
@@ -612,7 +613,7 @@ def create_project_repos_corpus_asset(env_prefix: str):
         gcs_client = context.resources.gcs_storage_client_resource
         bucket = gcs_client.bucket(bucket_name)
 
-        # cloud sql info
+        # Cloud sql info
         active_repos_table = "latest_active_distinct_project_repos_with_code"
         description_table = "latest_project_repos_description"
         readme_table = "latest_project_repos_readmes"
@@ -621,20 +622,13 @@ def create_project_repos_corpus_asset(env_prefix: str):
         dominant_language_table = "latest_project_repos_dominant_language"
         doc_site_table = "latest_project_repos_documentation_files"
         framework_files_table = "latest_project_repos_framework_files"
-
-        context.log.info(f"Process is running in {env_config['env']} environment.")
-        context.log.info(f"Using '{active_repos_table}' as the base and joining descriptions and READMEs.")
         
-        # Define the query outside the main try block for clarity
-        query = f"""
+        sql_query_string = f"""
         WITH repo_data AS (
             SELECT
                 a.repo,
-                MAX(a.data_timestamp) as data_timestamp,
                 MAX(d.description) as description,
                 MAX(r.readme_content) as readme_content,
-                -- Use STRING_AGG to concatenate all non-null file contents for each repo,
-                -- separated by a space. This correctly builds the corpus.
                 STRING_AGG(p.file_content, ' ') as file_content,
                 STRING_AGG(ff.file_content, ' ') as framework_file_content,
                 STRING_AGG(ds.file_content, ' ') as doc_site_file_content,
@@ -671,31 +665,27 @@ def create_project_repos_corpus_asset(env_prefix: str):
         total_rows = 0
         writer = None
         
-        # 1. Define the GCS blob destination first
         blob_name = f"embeddings_data/{context.run_id}.parquet"
         blob = bucket.blob(blob_name)
         context.log.info(f"Streaming Parquet file to gs://{bucket_name}/{blob_name}")
 
-        # 1. Get a raw database connection from the engine
         db_connection = cloud_sql_engine.connect().execution_options(stream_results=True)
 
         try:
-            # 2. Open a writable stream directly to the GCS blob
             with blob.open('wb') as gcs_writer_stream:
-                # 3. Use a named, server-side cursor
-                # The name (e.g., 'repo_cursor') is arbitrary
                 with db_connection.connection.cursor('repo_cursor') as cursor:
-                    cursor.execute(query)
+                    cursor.execute(sql_query_string)
                     
                     while True:
-                        # 4. Fetch rows in chunks directly from the cursor
-                        chunk_df = cursor.fetchmany(1000) # Fetch 1000 rows at a time
-                        if not chunk_df:
-                            break # Exit loop when no more rows are returned
+                        rows = cursor.fetchmany(1000)
+                        if not rows:
+                            break
 
-                        # Convert list of tuples to DataFrame and name columns
-                        chunk_df = pd.DataFrame(chunk_df, columns=['repo', 'corpus_text'])
-                        context.log.info(f"Processing chunk with {len(chunk_df)} rows...")
+                        chunk_df = pd.DataFrame(rows, columns=['repo', 'corpus_text'])
+                        
+                        log_memory_usage(f"After loading chunk for {total_rows + len(chunk_df)} rows")
+                        chunk_size_mb = chunk_df.memory_usage(deep=True).sum() / (1024*1024)
+                        context.log.info(f"Processing chunk with {len(chunk_df)} rows. Pandas chunk in-memory size: {chunk_size_mb:.2f} MB")
                         
                         total_rows += len(chunk_df)
                         table = pa.Table.from_pandas(chunk_df, preserve_index=False)
@@ -705,27 +695,18 @@ def create_project_repos_corpus_asset(env_prefix: str):
                         
                         writer.write_table(table)
 
-                    # On the first chunk, initialize the ParquetWriter with the schema
-                    if writer is None:
-                        # 3. The writer's destination is now the GCS stream
-                        writer = pq.ParquetWriter(gcs_writer_stream, table.schema)
-                    
-                    # 4. Write the chunk directly to the GCS stream
-                    writer.write_table(table)
-
-            if writer:
-                writer.close()
-                context.log.info(f"Finished processing and streaming {total_rows} rows.")
+                # Close the writer inside the `with blob.open` block
+                if writer:
+                    writer.close()
+                    context.log.info("Parquet writer closed successfully.")
+            
+            if total_rows > 0:
+                 context.log.info(f"Finished processing and streaming {total_rows} rows.")
             else:
                 context.log.warning("No data found to process.")
                 return dg.MaterializeResult(metadata={"row_count": 0})
 
-        except Exception as e:
-            context.log.error(f"Failed during streaming data processing: {e}")
-            raise
-
         finally:
-            # 5. Ensure the database connection is closed
             db_connection.close()
     
         return dg.MaterializeResult(
