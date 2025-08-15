@@ -670,7 +670,7 @@ def create_project_repos_corpus_asset(env_prefix: str):
         # The main logic is now in a single, properly indented block.
         try:
             # `pd.read_sql_query` can use the engine directly to manage connections.
-            chunk_iterator = pd.read_sql_query(query, cloud_sql_engine, chunksize=10000)
+            chunk_iterator = pd.read_sql_query(query, cloud_sql_engine, chunksize=50000)
 
             for i, chunk_df in enumerate(chunk_iterator):
                 context.log.info(f"Processing chunk {i + 1} with {len(chunk_df)} rows...")
