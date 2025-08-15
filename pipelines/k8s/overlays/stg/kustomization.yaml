@@ -9,4 +9,3 @@ resources:
 patches:
 - path: webserver-patch.yaml
 - path: daemon-patch.yaml
-- path: run-launcher-patch.yaml

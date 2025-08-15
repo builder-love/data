@@ -170,12 +170,14 @@ steps:
         echo "--- Branch is master. Using PRODUCTION overlay. ---"
         OVERLAY_DIR="pipelines/k8s/overlays/prod"
         sed -i "s|SCHEMA_PLACEHOLDER|dagster_instance_prod|g" pipelines/k8s/base/configmap.yaml
+        sed -i "s|NAMESPACE_PLACEHOLDER|dagster-prod|g" pipelines/k8s/base/configmap.yaml
         # Set the GCS prefix for prod
         sed -i "s|prefix:.*|prefix: \"dagster-compute-logs/prod\"|" pipelines/k8s/base/configmap.yaml
 
       else
         echo "--- Branch is '$BRANCH_NAME'. Using STAGING overlay. ---"
         sed -i "s|SCHEMA_PLACEHOLDER|dagster_instance_stg|g" pipelines/k8s/base/configmap.yaml
+        sed -i "s|NAMESPACE_PLACEHOLDER|dagster-stg|g" pipelines/k8s/base/configmap.yaml
         # Set the GCS prefix for stg
         sed -i "s|prefix:.*|prefix: \"dagster-compute-logs/stg\"|" pipelines/k8s/base/configmap.yaml
       fi
