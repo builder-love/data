@@ -57,7 +57,7 @@ RUN set -a && . ../.env && set +a && \
     fi
 
 # debug: what is in the target directory?
-RUN ls -lR /opt/dagster/app/dbt-pipelines/target/
+# RUN ls -lR /opt/dagster/app/dbt-pipelines/target/
 # end debug
 
 # After dbt compile is finished, remove the .env file so it's not copied to the final image.
@@ -78,6 +78,12 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 # Copy the application code, which now includes the compiled dbt models
 COPY --from=builder --chown=appuser:app /opt/dagster /opt/dagster
+# explicitly copy the generated dbt artifacts on top of the source code
+COPY --from=builder --chown=appuser:app /opt/dagster/app/dbt-pipelines/target /opt/dagster/app/dbt-pipelines/target
+
+# debug: what is in the target directory?   
+RUN ls -lR /opt/dagster/app/dbt-pipelines/target/
+# end debug
 
 EXPOSE 3000
 
