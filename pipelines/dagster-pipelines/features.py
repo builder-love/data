@@ -666,11 +666,11 @@ def create_project_repos_corpus_asset(env_prefix: str):
         writer = None
         output_buffer = pa.BufferOutputStream()
 
-        # CORRECTED: Removed the outer `try/except` and `with...connect` blocks as they were redundant.
-        # The main logic is now in a single, properly indented block.
         try:
             # `pd.read_sql_query` can use the engine directly to manage connections.
-            chunk_iterator = pd.read_sql_query(query, cloud_sql_engine, chunksize=50000)
+            chunk_size = 50000
+            context.log.info(f"Starting to process data in chunks of {chunk_size} rows.")
+            chunk_iterator = pd.read_sql_query(query, cloud_sql_engine, chunksize=chunk_size)
 
             for i, chunk_df in enumerate(chunk_iterator):
                 context.log.info(f"Processing chunk {i + 1} with {len(chunk_df)} rows...")
