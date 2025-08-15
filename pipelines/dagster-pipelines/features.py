@@ -676,20 +676,34 @@ def create_project_repos_corpus_asset(env_prefix: str):
         blob = bucket.blob(blob_name)
         context.log.info(f"Streaming Parquet file to gs://{bucket_name}/{blob_name}")
 
+        # 1. Get a raw database connection from the engine
+        db_connection = cloud_sql_engine.connect().execution_options(stream_results=True)
+
         try:
             # 2. Open a writable stream directly to the GCS blob
             with blob.open('wb') as gcs_writer_stream:
-                chunk_iterator = pd.read_sql_query(query, cloud_sql_engine, chunksize=10000)
-
-                for i, chunk_df in enumerate(chunk_iterator):
-                    log_memory_usage(f"After loading chunk {i + 1}")
-                    chunk_size_mb = chunk_df.memory_usage(deep=True).sum() / (1024 * 1024)
-                    context.log.info(f"Pandas chunk {i + 1} in-memory size: {chunk_size_mb:.2f} MB")
-                    context.log.info(f"Processing and streaming chunk {i + 1} with {len(chunk_df)} rows...")
+                # 3. Use a named, server-side cursor
+                # The name (e.g., 'repo_cursor') is arbitrary
+                with db_connection.connection.cursor('repo_cursor') as cursor:
+                    cursor.execute(query)
                     
-                    chunk_df['corpus_text'] = chunk_df['corpus_text'].fillna('')
-                    total_rows += len(chunk_df)
-                    table = pa.Table.from_pandas(chunk_df, preserve_index=False)
+                    while True:
+                        # 4. Fetch rows in chunks directly from the cursor
+                        chunk_df = cursor.fetchmany(1000) # Fetch 1000 rows at a time
+                        if not chunk_df:
+                            break # Exit loop when no more rows are returned
+
+                        # Convert list of tuples to DataFrame and name columns
+                        chunk_df = pd.DataFrame(chunk_df, columns=['repo', 'corpus_text'])
+                        context.log.info(f"Processing chunk with {len(chunk_df)} rows...")
+                        
+                        total_rows += len(chunk_df)
+                        table = pa.Table.from_pandas(chunk_df, preserve_index=False)
+
+                        if writer is None:
+                            writer = pq.ParquetWriter(gcs_writer_stream, table.schema)
+                        
+                        writer.write_table(table)
 
                     # On the first chunk, initialize the ParquetWriter with the schema
                     if writer is None:
@@ -710,6 +724,10 @@ def create_project_repos_corpus_asset(env_prefix: str):
             context.log.error(f"Failed during streaming data processing: {e}")
             raise
 
+        finally:
+            # 5. Ensure the database connection is closed
+            db_connection.close()
+    
         return dg.MaterializeResult(
             metadata={
                 "gcs_path": dg.MetadataValue.text(f"gs://{bucket_name}/{blob_name}"),
