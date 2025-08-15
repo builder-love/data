@@ -1,4 +1,5 @@
 import os
+import psutil
 import re
 import pandas as pd
 import dagster as dg
@@ -597,6 +598,10 @@ def create_project_repos_corpus_asset(env_prefix: str):
         tags={"feature_engineering": "True"}
     )
     def _project_repos_corpus_env_specific(context: dg.OpExecutionContext) -> dg.MaterializeResult:
+        process = psutil.Process(os.getpid())
+        def log_memory_usage(stage: str):
+            memory_mb = process.memory_info().rss / (1024 * 1024)
+            context.log.info(f"Memory Usage ({stage}): {memory_mb:.2f} MB")
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config
         clean_schema = env_config["clean_schema"]
@@ -661,6 +666,7 @@ def create_project_repos_corpus_asset(env_prefix: str):
         """)
 
         context.log.info("Starting to process and stream data in chunks directly to GCS.")
+        log_memory_usage("Before Query")
         
         total_rows = 0
         writer = None
@@ -676,6 +682,9 @@ def create_project_repos_corpus_asset(env_prefix: str):
                 chunk_iterator = pd.read_sql_query(query, cloud_sql_engine, chunksize=10000)
 
                 for i, chunk_df in enumerate(chunk_iterator):
+                    log_memory_usage(f"After loading chunk {i + 1}")
+                    chunk_size_mb = chunk_df.memory_usage(deep=True).sum() / (1024 * 1024)
+                    context.log.info(f"Pandas chunk {i + 1} in-memory size: {chunk_size_mb:.2f} MB")
                     context.log.info(f"Processing and streaming chunk {i + 1} with {len(chunk_df)} rows...")
                     
                     chunk_df['corpus_text'] = chunk_df['corpus_text'].fillna('')

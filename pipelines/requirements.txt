@@ -94,3 +94,4 @@ scikit-learn==1.7.1
 xgboost==3.0.2
 dagster-k8s==0.27.3
 dagster-gcp==0.27.3
+psutil==7.0.0
