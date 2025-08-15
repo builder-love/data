@@ -602,7 +602,7 @@ def create_project_repos_corpus_asset(env_prefix: str):
         clean_schema = env_config["clean_schema"]
         raw_schema = env_config["raw_schema"]
 
-        # cloud storage info
+        # Cloud storage info
         bucket_name = "bl-repo-corpus-public"
         gcs_client = context.resources.gcs_storage_client_resource
         bucket = gcs_client.bucket(bucket_name)
@@ -660,50 +660,46 @@ def create_project_repos_corpus_asset(env_prefix: str):
         WHERE description is not null or readme_content is not null or file_content is not null
         """)
 
-        context.log.info("Starting to process data in chunks.")
+        context.log.info("Starting to process and stream data in chunks directly to GCS.")
         
         total_rows = 0
         writer = None
-        output_buffer = pa.BufferOutputStream()
+        
+        # 1. Define the GCS blob destination first
+        blob_name = f"embeddings_data/{context.run_id}.parquet"
+        blob = bucket.blob(blob_name)
+        context.log.info(f"Streaming Parquet file to gs://{bucket_name}/{blob_name}")
 
         try:
-            # `pd.read_sql_query` can use the engine directly to manage connections.
-            chunk_size = 50000
-            context.log.info(f"Starting to process data in chunks of {chunk_size} rows.")
-            chunk_iterator = pd.read_sql_query(query, cloud_sql_engine, chunksize=chunk_size)
+            # 2. Open a writable stream directly to the GCS blob
+            with blob.open('wb') as gcs_writer_stream:
+                chunk_iterator = pd.read_sql_query(query, cloud_sql_engine, chunksize=10000)
 
-            for i, chunk_df in enumerate(chunk_iterator):
-                context.log.info(f"Processing chunk {i + 1} with {len(chunk_df)} rows...")
-                
-                chunk_df['corpus_text'] = chunk_df['corpus_text'].fillna('')
-                total_rows += len(chunk_df)
+                for i, chunk_df in enumerate(chunk_iterator):
+                    context.log.info(f"Processing and streaming chunk {i + 1} with {len(chunk_df)} rows...")
+                    
+                    chunk_df['corpus_text'] = chunk_df['corpus_text'].fillna('')
+                    total_rows += len(chunk_df)
+                    table = pa.Table.from_pandas(chunk_df, preserve_index=False)
 
-                table = pa.Table.from_pandas(chunk_df, preserve_index=False)
-
-                if writer is None:
-                    writer = pq.ParquetWriter(output_buffer, table.schema)
-                
-                writer.write_table(table)
+                    # On the first chunk, initialize the ParquetWriter with the schema
+                    if writer is None:
+                        # 3. The writer's destination is now the GCS stream
+                        writer = pq.ParquetWriter(gcs_writer_stream, table.schema)
+                    
+                    # 4. Write the chunk directly to the GCS stream
+                    writer.write_table(table)
 
             if writer:
                 writer.close()
-                context.log.info(f"Finished processing {total_rows} rows.")
+                context.log.info(f"Finished processing and streaming {total_rows} rows.")
             else:
                 context.log.warning("No data found to process.")
                 return dg.MaterializeResult(metadata={"row_count": 0})
 
         except Exception as e:
-            context.log.error(f"Failed during chunked data processing: {e}")
+            context.log.error(f"Failed during streaming data processing: {e}")
             raise
-
-        parquet_bytes = output_buffer.getvalue().to_pybytes()
-        context.log.info(f"Total size of in-memory Parquet file: {len(parquet_bytes) / (1024*1024):.2f} MB")
-        
-        blob_name = f"embeddings_data/{context.run_id}.parquet"
-        blob = bucket.blob(blob_name)
-        context.log.info(f"Attempting to save file to gs://{bucket_name}/{blob_name}")
-        blob.upload_from_string(parquet_bytes, content_type='application/octet-stream')
-        context.log.info("Successfully saved corpus file to GCS.")
 
         return dg.MaterializeResult(
             metadata={
