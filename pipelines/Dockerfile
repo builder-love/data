@@ -56,10 +56,6 @@ RUN set -a && . ../.env && set +a && \
         dbt compile --threads 16 --target stg --target-path "target/stg"; \
     fi
 
-# debug: what is in the target directory?
-# RUN ls -lR /opt/dagster/app/dbt-pipelines/target/
-# end debug
-
 # After dbt compile is finished, remove the .env file so it's not copied to the final image.
 RUN rm ../.env
 
@@ -80,10 +76,6 @@ COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/pytho
 COPY --from=builder --chown=appuser:app /opt/dagster /opt/dagster
 # explicitly copy the generated dbt artifacts on top of the source code
 COPY --from=builder --chown=appuser:app /opt/dagster/app/dbt-pipelines/target /opt/dagster/app/dbt-pipelines/target
-
-# debug: what is in the target directory?   
-RUN ls -lR /opt/dagster/app/dbt-pipelines/target/
-# end debug
 
 EXPOSE 3000
 

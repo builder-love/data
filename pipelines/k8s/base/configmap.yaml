@@ -40,6 +40,15 @@ data:
                     memory: "1Gi"
                     cpu: "500m"
 
+          container_config:
+            resources:
+              requests:
+                memory: "4Gi"
+                cpu: "1"
+              limits:
+                memory: "8Gi"
+                cpu: "2"
+
     run_coordinator:
       module: dagster.core.run_coordinator
       class: QueuedRunCoordinator
