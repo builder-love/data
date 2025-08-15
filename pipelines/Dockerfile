@@ -56,6 +56,10 @@ RUN set -a && . ../.env && set +a && \
         dbt compile --threads 16 --target stg --target-path "target/stg"; \
     fi
 
+# debug: what is in the target directory?
+RUN ls -lR /opt/dagster/app/dbt-pipelines/target/
+# end debug
+
 # After dbt compile is finished, remove the .env file so it's not copied to the final image.
 RUN rm ../.env
 
