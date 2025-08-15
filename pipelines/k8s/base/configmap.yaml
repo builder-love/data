@@ -21,6 +21,7 @@ data:
           - bitbucket-api-secrets
         env_vars:
           - "cloud_sql_postgres_host=127.0.0.1"
+          - "DAGSTER_ENV=DAGSTER_ENV_PLACEHOLDER"
         run_k8s_config:
           job_spec_config:
             ttl_seconds_after_finished: 86400

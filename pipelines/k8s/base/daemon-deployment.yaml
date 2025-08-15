@@ -48,6 +48,8 @@ spec:
           value: "127.0.0.1"
         - name: DAGSTER_HOME
           value: "/opt/dagster/dagster_home"
+        - name: DAGSTER_ENV
+          value: "DAGSTER_ENV_PLACEHOLDER"
         # set the github api tokens
         - name: GITHUB_API_TREBOR
           valueFrom:
