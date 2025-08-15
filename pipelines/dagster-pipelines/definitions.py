@@ -36,8 +36,8 @@ from .assets import ( # Adjust module path if they are in different files
 # import assets from features.py
 from .features import (
     create_project_repos_description_features_asset,
-    create_project_repos_embeddings_asset,
-    create_project_repos_corpus_embeddings
+    create_project_repos_corpus_asset,
+    create_project_repos_corpus_embeddings_asset
 )
 # import assets from models.py
 from .models import (
@@ -129,8 +129,8 @@ common_asset_creators = {
     "project_repos_frontend_framework_files": create_project_repos_frontend_framework_files_asset,
     "project_repos_description_features": create_project_repos_description_features_asset,
     "project_repos_documentation_files": create_project_repos_documentation_files_asset,
-    "project_repos_embeddings": create_project_repos_embeddings_asset,
-    "project_repos_corpus_embeddings": create_project_repos_corpus_embeddings,
+    "project_repos_corpus": create_project_repos_corpus_asset,
+    "project_repos_corpus_embeddings": create_project_repos_corpus_embeddings_asset,
     "education_model_predictions": create_education_model_predictions_asset,
     "scaffold_model_predictions": create_scaffold_model_predictions_asset,
     "developer_tooling_model_predictions": create_developer_tooling_model_predictions_asset,
@@ -279,6 +279,10 @@ else: # Default to staging
 # The 'if all_dbt_assets' check handles the case where the manifest was not found.
 final_assets = prefixed_common_assets + ([all_dbt_assets] if all_dbt_assets else [])
 
+# Determine if a keyfile path is provided. This will be true locally and false in GKE.
+gcp_keyfile = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+gcs_resource_config = {"gcp_keyfile_path": gcp_keyfile} if gcp_keyfile else {}
+
 # Define a single, unified Definitions object
 defs = Definitions(
     assets=final_assets,
@@ -303,9 +307,7 @@ defs = Definitions(
         "dbt_stg_resource": dbt_stg_resource,
         "dbt_prod_resource": dbt_prod_resource,
         "electric_capital_ecosystems_repo": electric_capital_ecosystems_repo,
-        "gcs_storage_client_resource": gcs_storage_client_resource.configured({
-            "gcp_keyfile_path": os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-        }),
+        "gcs_storage_client_resource": gcs_storage_client_resource.configured(gcs_resource_config),
         "github_api": github_api_resource(),
     },
 )

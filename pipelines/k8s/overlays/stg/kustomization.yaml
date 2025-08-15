@@ -1,6 +1,7 @@
 # k8s/overlays/stg/kustomization.yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+namespace: dagster-stg 
 # Inherit all resources from the base
 resources:
 - ../../base
@@ -8,3 +9,4 @@ resources:
 patches:
 - path: webserver-patch.yaml
 - path: daemon-patch.yaml
+- path: run-launcher-patch.yaml

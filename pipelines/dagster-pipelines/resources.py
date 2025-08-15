@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from sqlalchemy import create_engine
-from dagster import resource, EnvVar, ConfigurableResource
+from dagster import resource, EnvVar, ConfigurableResource, Field, DagsterLogManager
 from dagster_dbt import DbtCliResource
 from google.cloud import storage
 from google.auth.exceptions import DefaultCredentialsError
@@ -94,28 +94,39 @@ def electric_capital_ecosystems_repo():
         "output_filepath": os.path.join(clone_dir, "crypto-ecosystems", "exports.jsonl")
     }
 
-# google cloud storage resource
 @resource(
     config_schema={
-        "gcp_keyfile_path": str
+        # Make the keyfile path optional
+        "gcp_keyfile_path": Field(
+            str,
+            is_required=False,
+            description="Path to a GCP service account key file. If not provided, will use default credentials."
+        )
     },
-    description="A GCS client that authenticates using a specific service account key file."
+    description="A GCS client that authenticates using a key file or default credentials."
 )
 def gcs_storage_client_resource(context):
-    keyfile_path = context.resource_config["gcp_keyfile_path"]
-    context.log.info(f"Authenticating GCS client using key file: {keyfile_path}")
+    keyfile_path = context.resource_config.get("gcp_keyfile_path")
 
     try:
-        storage_client = storage.Client.from_service_account_json(keyfile_path)
-        # Verify connection by listing buckets (optional but good practice)
-        storage_client.list_buckets(max_results=1) 
+        if keyfile_path:
+            # Local development path: Use the specified key file
+            context.log.info(f"Authenticating GCS client using key file: {keyfile_path}")
+            storage_client = storage.Client.from_service_account_json(keyfile_path)
+        else:
+            # GKE/Cloud Run/etc. path: Use Workload Identity or default credentials
+            context.log.info("gcp_keyfile_path not provided. Authenticating GCS client using default credentials.")
+            storage_client = storage.Client()
+
+        # Verify connection
+        storage_client.list_buckets(max_results=1)
         context.log.info("GCS client created and authenticated successfully.")
         return storage_client
     except FileNotFoundError:
         context.log.error(f"The specified GCP key file was not found at: {keyfile_path}")
         raise
     except exceptions.DefaultCredentialsError as e:
-        context.log.error(f"Credentials error with key file {keyfile_path}: {e}")
+        context.log.error(f"Credentials error. Ensure your GKE pod has Workload Identity configured or GOOGLE_APPLICATION_CREDENTIALS is set locally. Details: {e}")
         raise
 
 class github_api_resource(ConfigurableResource):

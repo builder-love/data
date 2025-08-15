@@ -578,27 +578,27 @@ def create_project_repos_description_features_asset(env_prefix: str):
     return _project_repos_description_features_env_specific
 
 
-# create corpus text and pass to akash container
+# create corpus text and pass to gcs bucket
 # factory function
-def create_project_repos_embeddings_asset(env_prefix: str):
+def create_project_repos_corpus_asset(env_prefix: str):
     """
-    Factory function to create an asset that generates boolean features
-    from repository descriptions and READMEs based on keyword matching.
-    The primary source is the latest_active_distinct_project_repos table.
+    Factory function to create an asset that generates corpus from repo files and loads to gcs bucket.
+    The primary sources are repo descriptions, readmes, doc site .md files, and package manager files.
     """
 
     @dg.asset(
         key_prefix=env_prefix,
-        name="project_repos_embeddings",
+        name="project_repos_corpus",
         required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "gcs_storage_client_resource"},
         group_name="feature_engineering",
-        description="Generates semantic embeddings from repository descriptions and READMEs.",
+        description="Generates corpus from repo files and loads to gcs bucket.",
         tags={"feature_engineering": "True"}
     )
-    def _project_repos_embeddings_env_specific(context: dg.OpExecutionContext) -> dg.MaterializeResult:
+    def _project_repos_corpus_env_specific(context: dg.OpExecutionContext) -> dg.MaterializeResult:
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config
         clean_schema = env_config["clean_schema"]
+        raw_schema = env_config["raw_schema"]
 
         # cloud storage info
         bucket_name = "bl-repo-corpus-public"
@@ -612,6 +612,8 @@ def create_project_repos_embeddings_asset(env_prefix: str):
         package_files_table = "latest_project_repos_package_files"
         is_fork_table = "latest_project_repos_is_fork"
         dominant_language_table = "latest_project_repos_dominant_language"
+        doc_site_table = "latest_project_repos_documentation_files"
+        framework_files_table = "latest_project_repos_framework_files"
 
         context.log.info(f"Process is running in {env_config['env']} environment.")
         context.log.info(f"Using '{active_repos_table}' as the base and joining descriptions and READMEs.")
@@ -629,7 +631,9 @@ def create_project_repos_embeddings_asset(env_prefix: str):
                         -- Use STRING_AGG to concatenate all non-null file contents for each repo,
                         -- separated by a space. This correctly builds the corpus.
                         STRING_AGG(p.file_content, ' ') as file_content,
-                        MAX(f.is_fork) as is_fork,
+                        STRING_AGG(ff.file_content, ' ') as framework_file_content,
+                        STRING_AGG(ds.file_content, ' ') as doc_site_file_content,
+                        BOOL_OR(f.is_fork) as is_fork,
                         MAX(l.dominant_language) as dominant_language
                     FROM {clean_schema}.{active_repos_table} AS a
                     LEFT JOIN {clean_schema}.{description_table} AS d ON a.repo = d.repo
@@ -637,6 +641,8 @@ def create_project_repos_embeddings_asset(env_prefix: str):
                     LEFT JOIN {clean_schema}.{package_files_table} AS p ON a.repo = p.repo
                     LEFT JOIN {clean_schema}.{is_fork_table} AS f ON a.repo = f.repo 
                     LEFT JOIN {clean_schema}.{dominant_language_table} AS l ON a.repo = l.repo
+                    LEFT JOIN {raw_schema}.{doc_site_table} AS ds ON a.repo = ds.repo
+                    LEFT JOIN {raw_schema}.{framework_files_table} AS ff ON a.repo = ff.repo
                     GROUP BY a.repo
                 )
                 select 
@@ -645,6 +651,8 @@ def create_project_repos_embeddings_asset(env_prefix: str):
                         description,
                         readme_content,
                         file_content,
+                        framework_file_content,
+                        doc_site_file_content,
                         CASE WHEN is_fork THEN 'this repo is a fork' END,
                         CASE WHEN dominant_language is not null THEN 'the dominant language of the repo is ' || dominant_language END
                     ) AS corpus_text
@@ -701,7 +709,7 @@ def create_project_repos_embeddings_asset(env_prefix: str):
             }
         )
 
-    return _project_repos_embeddings_env_specific
+    return _project_repos_corpus_env_specific
 
 
 
@@ -774,7 +782,7 @@ def store_embeddings_in_postgres(context: dg.OpExecutionContext, embeddings_dict
 
 
 # factory function to get embeddings from gcs bucket and store them in postgres vector column - table raw.repo_corpus_embeddings
-def create_project_repos_corpus_embeddings(env_prefix: str):
+def create_project_repos_corpus_embeddings_asset(env_prefix: str):
     """
     Factory function to create an asset that gets embeddings from gcs bucket and stores them in postgres vector column - table raw.repo_corpus_embeddings
     """
