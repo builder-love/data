@@ -11,6 +11,8 @@ import numpy as np
 import gc
 from google.cloud import storage
 import pickle
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 def aggregate_corpus_text(features_df: pd.DataFrame, context: dg.OpExecutionContext) -> pd.DataFrame:
     """
@@ -617,95 +619,96 @@ def create_project_repos_corpus_asset(env_prefix: str):
 
         context.log.info(f"Process is running in {env_config['env']} environment.")
         context.log.info(f"Using '{active_repos_table}' as the base and joining descriptions and READMEs.")
+        
+        # Define the query outside the main try block for clarity
+        query = text(f"""
+        WITH repo_data AS (
+            SELECT
+                a.repo,
+                MAX(a.data_timestamp) as data_timestamp,
+                MAX(d.description) as description,
+                MAX(r.readme_content) as readme_content,
+                -- Use STRING_AGG to concatenate all non-null file contents for each repo,
+                -- separated by a space. This correctly builds the corpus.
+                STRING_AGG(p.file_content, ' ') as file_content,
+                STRING_AGG(ff.file_content, ' ') as framework_file_content,
+                STRING_AGG(ds.file_content, ' ') as doc_site_file_content,
+                BOOL_OR(f.is_fork) as is_fork,
+                MAX(l.dominant_language) as dominant_language
+            FROM {clean_schema}.{active_repos_table} AS a
+            LEFT JOIN {clean_schema}.{description_table} AS d ON a.repo = d.repo
+            LEFT JOIN {clean_schema}.{readme_table} AS r ON a.repo = r.repo
+            LEFT JOIN {clean_schema}.{package_files_table} AS p ON a.repo = p.repo
+            LEFT JOIN {clean_schema}.{is_fork_table} AS f ON a.repo = f.repo 
+            LEFT JOIN {clean_schema}.{dominant_language_table} AS l ON a.repo = l.repo
+            LEFT JOIN {raw_schema}.{doc_site_table} AS ds ON a.repo = ds.repo
+            LEFT JOIN {raw_schema}.{framework_files_table} AS ff ON a.repo = ff.repo
+            GROUP BY a.repo
+        )
+        SELECT 
+            repo,
+            CONCAT_WS(' ',
+                description,
+                readme_content,
+                file_content,
+                framework_file_content,
+                doc_site_file_content,
+                CASE WHEN is_fork THEN 'this repo is a fork' END,
+                CASE WHEN dominant_language is not null THEN 'the dominant language of the repo is ' || dominant_language END
+            ) AS corpus_text
+        FROM repo_data
+        WHERE description is not null or readme_content is not null or file_content is not null
+        """)
 
-        # Read the input tables by joining descriptions, readmes, and other files to the active repos list
+        context.log.info("Starting to process data in chunks.")
+        
+        total_rows = 0
+        writer = None
+        output_buffer = pa.BufferOutputStream()
+
+        # CORRECTED: Removed the outer `try/except` and `with...connect` blocks as they were redundant.
+        # The main logic is now in a single, properly indented block.
         try:
-            with cloud_sql_engine.connect() as conn:
-                query = text(f"""
-                with repo_data as (
-                    SELECT
-                        a.repo,
-                        MAX(a.data_timestamp) as data_timestamp,
-                        MAX(d.description) as description,
-                        MAX(r.readme_content) as readme_content,
-                        -- Use STRING_AGG to concatenate all non-null file contents for each repo,
-                        -- separated by a space. This correctly builds the corpus.
-                        STRING_AGG(p.file_content, ' ') as file_content,
-                        STRING_AGG(ff.file_content, ' ') as framework_file_content,
-                        STRING_AGG(ds.file_content, ' ') as doc_site_file_content,
-                        BOOL_OR(f.is_fork) as is_fork,
-                        MAX(l.dominant_language) as dominant_language
-                    FROM {clean_schema}.{active_repos_table} AS a
-                    LEFT JOIN {clean_schema}.{description_table} AS d ON a.repo = d.repo
-                    LEFT JOIN {clean_schema}.{readme_table} AS r ON a.repo = r.repo
-                    LEFT JOIN {clean_schema}.{package_files_table} AS p ON a.repo = p.repo
-                    LEFT JOIN {clean_schema}.{is_fork_table} AS f ON a.repo = f.repo 
-                    LEFT JOIN {clean_schema}.{dominant_language_table} AS l ON a.repo = l.repo
-                    LEFT JOIN {raw_schema}.{doc_site_table} AS ds ON a.repo = ds.repo
-                    LEFT JOIN {raw_schema}.{framework_files_table} AS ff ON a.repo = ff.repo
-                    GROUP BY a.repo
-                )
-                select 
-                    repo,
-                    CONCAT_WS(' ',
-                        description,
-                        readme_content,
-                        file_content,
-                        framework_file_content,
-                        doc_site_file_content,
-                        CASE WHEN is_fork THEN 'this repo is a fork' END,
-                        CASE WHEN dominant_language is not null THEN 'the dominant language of the repo is ' || dominant_language END
-                    ) AS corpus_text
-                from repo_data
-                where description is not null or readme_content is not null or file_content is not null
-                """)
+            # `pd.read_sql_query` can use the engine directly to manage connections.
+            chunk_iterator = pd.read_sql_query(query, cloud_sql_engine, chunksize=10000)
 
-                corpus_df = pd.read_sql_query(query, conn)
-            context.log.info(f"Successfully read {len(corpus_df)} rows from '{active_repos_table}'.")
+            for i, chunk_df in enumerate(chunk_iterator):
+                context.log.info(f"Processing chunk {i + 1} with {len(chunk_df)} rows...")
+                
+                chunk_df['corpus_text'] = chunk_df['corpus_text'].fillna('')
+                total_rows += len(chunk_df)
+
+                table = pa.Table.from_pandas(chunk_df, preserve_index=False)
+
+                if writer is None:
+                    writer = pq.ParquetWriter(output_buffer, table.schema)
+                
+                writer.write_table(table)
+
+            if writer:
+                writer.close()
+                context.log.info(f"Finished processing {total_rows} rows.")
+            else:
+                context.log.warning("No data found to process.")
+                return dg.MaterializeResult(metadata={"row_count": 0})
+
         except Exception as e:
-            context.log.error(f"Failed to read and join tables: {e}")
+            context.log.error(f"Failed during chunked data processing: {e}")
             raise
 
-        if corpus_df.empty:
-            context.log.warning(f"No data found in {clean_schema}.{active_repos_table}. No features to generate.")
-            return dg.MaterializeResult(
-                metadata={
-                    "row_count": 0,
-                    "preview": dg.MetadataValue.md("Input table was empty. No features generated.")
-                }
-            )
-
-        # fill na values
-        corpus_df['corpus_text'] = corpus_df['corpus_text'].fillna('')
-
-        # Check the size of the final DataFrame before passing it on
-        corpus_df_size_bytes = corpus_df.memory_usage(deep=True).sum()
-        corpus_df_size_mb = corpus_df_size_bytes / (1024 * 1024)
+        parquet_bytes = output_buffer.getvalue().to_pybytes()
+        context.log.info(f"Total size of in-memory Parquet file: {len(parquet_bytes) / (1024*1024):.2f} MB")
         
-        context.log.info(f"Final aggregated corpus DataFrame in-memory size: {corpus_df_size_mb:.2f} MB")
-
-        blob_name = f"embeddings_data/{context.run_id}.parquet" # Ensure the extension is .parquet
-
-        # create the blob
+        blob_name = f"embeddings_data/{context.run_id}.parquet"
         blob = bucket.blob(blob_name)
-
-        context.log.info(f"Attempting to save DataFrame to gs://{bucket_name}/{blob_name}")
-
-        # Serialize the DataFrame to a Parquet object in memory.
-        # When called with no path, to_parquet() returns a bytes object.
-        parquet_bytes = corpus_df.to_parquet(engine='pyarrow')
-
-        # Upload the raw bytes to the blob.
-        # We use a generic content type for binary data.
+        context.log.info(f"Attempting to save file to gs://{bucket_name}/{blob_name}")
         blob.upload_from_string(parquet_bytes, content_type='application/octet-stream')
+        context.log.info("Successfully saved corpus file to GCS.")
 
-        context.log.info(f"Successfully saved corpus file to GCS.")
-
-        # You can return metadata or the GCS path for downstream assets
         return dg.MaterializeResult(
             metadata={
                 "gcs_path": dg.MetadataValue.text(f"gs://{bucket_name}/{blob_name}"),
-                "num_rows": dg.MetadataValue.int(len(corpus_df))
+                "num_rows": dg.MetadataValue.int(total_rows)
             }
         )
 
