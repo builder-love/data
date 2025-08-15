@@ -9,7 +9,7 @@ data:
       module: dagster_k8s
       class: K8sRunLauncher
       config:
-        namespace: NAMESPACE_PLACEHOLDER
+        job_namespace: NAMESPACE_PLACEHOLDER
         service_account_name: dagster-ksa
         instance_config_map: dagster-instance
         postgres_password_secret: cloudsql-db-credentials
