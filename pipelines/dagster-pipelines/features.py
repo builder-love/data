@@ -626,7 +626,7 @@ def create_project_repos_corpus_asset(env_prefix: str):
         context.log.info(f"Using '{active_repos_table}' as the base and joining descriptions and READMEs.")
         
         # Define the query outside the main try block for clarity
-        query = text(f"""
+        query = f"""
         WITH repo_data AS (
             SELECT
                 a.repo,
@@ -663,7 +663,7 @@ def create_project_repos_corpus_asset(env_prefix: str):
             ) AS corpus_text
         FROM repo_data
         WHERE description is not null or readme_content is not null or file_content is not null
-        """)
+        """
 
         context.log.info("Starting to process and stream data in chunks directly to GCS.")
         log_memory_usage("Before Query")
