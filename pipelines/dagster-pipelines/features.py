@@ -618,7 +618,7 @@ def create_project_repos_corpus_asset(env_prefix: str):
         context.log.info(f"Process is running in {env_config['env']} environment.")
         context.log.info(f"Using '{active_repos_table}' as the base and joining descriptions and READMEs.")
 
-        # Read the input tables by joining descriptions and readmes to the active repos list
+        # Read the input tables by joining descriptions, readmes, and other files to the active repos list
         try:
             with cloud_sql_engine.connect() as conn:
                 query = text(f"""
