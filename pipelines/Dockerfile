@@ -81,6 +81,9 @@ RUN wget https://ziglang.org/download/0.14.0/zig-linux-x86_64-0.14.0.tar.xz && \
 
 WORKDIR /opt/dagster/app
 
+# Point the Zig cache to a writable temporary directory
+ENV ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache
+
 USER appuser
 
 # Copy installed Python packages AND THE EXECUTABLES from the builder stage
