@@ -2891,14 +2891,14 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
                         if 'errors' in data:
                             context.log.warning(f"Status Code: {response.status_code}")
                             # Extract rate limit information from headers
-                            context.log.warning(" \n resource usage tracking:")
+                            context.log.info(" \n resource usage tracking:")
                             rate_limit_info = {
                                 'remaining': response.headers.get('x-ratelimit-remaining'),
                                 'used': response.headers.get('x-ratelimit-used'),
                                 'reset': response.headers.get('x-ratelimit-reset'),
                                 'retry_after': response.headers.get('retry-after')
                             }
-                            context.log.warning(f"Rate Limit Info: {rate_limit_info}\n")
+                            context.log.info(f"Rate Limit Info: {rate_limit_info}\n")
 
                             for error in data['errors']:
                                 if error['type'] == 'RATE_LIMITED':
@@ -2907,7 +2907,7 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
                                         delay = int(reset_at) - int(time.time()) + 1
                                         delay = max(1, delay)
                                         delay = min(delay, max_delay)
-                                        context.log.warning(f"Rate limited.  Waiting for {delay} seconds...")
+                                        context.log.info(f"Rate limited.  Waiting for {delay} seconds...")
                                         time.sleep(delay)
                                         continue  # Retry the entire batch
                                 else:
@@ -2923,7 +2923,7 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
                                     results[repo_url] = repo_data['isFork']
                                     processed_in_batch.add(repo_url)  # Mark as processed
                                 else:
-                                    context.log.info(f"repo_data is empty for repo: {repo_url}\n")
+                                    context.log.warning(f"repo_data is empty for repo: {repo_url}\n")
                         break
 
                     except requests.exceptions.RequestException as e:
@@ -3085,7 +3085,7 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
                     context.log.warning(f"Warning: Could not convert 'is_fork' to pandas nullable boolean type: {e}. Proceeding...")
 
             else:
-                context.log.warning("Warning: 'is_fork' column not found in results_df. Exiting.")
+                context.log.error("Warning: 'is_fork' column not found in results_df. Exiting.")
                 raise Exception("'is_fork' column not found in results_df. Exiting.")
 
             # add unix datetime column
