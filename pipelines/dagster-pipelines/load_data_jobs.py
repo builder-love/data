@@ -260,14 +260,15 @@ def create_update_crypto_ecosystems_repo_and_run_export_asset(env_prefix: str):
     @asset(
         key_prefix=env_prefix,
         name="update_crypto_ecosystems_repo_and_run_export",
-        description="Clones/updates the crypto-ecosystems repo and runs the export script.", 
-        required_resource_keys={"electric_capital_ecosystems_repo"}
+        description="Clones/updates the crypto-ecosystems repo, runs the export script, and uploads the result to GCS.", 
+        required_resource_keys={"electric_capital_ecosystems_repo", "gcs_storage_client_resource"}
     )
     def _update_crypto_ecosystems_repo_and_run_export(context):
         """
         Clones the repo if it doesn't exist, pulls updates if it does,
-        then runs './run.sh export exports.jsonl' inside the repo directory.
-        Outputs the full path to the generated exports.jsonl file.
+        runs './run.sh export exports.jsonl' inside the repo directory,
+        and uploads the generated exports.jsonl file to GCS.
+        Outputs the GCS path to the uploaded file.
         """
         # define the variables
         try:
@@ -317,7 +318,7 @@ def create_update_crypto_ecosystems_repo_and_run_export_asset(env_prefix: str):
             # Define paths
             script_path = os.path.join(clone_dir, "run.sh")
             # Assume output file is created in the root of the cloned repo
-            output_file_path = os.path.join(clone_dir, output_filename)
+            local_output_file_path = os.path.join(clone_dir, output_filename)
             export_command = [script_path, "export", output_filename]
 
             context.log.info(f"Running export script: {' '.join(export_command)} in {clone_dir}")
@@ -336,12 +337,30 @@ def create_update_crypto_ecosystems_repo_and_run_export_asset(env_prefix: str):
                 context.log.warning(f"Script stderr:\n{script_result.stderr}")
 
             # Verify output file exists
-            if not os.path.exists(output_file_path):
-                raise Failure(f"Export script ran successfully but output file not found at: {output_file_path}")
+            if not os.path.exists(local_output_file_path):
+                raise Failure(f"Export script ran successfully but output file not found at: {local_output_file_path}")
 
-            context.log.info(f"Generated export file: {output_file_path}")
+            context.log.info(f"Generated export file: {local_output_file_path}")
             context.log.info(f"Confirming resource output_filepath matches generated file path: {output_filepath}")
-            yield Output(output_file_path) # Output the full path
+            # --- GCS Upload Logic ---
+            bucket_name = "crypto-ecosystems-export"
+            # Use a consistent name for the latest export, or make it dynamic e.g., f"export-{context.run_id}.jsonl"
+            blob_name = "export.jsonl" 
+            
+            context.log.info(f"Uploading {local_output_file_path} to GCS bucket '{bucket_name}' as blob '{blob_name}'...")
+            
+            gcs_client = context.resources.gcs_storage_client_resource
+            bucket = gcs_client.bucket(bucket_name)
+            blob = bucket.blob(blob_name)
+            
+            # Upload the local file to GCS
+            blob.upload_from_filename(local_output_file_path)
+            
+            gcs_path = f"gs://{bucket_name}/{blob_name}"
+            context.log.info(f"Successfully uploaded file to {gcs_path}")
+
+            # Yield the GCS path as the output of this asset
+            yield Output(value=gcs_path, metadata={"gcs_path": gcs_path})
 
         except subprocess.CalledProcessError as e:
             context.log.error(f"Git or script command failed with exit code {e.returncode}")
