@@ -100,7 +100,7 @@ class CustomGCSResource(ConfigurableResource):
     default credentials (for GKE/Workload Identity).
     """
     gcp_keyfile_path: str | None = Field(
-        default=None,
+        default_value=None,
         description="Path to a GCP service account key file."
     )
 
