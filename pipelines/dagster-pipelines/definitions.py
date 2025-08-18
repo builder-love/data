@@ -1,7 +1,7 @@
 import os
 
 from dagster import Definitions, with_resources, AssetSelection, define_asset_job, JobDefinition, ScheduleDefinition, AssetKey, asset, OpExecutionContext
-from dagster_gcp.gcs import GCSPickleIOManager, GCSResource
+from dagster_gcp.gcs import GCSPickleIOManager
 
 # Import resources
 from .resources import (
@@ -315,7 +315,7 @@ defs = Definitions(
             gcs_bucket="bl-dagster-io-storage", # Bucket for storing intermediate outputs
             gcs_prefix=active_env_target, # A prefix within the bucket
             # Tell the IO manager to use the GCS client defined above.
-            gcs=gcs_storage_client_resource.configured(gcs_resource_config)
+            gcs_resource_key="gcs_storage_client_resource"
         ),
         "github_api": github_api_resource(),
     },

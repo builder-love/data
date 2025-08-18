@@ -93,7 +93,7 @@ def electric_capital_ecosystems_repo():
         "output_filepath": os.path.join(clone_dir, "crypto-ecosystems", "exports.jsonl")
     }
 
-class GCSResource(ConfigurableResource):
+class CustomGCSResource(ConfigurableResource):
     """
     A Dagster resource for connecting to Google Cloud Storage.
 
@@ -132,7 +132,7 @@ class GCSResource(ConfigurableResource):
         return self._storage_client
 
 # Instantiate the class to create the resource definition
-gcs_storage_client_resource = GCSResource.configured({})
+gcs_storage_client_resource = CustomGCSResource.configured({})
 
 
 class github_api_resource(ConfigurableResource):
