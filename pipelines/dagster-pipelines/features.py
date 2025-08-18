@@ -592,7 +592,7 @@ def create_project_repos_corpus_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="project_repos_corpus",
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "gcs_storage_client_resource"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "gcs"},
         group_name="feature_engineering",
         description="Generates corpus from repo files and loads to gcs bucket.",
         tags={"feature_engineering": "True"}
@@ -610,7 +610,7 @@ def create_project_repos_corpus_asset(env_prefix: str):
 
         # Cloud storage info
         bucket_name = "bl-repo-corpus-public"
-        gcs_client = context.resources.gcs_storage_client_resource
+        gcs_client = context.resources.gcs
         bucket = gcs_client.bucket(bucket_name)
 
         # Cloud sql info
@@ -797,14 +797,14 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="project_repos_corpus_embeddings",
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "gcs_storage_client_resource"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "gcs"},
         group_name="feature_engineering",
         description="Gets embeddings from gcs bucket and stores them in postgres vector column - table raw.repo_corpus_embeddings",
         tags={"feature_engineering": "True"}
     )
     def _project_repos_corpus_embeddings_env_specific(context: dg.OpExecutionContext) -> dg.MaterializeResult:
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
-        gcs_client = context.resources.gcs_storage_client_resource
+        gcs_client = context.resources.gcs
         env_config = context.resources.active_env_config
         gcs_bucket_name = "bl-repo-corpus-public"
         gcs_pickle_file_path = "embeddings_data/repo_embeddings_bge_m3.pkl"

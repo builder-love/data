@@ -319,7 +319,7 @@ def create_update_crypto_ecosystems_repo_and_run_export_asset(env_prefix: str):
             script_path = os.path.join(clone_dir, "run.sh")
             # Assume output file is created in the root of the cloned repo
             local_output_file_path = os.path.join(clone_dir, output_filename)
-            export_command = [script_path, "export -e Optimism", output_filename]
+            export_command = [script_path, "export", output_filename]
 
             context.log.info(f"Running export script: {' '.join(export_command)} in {clone_dir}")
 
