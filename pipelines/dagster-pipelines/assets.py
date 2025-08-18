@@ -2686,22 +2686,25 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="github_project_repos_is_fork",
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
         group_name="ingestion",
         tags={"github_api": "True"},  # Add the tag to the asset to let the runqueue coordinator know the asset uses the github api
     )
-    def _github_project_repos_is_fork_env_specific(context) -> dg.MaterializeResult:
+    def _github_project_repos_is_fork_env_specific(context, config: GithubAssetConfig) -> dg.MaterializeResult:
         # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config  
         raw_schema = env_config["raw_schema"]  
         clean_schema = env_config["clean_schema"] 
 
+        # Access resources from the context object
+        github_api = context.resources.github_api
+
         # tell the user what environment they are running in
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
         # get the github personal access token
-        gh_pat = os.environ.get("go_blockchain_ecosystem")
+        gh_pat = github_api.get_client(config.key_name)
 
         def get_non_github_repo_is_fork(repo_url, repo_source):
 
