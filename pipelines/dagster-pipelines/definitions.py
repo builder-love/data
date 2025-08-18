@@ -309,13 +309,13 @@ defs = Definitions(
         "dbt_stg_resource": dbt_stg_resource,
         "dbt_prod_resource": dbt_prod_resource,
         "electric_capital_ecosystems_repo": electric_capital_ecosystems_repo,
-        "gcs_storage_client_resource": gcs_storage_client_resource(**gcs_resource_config),
+        "gcs": gcs_storage_client_resource(**gcs_resource_config),
         # Define the IO manager for passing outputs between asset steps.
         "io_manager": GCSPickleIOManager(
             gcs_bucket="bl-dagster-io-storage", # Bucket for storing intermediate outputs
             gcs_prefix=active_env_target, # A prefix within the bucket
             # Tell the IO manager to use the GCS client defined above.
-            gcs_resource_key="gcs_storage_client_resource"
+            gcs_resource_key="gcs"
         ),
         "github_api": github_api_resource(),
     },

@@ -261,7 +261,7 @@ def create_update_crypto_ecosystems_repo_and_run_export_asset(env_prefix: str):
         key_prefix=env_prefix,
         name="update_crypto_ecosystems_repo_and_run_export",
         description="Clones/updates the crypto-ecosystems repo, runs the export script, and uploads the result to GCS.", 
-        required_resource_keys={"electric_capital_ecosystems_repo", "gcs_storage_client_resource"}
+        required_resource_keys={"electric_capital_ecosystems_repo", "gcs"}
     )
     def _update_crypto_ecosystems_repo_and_run_export(context):
         """
@@ -319,7 +319,7 @@ def create_update_crypto_ecosystems_repo_and_run_export_asset(env_prefix: str):
             script_path = os.path.join(clone_dir, "run.sh")
             # Assume output file is created in the root of the cloned repo
             local_output_file_path = os.path.join(clone_dir, output_filename)
-            export_command = [script_path, "export", output_filename]
+            export_command = [script_path, "export -e Optimism", output_filename]
 
             context.log.info(f"Running export script: {' '.join(export_command)} in {clone_dir}")
 
@@ -350,7 +350,7 @@ def create_update_crypto_ecosystems_repo_and_run_export_asset(env_prefix: str):
             context.log.info(f"Uploading {local_output_file_path} to GCS bucket '{bucket_name}' as blob '{blob_name}'...")
             
             # 1. Get the custom resource object
-            gcs_resource = context.resources.gcs_storage_client_resource
+            gcs_resource = context.resources.gcs
             # 2. Get the actual GCS client from the resource
             storage_client = gcs_resource.get_client()
             

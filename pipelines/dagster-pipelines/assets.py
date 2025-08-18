@@ -136,7 +136,7 @@ def get_crypto_ecosystems_project_json(context, gcs_path: str):
     and loads it into a pandas DataFrame.
     """
     # 1. Get the custom resource object
-    gcs_resource = context.resources.gcs_storage_client_resource
+    gcs_resource = context.resources.gcs
     # 2. Get the actual GCS client from the resource
     storage_client = gcs_resource.get_client()
 
@@ -206,7 +206,7 @@ def create_crypto_ecosystems_project_json_asset(env_prefix: str):
             )
         },
         # Updated resource keys: added GCS client, removed local repo config
-        required_resource_keys={"gcs_storage_client_resource", "cloud_sql_postgres_resource", "active_env_config"},
+        required_resource_keys={"gcs", "cloud_sql_postgres_resource", "active_env_config"},
         group_name="ingestion",
         description="This asset gets the project/repo list from the crypto ecosystems GCS file and loads it to a staging table.",
     )
