@@ -128,26 +128,45 @@ def contributor_node_id_swap(context, df_contributors: pd.DataFrame, cloud_sql_e
 
 
 
-# function to get the most recently retrieved local copy of crypto ecosystems export.jsonl
-def get_crypto_ecosystems_project_json(context):
+# This function now gets the export.jsonl file from GCS.
+def get_crypto_ecosystems_project_json(context, gcs_path: str):
+    """
+    Downloads the exports.jsonl file from a GCS path, processes it, 
+    and loads it into a pandas DataFrame.
+    """
+    # Get the GCS client from Dagster resources
+    gcs_client = context.resources.gcs_storage_client_resource
 
-    # use the dagster context variable from the calling function to get the local path to the cloned repo
-    output_filepath = context.resources.electric_capital_ecosystems_repo['output_filepath']
-
-    if not output_filepath:
-        raise ValueError("output_filepath is empty")
-    if not os.path.exists(output_filepath):
-        raise ValueError("output_filepath does not exist")
-
-    # read the exports.jsonl file
+    # Parse the GCS path to get the bucket and blob name
     try:
-        df = pd.read_json(output_filepath, lines=True)
+        parsed_path = urlparse(gcs_path)
+        bucket_name = parsed_path.netloc
+        blob_name = parsed_path.path.lstrip('/')
+    except Exception as e:
+        raise ValueError(f"Could not parse GCS path '{gcs_path}': {e}")
 
-        # check if the dataframe is empty
+    if not bucket_name or not blob_name:
+        raise ValueError(f"Invalid GCS path provided: {gcs_path}")
+
+    context.log.info(f"Downloading {blob_name} from GCS bucket {bucket_name}...")
+
+    try:
+        bucket = gcs_client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        
+        # Download the file contents as a string
+        jsonl_content = blob.download_as_text()
+
+        if not jsonl_content.strip():
+            raise ValueError("Downloaded file from GCS is empty.")
+
+        # Read the JSON Lines content from the string into a DataFrame
+        df = pd.read_json(io.StringIO(jsonl_content), lines=True)
+
         if df.empty:
-            raise ValueError("DataFrame is empty")
+            raise ValueError("DataFrame is empty after reading from GCS content.")
 
-        # rename the columns
+        # Rename columns for consistency
         df.rename(columns={
             "eco_name": "project_title",
             "branch": "sub_ecosystems",
@@ -155,64 +174,51 @@ def get_crypto_ecosystems_project_json(context):
             "tags": "tags"
         }, inplace=True)
 
-        # confirm the dataframe only has the columns we want
-        expected_cols = [
-            'project_title',
-            'sub_ecosystems',
-            'repo',
-            'tags'
-        ]
-
-        # Get the actual columns from the DataFrame
-        actual_cols = df.columns
-
-        # Convert both to sets for easy comparison (ignores order)
-        if set(expected_cols) != set(actual_cols):
+        # Confirm the DataFrame has the expected columns
+        expected_cols = ['project_title', 'sub_ecosystems', 'repo', 'tags']
+        if set(expected_cols) != set(df.columns):
             context.log.info(f"DataFrame columns: {df.columns}")
             context.log.info(f"Expected columns: {expected_cols}")
             raise ValueError("DataFrame columns are not as expected")
 
     except Exception as e:
-        raise ValueError(f"Error reading exports.jsonl file: {e}")
+        raise ValueError(f"Error processing file from GCS path {gcs_path}: {e}") from e
 
+    context.log.info("Successfully loaded and processed data from GCS.")
     return df
 
-# define the asset that gets the list of projects and associated repos from the local crypto ecosystems data file, exports.jsonl
-# to accomodate multiple environments, we will use a factory function
+# This asset now depends on the upstream asset's GCS path output.
 def create_crypto_ecosystems_project_json_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="crypto_ecosystems_project_json",
-        required_resource_keys={"electric_capital_ecosystems_repo", "cloud_sql_postgres_resource", "active_env_config"},
+        # Updated resource keys: added GCS client, removed local repo config
+        required_resource_keys={"gcs_storage_client_resource", "cloud_sql_postgres_resource", "active_env_config"},
         group_name="ingestion",
-        description="This asset gets the list of projects and associated repos from the local crypto ecosystems data file, exports.jsonl and loads to the crypto_ecosystems_raw_file_staging table.",
+        description="This asset gets the project/repo list from the crypto ecosystems GCS file and loads it to a staging table.",
     )
-    def _crypto_ecosystems_project_json_env_specific(context) -> dg.MaterializeResult:
+    # The argument name 'update_crypto_ecosystems_repo_and_run_export' creates a
+    # dependency on the upstream asset with that name. It receives the GCS path.
+    def _crypto_ecosystems_project_json_env_specific(context, update_crypto_ecosystems_repo_and_run_export: str) -> dg.MaterializeResult:
 
-        # get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config 
         raw_schema = env_config["raw_schema"]  
-        # tell the user what environment they are running in
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
-        # get the local path to the cloned repo
-        output_filepath = context.resources.electric_capital_ecosystems_repo['output_filepath']
+        # The GCS path is now passed directly from the upstream asset
+        gcs_file_path = update_crypto_ecosystems_repo_and_run_export
 
-        if not output_filepath:
-            raise ValueError("output_filepath is empty")
-        if not os.path.exists(output_filepath):
-            raise ValueError("output_filepath does not exist")
+        if not gcs_file_path:
+            raise ValueError("GCS file path from upstream asset is empty or None.")
 
-        # read the exports.jsonl file
         try:
-            df = get_crypto_ecosystems_project_json(context)
+            # Call the updated helper function with the GCS path
+            df = get_crypto_ecosystems_project_json(context, gcs_file_path)
 
-            # add unix datetime column
             df['data_timestamp'] = pd.Timestamp.now()
 
-            # here we truncate the existing table and append the new data
-            # we do this to preserve the index 
+            # Truncate the staging table and append the new data
             with cloud_sql_engine.connect() as conn:
                 context.log.info(f"Truncating {raw_schema}.crypto_ecosystems_raw_file_staging table")
                 conn.execute(sqlalchemy.text(f"TRUNCATE TABLE {raw_schema}.crypto_ecosystems_raw_file_staging;")) 
@@ -222,23 +228,17 @@ def create_crypto_ecosystems_project_json_asset(env_prefix: str):
             df.to_sql('crypto_ecosystems_raw_file_staging', cloud_sql_engine, if_exists='append', index=False, schema=raw_schema)
 
         except Exception as e:
-            raise ValueError(f"Error reading exports.jsonl file: {e}")
+            raise ValueError(f"Error processing GCS file and loading to database: {e}") from e
 
-        # capture asset metadata
+        # Capture asset metadata for the Dagster UI
         with cloud_sql_engine.connect() as conn:
-            preview_query = text(f"select count(*) from {raw_schema}.crypto_ecosystems_raw_file_staging")
-            result = conn.execute(preview_query)
-            # Fetch all rows into a list of tuples
-            row_count = result.fetchone()[0]
-
-            preview_query = text(f"select * from {raw_schema}.crypto_ecosystems_raw_file_staging limit 10")
-            result = conn.execute(preview_query)
-            result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+            row_count = conn.execute(text(f"select count(*) from {raw_schema}.crypto_ecosystems_raw_file_staging")).scalar_one()
+            preview_df = pd.read_sql(text(f"select * from {raw_schema}.crypto_ecosystems_raw_file_staging limit 10"), conn)
 
         return dg.MaterializeResult(
             metadata={
                 "row_count": dg.MetadataValue.int(row_count),
-                "preview": dg.MetadataValue.md(result_df.to_markdown(index=False)),
+                "preview": dg.MetadataValue.md(preview_df.to_markdown(index=False)),
                 "unique_project_count": dg.MetadataValue.int(df['project_title'].nunique()),
                 "unique_repo_count": dg.MetadataValue.int(df['repo'].nunique()),
             }
