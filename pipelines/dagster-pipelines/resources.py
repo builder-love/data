@@ -3,7 +3,8 @@ from sqlalchemy import create_engine
 from dagster import resource, EnvVar, ConfigurableResource, Field
 from pydantic import PrivateAttr
 from dagster_dbt import DbtCliResource
-from google.cloud import storage, exceptions
+from google.cloud import storage
+from google.auth import exceptions as auth_exceptions
 
 # define the cloud sql postgres resource
 @resource(
@@ -116,7 +117,7 @@ class CustomGCSResource(ConfigurableResource):
                 self._storage_client.list_buckets(max_results=1)
             except FileNotFoundError:
                 raise Exception(f"The specified GCP key file was not found at: {self.gcp_keyfile_path}")
-            except exceptions.DefaultCredentialsError as e:
+            except auth_exceptions.DefaultCredentialsError as e:
                 raise Exception(f"GCS credentials error. Ensure Workload Identity is configured or GOOGLE_APPLICATION_CREDENTIALS is set. Details: {e}")
 
         return self._storage_client

@@ -135,8 +135,10 @@ def get_crypto_ecosystems_project_json(context, gcs_path: str):
     Downloads the exports.jsonl file from a GCS path, processes it, 
     and loads it into a pandas DataFrame.
     """
-    # Get the GCS client from Dagster resources
-    gcs_client = context.resources.gcs_storage_client_resource
+    # 1. Get the custom resource object
+    gcs_resource = context.resources.gcs_storage_client_resource
+    # 2. Get the actual GCS client from the resource
+    storage_client = gcs_resource.get_client()
 
     # Parse the GCS path to get the bucket and blob name
     try:
@@ -152,7 +154,7 @@ def get_crypto_ecosystems_project_json(context, gcs_path: str):
     context.log.info(f"Downloading {blob_name} from GCS bucket {bucket_name}...")
 
     try:
-        bucket = gcs_client.bucket(bucket_name)
+        bucket = storage_client.bucket(bucket_name)
         blob = bucket.blob(blob_name)
         
         # Download the file contents as a string
