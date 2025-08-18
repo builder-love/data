@@ -345,7 +345,7 @@ def create_update_crypto_ecosystems_repo_and_run_export_asset(env_prefix: str):
             # --- GCS Upload Logic ---
             bucket_name = "crypto-ecosystems-export"
             # Use a consistent name for the latest export, or make it dynamic e.g., f"export-{context.run_id}.jsonl"
-            blob_name = "export.jsonl" 
+            blob_name = f"export-{context.run_id}.jsonl"  
             
             context.log.info(f"Uploading {local_output_file_path} to GCS bucket '{bucket_name}' as blob '{blob_name}'...")
             
