@@ -1,11 +1,10 @@
 import os
 from pathlib import Path
 from sqlalchemy import create_engine
-from dagster import resource, EnvVar, ConfigurableResource, Field, DagsterLogManager
+from dagster import resource, EnvVar, ConfigurableResource, Field, DagsterLogManager, PrivateAttr
 from dagster_dbt import DbtCliResource
-from google.cloud import storage
+from google.cloud import storage, exceptions
 from google.auth.exceptions import DefaultCredentialsError
-from google.cloud import exceptions
 
 # define the cloud sql postgres resource
 @resource(
@@ -94,40 +93,47 @@ def electric_capital_ecosystems_repo():
         "output_filepath": os.path.join(clone_dir, "crypto-ecosystems", "exports.jsonl")
     }
 
-@resource(
-    config_schema={
-        # Make the keyfile path optional
-        "gcp_keyfile_path": Field(
-            str,
-            is_required=False,
-            description="Path to a GCP service account key file. If not provided, will use default credentials."
-        )
-    },
-    description="A GCS client that authenticates using a key file or default credentials."
-)
-def gcs_storage_client_resource(context):
-    keyfile_path = context.resource_config.get("gcp_keyfile_path")
+class GCSResource(ConfigurableResource):
+    """
+    A Dagster resource for connecting to Google Cloud Storage.
 
-    try:
-        if keyfile_path:
-            # Local development path: Use the specified key file
-            context.log.info(f"Authenticating GCS client using key file: {keyfile_path}")
-            storage_client = storage.Client.from_service_account_json(keyfile_path)
-        else:
-            # GKE/Cloud Run/etc. path: Use Workload Identity or default credentials
-            context.log.info("gcp_keyfile_path not provided. Authenticating GCS client using default credentials.")
-            storage_client = storage.Client()
+    Handles authentication via a keyfile (for local development) or
+    default credentials (for GKE/Workload Identity).
+    """
+    gcp_keyfile_path: str | None = Field(
+        default=None,
+        description="Path to a GCP service account key file."
+    )
 
-        # Verify connection
-        storage_client.list_buckets(max_results=1)
-        context.log.info("GCS client created and authenticated successfully.")
-        return storage_client
-    except FileNotFoundError:
-        context.log.error(f"The specified GCP key file was not found at: {keyfile_path}")
-        raise
-    except exceptions.DefaultCredentialsError as e:
-        context.log.error(f"Credentials error. Ensure your GKE pod has Workload Identity configured or GOOGLE_APPLICATION_CREDENTIALS is set locally. Details: {e}")
-        raise
+    # Use a private attribute to cache the client instance
+    _storage_client: PrivateAttr[storage.Client] = PrivateAttr(default=None)
+
+    def get_client(self) -> storage.Client:
+        """
+        Returns an authenticated GCS client, initializing it on first use.
+        """
+        if self._storage_client is None:
+            try:
+                if self.gcp_keyfile_path:
+                    # Local development path
+                    self._storage_client = storage.Client.from_service_account_json(self.gcp_keyfile_path)
+                else:
+                    # GKE/Cloud Run path
+                    self._storage_client = storage.Client()
+
+                # Verify the connection by making a lightweight API call
+                self._storage_client.list_buckets(max_results=1)
+
+            except FileNotFoundError:
+                raise Exception(f"The specified GCP key file was not found at: {self.gcp_keyfile_path}")
+            except exceptions.DefaultCredentialsError as e:
+                raise Exception(f"GCS credentials error. Ensure Workload Identity is configured or GOOGLE_APPLICATION_CREDENTIALS is set. Details: {e}")
+
+        return self._storage_client
+
+# Instantiate the class to create the resource definition
+gcs_storage_client_resource = GCSResource.configured({})
+
 
 class github_api_resource(ConfigurableResource):
     """A resource for selecting from multiple tokens to access the github API."""
