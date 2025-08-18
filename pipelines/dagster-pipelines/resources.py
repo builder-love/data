@@ -1,10 +1,9 @@
 import os
-from pathlib import Path
 from sqlalchemy import create_engine
-from dagster import resource, EnvVar, ConfigurableResource, Field, DagsterLogManager, PrivateAttr
+from dagster import resource, EnvVar, ConfigurableResource, Field
+from pydantic import PrivateAttr
 from dagster_dbt import DbtCliResource
 from google.cloud import storage, exceptions
-from google.auth.exceptions import DefaultCredentialsError
 
 # define the cloud sql postgres resource
 @resource(
