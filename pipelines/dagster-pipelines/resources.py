@@ -94,18 +94,13 @@ def electric_capital_ecosystems_repo():
 
 class CustomGCSResource(ConfigurableResource):
     """
-    A Dagster resource for connecting to Google Cloud Storage.
-
-    Handles authentication via a keyfile (for local development) or
-    default credentials (for GKE/Workload Identity).
+    A custom Dagster resource for connecting to Google Cloud Storage.
+    Handles authentication via a keyfile or default credentials.
     """
-    gcp_keyfile_path: str | None = Field(
-        default_value=None,
-        description="Path to a GCP service account key file."
-    )
+    gcp_keyfile_path: str | None = None
+    """Path to a GCP service account key file. If not provided, will use default credentials."""
 
-    # Use a private attribute to cache the client instance
-    _storage_client: PrivateAttr[storage.Client] = PrivateAttr(default=None)
+    _storage_client: storage.Client | None = PrivateAttr(default=None)
 
     def get_client(self) -> storage.Client:
         """
@@ -114,15 +109,11 @@ class CustomGCSResource(ConfigurableResource):
         if self._storage_client is None:
             try:
                 if self.gcp_keyfile_path:
-                    # Local development path
                     self._storage_client = storage.Client.from_service_account_json(self.gcp_keyfile_path)
                 else:
-                    # GKE/Cloud Run path
                     self._storage_client = storage.Client()
-
-                # Verify the connection by making a lightweight API call
+                
                 self._storage_client.list_buckets(max_results=1)
-
             except FileNotFoundError:
                 raise Exception(f"The specified GCP key file was not found at: {self.gcp_keyfile_path}")
             except exceptions.DefaultCredentialsError as e:
@@ -130,8 +121,8 @@ class CustomGCSResource(ConfigurableResource):
 
         return self._storage_client
 
-# Instantiate the class to create the resource definition
-gcs_storage_client_resource = CustomGCSResource.configured({})
+# Instantiate the class with the new name to create the resource definition
+gcs_storage_client_resource = CustomGCSResource
 
 
 class github_api_resource(ConfigurableResource):
