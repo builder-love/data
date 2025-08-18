@@ -2708,7 +2708,7 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
 
         def get_non_github_repo_is_fork(repo_url, repo_source):
 
-            print(f"processing non-githubrepo: {repo_url}")
+            context.log.info(f"processing non-githubrepo: {repo_url}")
 
             # add a 1 second delay to avoid rate limiting
             # note: this is simplified solution but there are not many non-github repos
@@ -2723,7 +2723,7 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
                     if '.' in repo_slug:
                         repo_slug = repo_slug.split('.')[0]
                 except IndexError:
-                    print(f"Invalid Bitbucket URL format: {repo_url}")
+                    context.log.warning(f"Invalid Bitbucket URL format: {repo_url}")
                     return None
 
                 try:
@@ -2745,13 +2745,13 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
                     else:
                         return False
                 except requests.exceptions.RequestException as e:
-                    print(f"Error fetching data from Bitbucket API: {e}")
+                    context.log.warning(f"Error fetching data from Bitbucket API: {e}")
                     return None
                 except KeyError as e:
-                    print(f"Error: missing key in response.  Key: {e}")
+                    context.log.warning(f"Error: missing key in response.  Key: {e}")
                     return None
                 except Exception as e:
-                    print(f"An unexpected error has occurred: {e}")
+                    context.log.warning(f"An unexpected error has occurred: {e}")
                     return None
 
             elif repo_source == "gitlab":
@@ -2760,7 +2760,7 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
                     project_path = "/".join(parts[3:])
                     project_path_encoded = requests.utils.quote(project_path, safe='')
                 except IndexError:
-                    print(f"Invalid GitLab URL format: {repo_url}")
+                    context.log.warning(f"Invalid GitLab URL format: {repo_url}")
                     return {'repo': repo_url, 'watcher_count': None}
 
                 api_url = f"https://gitlab.com/api/v4/projects/{project_path_encoded}"  
@@ -2780,13 +2780,13 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
                         return False
 
                 except requests.exceptions.RequestException as e:
-                    print(f"Error fetching data from GitLab API: {e}")
+                    context.log.warning(f"Error fetching data from GitLab API: {e}")
                     return None
                 except KeyError as e:
-                    print(f"Error: missing key in response.  Key: {e}")
+                    context.log.warning(f"Error: missing key in response.  Key: {e}")
                     return None
                 except Exception as e:
-                    print(f"An unexpected error has occurred: {e}")
+                    context.log.warning(f"An unexpected error has occurred: {e}")
                     return None
             else:
                 return None
@@ -2862,26 +2862,26 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
                         if cpu_time_used >= cpu_time_limit and real_time_used < real_time_window:
                             extra_delay = (cpu_time_used - cpu_time_limit) / 2
                             extra_delay = max(1, extra_delay)
-                            print(f"CPU time limit reached. Delaying for {extra_delay:.2f} seconds.")
+                            context.log.info(f"CPU time limit reached. Delaying for {extra_delay:.2f} seconds.")
                             time.sleep(extra_delay)
-                            print(f"resetting cpu_time_used and real_time_used to 0")
+                            context.log.info(f"resetting cpu_time_used and real_time_used to 0")
                             cpu_time_used = 0
                             real_time_used = 0
                             start_time = time.time()
                         elif real_time_used >= real_time_window and cpu_time_used < cpu_time_limit:
-                            print(f"real time limit reached without CPU time limit reached. Resetting counts.")
+                            context.log.info(f"real time limit reached without CPU time limit reached. Resetting counts.")
                             cpu_time_used = 0
                             real_time_used = 0
                         elif real_time_used >= real_time_window and cpu_time_used >= cpu_time_limit:
-                            print(f"real time limit reached. CPU time limit reached. Resetting counts.")
+                            context.log.info(f"real time limit reached. CPU time limit reached. Resetting counts.")
                             cpu_time_used = 0
                             real_time_used = 0
                         elif real_time_used < real_time_window and cpu_time_used < cpu_time_limit:
-                            print('cpu time limit not reached. Continuing...')
+                            context.log.info('cpu time limit not reached. Continuing...')
 
                         response = requests.post(api_url, json={'query': query, 'variables': variables}, headers=headers)
                         time_since_start = time.time() - start_time
-                        print(f"time_since_start: {time_since_start:.2f} seconds")
+                        context.log.info(f"time_since_start: {time_since_start:.2f} seconds")
                         time.sleep(3)  # Consistent delay
 
                         # use raise for status to catch errors
@@ -2889,16 +2889,16 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
                         data = response.json()
 
                         if 'errors' in data:
-                            print(f"Status Code: {response.status_code}")
+                            context.log.warning(f"Status Code: {response.status_code}")
                             # Extract rate limit information from headers
-                            print(" \n resource usage tracking:")
+                            context.log.info(" \n resource usage tracking:")
                             rate_limit_info = {
                                 'remaining': response.headers.get('x-ratelimit-remaining'),
                                 'used': response.headers.get('x-ratelimit-used'),
                                 'reset': response.headers.get('x-ratelimit-reset'),
                                 'retry_after': response.headers.get('retry-after')
                             }
-                            print(f"Rate Limit Info: {rate_limit_info}\n")
+                            context.log.info(f"Rate Limit Info: {rate_limit_info}\n")
 
                             for error in data['errors']:
                                 if error['type'] == 'RATE_LIMITED':
@@ -2907,11 +2907,11 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
                                         delay = int(reset_at) - int(time.time()) + 1
                                         delay = max(1, delay)
                                         delay = min(delay, max_delay)
-                                        print(f"Rate limited.  Waiting for {delay} seconds...")
+                                        context.log.info(f"Rate limited.  Waiting for {delay} seconds...")
                                         time.sleep(delay)
                                         continue  # Retry the entire batch
                                 else:
-                                    print(f"GraphQL Error: {error}") #Print all the errors.
+                                    context.log.warning(f"GraphQL Error: {error}") #Print all the errors.
 
                         # write the url and isFork to the database
                         if 'data' in data:
@@ -2923,61 +2923,61 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
                                     results[repo_url] = repo_data['isFork']
                                     processed_in_batch.add(repo_url)  # Mark as processed
                                 else:
-                                    print(f"repo_data is empty for repo: {repo_url}\n")
+                                    context.log.warning(f"repo_data is empty for repo: {repo_url}\n")
                         break
 
                     except requests.exceptions.RequestException as e:
-                        print(f"there was a request exception on attempt: {attempt}\n")
-                        print(f"procesing batch: {batch}\n")
-                        print(f"Status Code: {response.status_code}")
+                        context.log.warning(f"there was a request exception on attempt: {attempt}\n")
+                        context.log.warning(f"procesing batch: {batch}\n")
+                        context.log.warning(f"Status Code: {response.status_code}")
                         # Extract rate limit information from headers
-                        print(" \n resource usage tracking:")
+                        context.log.warning(" \n resource usage tracking:")
                         rate_limit_info = {
                             'remaining': response.headers.get('x-ratelimit-remaining'),
                             'used': response.headers.get('x-ratelimit-used'),
                             'reset': response.headers.get('x-ratelimit-reset'),
                             'retry_after': response.headers.get('retry-after')
                         }
-                        print(f"Rate Limit Info: {rate_limit_info}\n")
+                        context.log.warning(f"Rate Limit Info: {rate_limit_info}\n")
 
-                        print(f"the error is: {e}\n")
+                        context.log.warning(f"the error is: {e}\n")
                         if attempt == max_retries - 1:
-                            print(f"Max retries reached or unrecoverable error for batch. Giving up.")
+                            context.log.warning(f"Max retries reached or unrecoverable error for batch. Giving up.")
                             break
                         # --- Rate Limit Handling (REST API style - for 403/429) ---
                         if isinstance(e, requests.exceptions.HTTPError):
                             if e.response.status_code in (502, 504):
                                 count_502_errors += 1
-                                print(f"This process has generated {count_502_errors} 502/504 errors in total.")
+                                context.log.warning(f"This process has generated {count_502_errors} 502/504 errors in total.")
                                 delay = 1
-                                print(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
+                                context.log.warning(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
                                 time.sleep(delay)
                                 continue
                             elif e.response.status_code in (403, 429):
                                 count_403_errors += 1
-                                print(f"This process has generated {count_403_errors} 403/429 errors in total.")
+                                context.log.warning(f"This process has generated {count_403_errors} 403/429 errors in total.")
                                 retry_after = response.headers.get('Retry-After')
                                 if retry_after:
                                     delay = int(retry_after)
-                                    print(f"Rate limited (REST - Retry-After). Waiting for {delay} seconds...")
+                                    context.log.warning(f"Rate limited (REST - Retry-After). Waiting for {delay} seconds...")
                                     time.sleep(delay)
                                     continue
                                 else:
                                     delay = 1 * (2 ** attempt) + random.uniform(0, 1)
-                                    print(f"Rate limited (REST - Exponential Backoff). Waiting for {delay:.2f} seconds...")
+                                    context.log.warning(f"Rate limited (REST - Exponential Backoff). Waiting for {delay:.2f} seconds...")
                                     time.sleep(delay)
                                     continue
                         else:
                             delay = 1 * (2 ** attempt) + random.uniform(0, 1)
-                            print(f"Request failed: {e}. Waiting for {delay:.2f} seconds...")
+                            context.log.warning(f"Request failed: {e}. Waiting for {delay:.2f} seconds...")
                             time.sleep(delay)
 
                     except KeyError as e:
-                        print(f"KeyError: {e}. Response: {data}")
+                        context.log.warning(f"KeyError: {e}. Response: {data}")
                         # Don't append here; handle errors at the end
                         break
                     except Exception as e:
-                        print(f"An unexpected error occurred: {e}")
+                        context.log.warning(f"An unexpected error occurred: {e}")
                         # Don't append here; handle errors at the end
                         break
 
@@ -2985,7 +2985,7 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
                 for repo_url in batch:
                     if repo_url not in processed_in_batch:
                         results[repo_url] = None
-                        print(f"adding repo to results after max retries, or was invalid url: {repo_url}")
+                        context.log.warning(f"adding repo to results after max retries, or was invalid url: {repo_url}")
 
                 end_time = time.time()
                 batch_time = end_time - start_time
@@ -2993,11 +2993,11 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
                 real_time_used += batch_time
                 batch_time_history.append(batch_time)
                 if batch_time_history and len(batch_time_history) > 10:
-                    print(f"average batch time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
-                print(f"batch {i} - {i + batch_size} completed. Total repos to process: {len(repo_urls)}")
-                print(f"time taken to process batch {i}: {batch_time:.2f} seconds")
-                print(f"Total CPU time used: {cpu_time_used:.2f} seconds")
-                print(f"Total real time used: {real_time_used:.2f} seconds")
+                    context.log.info(f"average batch time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
+                context.log.info(f"batch {i} - {i + batch_size} completed. Total repos to process: {len(repo_urls)}")
+                context.log.info(f"time taken to process batch {i}: {batch_time:.2f} seconds")
+                context.log.info(f"Total CPU time used: {cpu_time_used:.2f} seconds")
+                context.log.info(f"Total real time used: {real_time_used:.2f} seconds")
 
             return results, {
                 'count_403_errors': count_403_errors,
@@ -3016,7 +3016,7 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
         # Filter for GitHub URLs
         github_urls = repo_df[repo_df['repo_source'] == 'github']['repo'].tolist()
 
-        print(f"number of github urls: {len(github_urls)}")
+        context.log.info(f"number of github urls: {len(github_urls)}")
 
         # check if github_urls is not empty
         if github_urls:
@@ -3035,7 +3035,7 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
 
         # if non_github_urls is not empty, get watcher count
         if not non_github_results_df.empty:
-            print("found non-github repos. Getting repo isFork...")
+            context.log.info("found non-github repos. Getting repo isFork...")
             # apply distinct_repo_df['repo'] to get watcher count
             non_github_results_df['is_fork'] = non_github_results_df.apply(
                 lambda row: get_non_github_repo_is_fork(row['repo'], row['repo_source']), axis=1
@@ -3049,7 +3049,7 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
 
         # check if results_df is not empty
         if not results_df.empty:
-            print("Starting cleanup for 'is_fork' column...")
+            context.log.info("Starting cleanup for 'is_fork' column...")
             # Ensure the column exists before proceeding
             if 'is_fork' in results_df.columns:
                 # Define allowed boolean values (True and False)
@@ -3064,10 +3064,10 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
                 # Check if any invalid values were found
                 if mask_invalid.any():
                     num_invalid = mask_invalid.sum()
-                    print(f"Found {num_invalid} non-boolean/non-null values in 'is_fork' column. Converting to Null.")
+                    context.log.warning(f"Found {num_invalid} non-boolean/non-null values in 'is_fork' column. Converting to Null.")
                     # Log the actual invalid values found for debugging
                     invalid_values_found = results_df.loc[mask_invalid, 'is_fork'].unique()
-                    print(f"First 25 invalid values found: {invalid_values_found[:25]}")
+                    context.log.warning(f"First 25 invalid values found: {invalid_values_found[:25]}")
 
                     # Set invalid values to np.nan (which pandas handles as Null)
                     results_df.loc[mask_invalid, 'is_fork'] = np.nan
@@ -3079,13 +3079,13 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
                     # Although SQLAlchemy usually handles np.nan -> NULL correctly for boolean
                     results_df['is_fork'] = results_df['is_fork'].where(pd.notna(results_df['is_fork']), None)
                     results_df['is_fork'] = results_df['is_fork'].astype('boolean') # Use 'boolean' (Pandas NA) not 'bool'
-                    print("Successfully converted 'is_fork' column to pandas nullable boolean type.")
+                    context.log.info("Successfully converted 'is_fork' column to pandas nullable boolean type.")
                 except Exception as e:
                     # Log error if conversion fails, but might proceed if np.nan handling is okay
-                    print(f"Warning: Could not convert 'is_fork' to pandas nullable boolean type: {e}. Proceeding...")
+                    context.log.warning(f"Warning: Could not convert 'is_fork' to pandas nullable boolean type: {e}. Proceeding...")
 
             else:
-                print("Warning: 'is_fork' column not found in results_df. Exiting.")
+                context.log.error("Warning: 'is_fork' column not found in results_df. Exiting.")
                 raise Exception("'is_fork' column not found in results_df. Exiting.")
 
             # add unix datetime column
