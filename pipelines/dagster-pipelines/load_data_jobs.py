@@ -331,7 +331,7 @@ def create_update_crypto_ecosystems_repo_and_run_export_asset(env_prefix: str):
                 text=True             # Decode output as text
             )
             context.log.info(f"Export script completed successfully.")
-            context.log.debug(f"Script stdout:\n{script_result.stdout}")
+            context.log.info(f"Script stdout:\n{script_result.stdout}")
             if script_result.stderr:
                 context.log.warning(f"Script stderr:\n{script_result.stderr}")
 
