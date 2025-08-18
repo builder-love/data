@@ -65,7 +65,7 @@ FROM python:3.13-slim
 # Create a non-root user and group
 RUN groupadd --system app && useradd --system --gid app appuser
 
-# install git and zig
+# Install git for cloning the repo, and wget to download zig
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     wget \
@@ -73,11 +73,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Download and install a specific version of Zig
+# Download, install, and link Zig correctly
 RUN wget https://ziglang.org/download/0.14.0/zig-linux-x86_64-0.14.0.tar.xz && \
     tar -xf zig-linux-x86_64-0.14.0.tar.xz && \
-    mv zig-linux-x86_64-0.14.0/zig /usr/local/bin/ && \
-    rm -rf zig-linux-x86_64-0.14.0.tar.xz zig-linux-x86_64-0.14.0
+    # Move the entire directory
+    mv zig-linux-x86_64-0.14.0 /usr/local/lib/zig && \
+    # Create a symbolic link to the executable
+    ln -s /usr/local/lib/zig/zig /usr/local/bin/zig && \
+    # Clean up the downloaded archive
+    rm zig-linux-x86_64-0.14.0.tar.xz
 
 WORKDIR /opt/dagster/app
 

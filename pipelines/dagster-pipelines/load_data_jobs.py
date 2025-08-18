@@ -349,8 +349,13 @@ def create_update_crypto_ecosystems_repo_and_run_export_asset(env_prefix: str):
             
             context.log.info(f"Uploading {local_output_file_path} to GCS bucket '{bucket_name}' as blob '{blob_name}'...")
             
-            gcs_client = context.resources.gcs_storage_client_resource
-            bucket = gcs_client.bucket(bucket_name)
+            # 1. Get the custom resource object
+            gcs_resource = context.resources.gcs_storage_client_resource
+            # 2. Get the actual GCS client from the resource
+            storage_client = gcs_resource.get_client()
+            
+            # 3. Now use the actual client to interact with GCS
+            bucket = storage_client.bucket(bucket_name)
             blob = bucket.blob(blob_name)
             
             # Upload the local file to GCS
