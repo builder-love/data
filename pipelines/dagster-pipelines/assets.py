@@ -915,7 +915,7 @@ def create_github_project_repos_fork_count_asset(env_prefix: str):
 
         def get_non_github_repo_fork_count(repo_url, repo_source):
 
-            print(f"processing non-githubrepo: {repo_url}")
+            context.log.info(f"processing non-githubrepo: {repo_url}")
 
             # add a 1 second delay to avoid rate limiting
             # note: this is simplified solution but there are not many non-github repos
@@ -930,7 +930,7 @@ def create_github_project_repos_fork_count_asset(env_prefix: str):
                     if '.' in repo_slug:
                         repo_slug = repo_slug.split('.')[0]
                 except IndexError:
-                    print(f"Invalid Bitbucket URL format: {repo_url}")
+                    context.log.warning(f"Invalid Bitbucket URL format: {repo_url}")
                     return None
 
                 try:
@@ -951,13 +951,13 @@ def create_github_project_repos_fork_count_asset(env_prefix: str):
                     return forks_data['size']
 
                 except requests.exceptions.RequestException as e:
-                    print(f"Error fetching data from Bitbucket API: {e}")
+                    context.log.warning(f"Error fetching data from Bitbucket API: {e}")
                     return None
                 except KeyError as e:
-                    print(f"Error: missing key in response.  Key: {e}")
+                    context.log.warning(f"Error: missing key in response.  Key: {e}")
                     return None
                 except Exception as e:
-                    print(f"An unexpected error has occurred: {e}")
+                    context.log.warning(f"An unexpected error has occurred: {e}")
                     return None
 
             elif repo_source == "gitlab":
@@ -966,7 +966,7 @@ def create_github_project_repos_fork_count_asset(env_prefix: str):
                     project_path = "/".join(parts[3:])
                     project_path_encoded = requests.utils.quote(project_path, safe='')
                 except IndexError:
-                    print(f"Invalid GitLab URL format: {repo_url}")
+                    context.log.warning(f"Invalid GitLab URL format: {repo_url}")
                     return None
 
                 api_url = f"https://gitlab.com/api/v4/projects/{project_path_encoded}"  
@@ -978,13 +978,13 @@ def create_github_project_repos_fork_count_asset(env_prefix: str):
                     # return the fork count
                     return response.json()['forks_count']
                 except requests.exceptions.RequestException as e:
-                    print(f"Error fetching data from GitLab API: {e}")
+                    context.log.warning(f"Error fetching data from GitLab API: {e}")
                     return None
                 except KeyError as e:
-                    print(f"Error: missing key in response.  Key: {e}") 
+                    context.log.warning(f"Error: missing key in response.  Key: {e}") 
                     return None
                 except Exception as e:
-                    print(f"An unexpected error has occurred: {e}")
+                    context.log.warning(f"An unexpected error has occurred: {e}")
                     return None
             else:
                 return None
@@ -1016,7 +1016,7 @@ def create_github_project_repos_fork_count_asset(env_prefix: str):
             batch_time_history = []
 
             for i in range(0, len(repo_urls), batch_size):
-                print(f"processing batch: {i} - {i + batch_size}")
+                context.log.info(f"processing batch: {i} - {i + batch_size}")
                 # calculate the time it takes to process the batch
                 start_time = time.time()
                 batch = repo_urls[i:i + batch_size]
@@ -1031,7 +1031,7 @@ def create_github_project_repos_fork_count_asset(env_prefix: str):
                         owner = parts[-2]
                         name = parts[-1]
                     except IndexError:
-                        print(f"Invalid GitHub URL format: {repo_url}")
+                        context.log.warning(f"Invalid GitHub URL format: {repo_url}")
                         continue
 
                     query += f"$owner{j}: String!, $name{j}: String!,"  # Declare variables
@@ -1054,32 +1054,32 @@ def create_github_project_repos_fork_count_asset(env_prefix: str):
                 max_retries = 8
 
                 for attempt in range(max_retries):
-                    print(f"attempt: {attempt}")
+                    context.log.info(f"attempt: {attempt}")
                     
                     try:
                         if cpu_time_used >= cpu_time_limit and real_time_used < real_time_window:
                             extra_delay = (cpu_time_used - cpu_time_limit) / 2
                             extra_delay = max(1, extra_delay)
-                            print(f"CPU time limit reached. Delaying for {extra_delay:.2f} seconds.")
+                            context.log.info(f"CPU time limit reached. Delaying for {extra_delay:.2f} seconds.")
                             time.sleep(extra_delay)
-                            print(f"resetting cpu_time_used and real_time_used to 0")
+                            context.log.info(f"resetting cpu_time_used and real_time_used to 0")
                             cpu_time_used = 0
                             real_time_used = 0
                             start_time = time.time()
                         elif real_time_used >= real_time_window and cpu_time_used < cpu_time_limit:
-                            print(f"real time limit reached without CPU time limit reached. Resetting counts.")
+                            context.log.info(f"real time limit reached without CPU time limit reached. Resetting counts.")
                             cpu_time_used = 0
                             real_time_used = 0
                         elif real_time_used >= real_time_window and cpu_time_used >= cpu_time_limit:
-                            print(f"real time limit reached. CPU time limit reached. Resetting counts.")
+                            context.log.info(f"real time limit reached. CPU time limit reached. Resetting counts.")
                             cpu_time_used = 0
                             real_time_used = 0
                         elif real_time_used < real_time_window and cpu_time_used < cpu_time_limit:
-                            print('cpu time limit not reached. Continuing...')
+                            context.log.info('cpu time limit not reached. Continuing...')
 
                         response = requests.post(api_url, json={'query': query, 'variables': variables}, headers=headers)
                         time_since_start = time.time() - start_time
-                        print(f"time_since_start: {time_since_start:.2f} seconds")
+                        context.log.info(f"time_since_start: {time_since_start:.2f} seconds")
                         time.sleep(3)  # Consistent delay
 
                         # use raise for status to catch errors
@@ -1087,16 +1087,16 @@ def create_github_project_repos_fork_count_asset(env_prefix: str):
                         data = response.json()
 
                         if 'errors' in data:
-                            print(f"Status Code: {response.status_code}")
+                            context.log.info(f"Status Code: {response.status_code}")
                             # Extract rate limit information from headers
-                            print(" \n resource usage tracking:")
+                            context.log.info(" \n resource usage tracking:")
                             rate_limit_info = {
                                 'remaining': response.headers.get('x-ratelimit-remaining'),
                                 'used': response.headers.get('x-ratelimit-used'),
                                 'reset': response.headers.get('x-ratelimit-reset'),
                                 'retry_after': response.headers.get('retry-after')
                             }
-                            print(f"Rate Limit Info: {rate_limit_info}\n")
+                            context.log.info(f"Rate Limit Info: {rate_limit_info}\n")
 
                             for error in data['errors']:
                                 if error['type'] == 'RATE_LIMITED':
@@ -1105,11 +1105,11 @@ def create_github_project_repos_fork_count_asset(env_prefix: str):
                                         delay = int(reset_at) - int(time.time()) + 1
                                         delay = max(1, delay)
                                         delay = min(delay, max_delay)
-                                        print(f"Rate limited.  Waiting for {delay} seconds...")
+                                        context.log.warning(f"Rate limited.  Waiting for {delay} seconds...")
                                         time.sleep(delay)
                                         continue  # Retry the entire batch
                                 else:
-                                    print(f"GraphQL Error: {error}") #Print all the errors.
+                                    context.log.warning(f"GraphQL Error: {error}") #Print all the errors.
 
                         # write the url and fork count to the database
                         if 'data' in data:
@@ -1121,61 +1121,61 @@ def create_github_project_repos_fork_count_asset(env_prefix: str):
                                     results[repo_url] = repo_data['forkCount']
                                     processed_in_batch.add(repo_url)  # Mark as processed
                                 else:
-                                    print(f"repo_data is empty for repo: {repo_url}\n")
+                                    context.log.warning(f"repo_data is empty for repo: {repo_url}\n")
                         break
 
                     except requests.exceptions.RequestException as e:
-                        print(f"there was a request exception on attempt: {attempt}\n")
-                        print(f"procesing batch: {batch}\n")
-                        print(f"Status Code: {response.status_code}")
+                        context.log.warning(f"there was a request exception on attempt: {attempt}\n")
+                        context.log.warning(f"procesing batch: {batch}\n")
+                        context.log.warning(f"Status Code: {response.status_code}")
                         # Extract rate limit information from headers
-                        print(" \n resource usage tracking:")
+                        context.log.warning(" \n resource usage tracking:")
                         rate_limit_info = {
                             'remaining': response.headers.get('x-ratelimit-remaining'),
                             'used': response.headers.get('x-ratelimit-used'),
                             'reset': response.headers.get('x-ratelimit-reset'),
                             'retry_after': response.headers.get('retry-after')
                         }
-                        print(f"Rate Limit Info: {rate_limit_info}\n")
+                        context.log.warning(f"Rate Limit Info: {rate_limit_info}\n")
 
-                        print(f"the error is: {e}\n")
+                        context.log.warning(f"the error is: {e}\n")
                         if attempt == max_retries - 1:
-                            print(f"Max retries reached or unrecoverable error for batch. Giving up.")
+                            context.log.warning(f"Max retries reached or unrecoverable error for batch. Giving up.")
                             break
                         # --- Rate Limit Handling (REST API style - for 403/429) ---
                         if isinstance(e, requests.exceptions.HTTPError):
                             if e.response.status_code in (502, 504):
                                 count_502_errors += 1
-                                print(f"This process has generated {count_502_errors} 502/504 errors in total.")
+                                context.log.warning(f"This process has generated {count_502_errors} 502/504 errors in total.")
                                 delay = 1
-                                print(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
+                                context.log.warning(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
                                 time.sleep(delay)
                                 continue
                             elif e.response.status_code in (403, 429):
                                 count_403_errors += 1
-                                print(f"This process has generated {count_403_errors} 403/429 errors in total.")
+                                context.log.warning(f"This process has generated {count_403_errors} 403/429 errors in total.")
                                 retry_after = response.headers.get('Retry-After')
                                 if retry_after:
                                     delay = int(retry_after)
-                                    print(f"Rate limited (REST - Retry-After). Waiting for {delay} seconds...")
+                                    context.log.warning(f"Rate limited (REST - Retry-After). Waiting for {delay} seconds...")
                                     time.sleep(delay)
                                     continue
                                 else:
                                     delay = 1 * (2 ** attempt) + random.uniform(0, 1)
-                                    print(f"Rate limited (REST - Exponential Backoff). Waiting for {delay:.2f} seconds...")
+                                    context.log.warning(f"Rate limited (REST - Exponential Backoff). Waiting for {delay:.2f} seconds...")
                                     time.sleep(delay)
                                     continue
                         else:
                             delay = 1 * (2 ** attempt) + random.uniform(0, 1)
-                            print(f"Request failed: {e}. Waiting for {delay:.2f} seconds...")
+                            context.log.warning(f"Request failed: {e}. Waiting for {delay:.2f} seconds...")
                             time.sleep(delay)
 
                     except KeyError as e:
-                        print(f"KeyError: {e}. Response: {data}")
+                        context.log.warning(f"KeyError: {e}. Response: {data}")
                         # Don't append here; handle errors at the end
                         break
                     except Exception as e:
-                        print(f"An unexpected error occurred: {e}")
+                        context.log.warning(f"An unexpected error occurred: {e}")
                         # Don't append here; handle errors at the end
                         break
 
@@ -1183,7 +1183,7 @@ def create_github_project_repos_fork_count_asset(env_prefix: str):
                 for repo_url in batch:
                     if repo_url not in processed_in_batch:
                         results[repo_url] = None
-                        print(f"adding repo to results after max retries, or was invalid url: {repo_url}")
+                        context.log.warning(f"adding repo to results after max retries, or was invalid url: {repo_url}")
 
                 end_time = time.time()
                 batch_time = end_time - start_time
@@ -1191,11 +1191,11 @@ def create_github_project_repos_fork_count_asset(env_prefix: str):
                 real_time_used += batch_time
                 batch_time_history.append(batch_time)
                 if batch_time_history and len(batch_time_history) > 10:
-                    print(f"average batch time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
-                print(f"batch {i} - {i + batch_size} completed. Total repos to process: {len(repo_urls)}")
-                print(f"time taken to process batch {i}: {batch_time:.2f} seconds")
-                print(f"Total CPU time used: {cpu_time_used:.2f} seconds")
-                print(f"Total real time used: {real_time_used:.2f} seconds")
+                    context.log.info(f"average batch time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
+                context.log.info(f"batch {i} - {i + batch_size} completed. Total repos to process: {len(repo_urls)}")
+                context.log.info(f"time taken to process batch {i}: {batch_time:.2f} seconds")
+                context.log.info(f"Total CPU time used: {cpu_time_used:.2f} seconds")
+                context.log.info(f"Total real time used: {real_time_used:.2f} seconds")
 
             return results, {
                 'count_403_errors': count_403_errors,
@@ -1214,7 +1214,7 @@ def create_github_project_repos_fork_count_asset(env_prefix: str):
         # Filter for GitHub URLs
         github_urls = repo_df[repo_df['repo_source'] == 'github']['repo'].tolist()
 
-        print(f"number of github urls: {len(github_urls)}")
+        context.log.info(f"number of github urls: {len(github_urls)}")
 
         results = get_github_repo_fork_count(github_urls, gh_pat)
 
@@ -1229,7 +1229,7 @@ def create_github_project_repos_fork_count_asset(env_prefix: str):
 
         # if non_github_urls is not empty, get fork count
         if not non_github_results_df.empty:
-            print("found non-github repos. Getting repo fork count...")
+            context.log.info("found non-github repos. Getting repo fork count...")
             # apply distinct_repo_df['repo'] to get fork count
             non_github_results_df['fork_count'] = non_github_results_df.apply(
                 lambda row: get_non_github_repo_fork_count(row['repo'], row['repo_source']), axis=1
@@ -1296,7 +1296,7 @@ def create_github_project_repos_languages_asset(env_prefix: str):
 
         def get_non_github_repo_languages(repo_url, repo_source):
 
-            print(f"processing non-githubrepo: {repo_url}")
+            context.log.info(f"processing non-githubrepo: {repo_url}")
 
             # add a 0.25 second delay to avoid rate limiting
             # note: this is simplified solution but there are not many non-github repos
@@ -1311,7 +1311,7 @@ def create_github_project_repos_languages_asset(env_prefix: str):
                     if '.' in repo_slug:
                         repo_slug = repo_slug.split('.')[0]
                 except IndexError:
-                    print(f"Invalid Bitbucket URL format: {repo_url}")
+                    context.log.warning(f"Invalid Bitbucket URL format: {repo_url}")
                     return {'repo': repo_url, 'language_name': None, 'size': None, 'repo_languages_total_bytes': None}
 
                 try:
@@ -1329,13 +1329,13 @@ def create_github_project_repos_languages_asset(env_prefix: str):
                     return {'repo': repo_url, 'language_name': primary_language, 'size': None, 'repo_languages_total_bytes': None}
 
                 except requests.exceptions.RequestException as e:
-                    print(f"Error fetching data from Bitbucket API: {e}")
+                    context.log.warning(f"Error fetching data from Bitbucket API: {e}")
                     return {'repo': repo_url, 'language_name': None, 'size': None, 'repo_languages_total_bytes': None}
                 except KeyError as e:
-                    print(f"Error: missing key in response.  Key: {e}")
+                    context.log.warning(f"Error: missing key in response.  Key: {e}")
                     return {'repo': repo_url, 'language_name': None, 'size': None, 'repo_languages_total_bytes': None}
                 except Exception as e:
-                    print(f"An unexpected error has occurred: {e}")
+                    context.log.warning(f"An unexpected error has occurred: {e}")
                     return {'repo': repo_url, 'language_name': None, 'size': None, 'repo_languages_total_bytes': None}
 
             elif repo_source == "gitlab":
@@ -1344,7 +1344,7 @@ def create_github_project_repos_languages_asset(env_prefix: str):
                     project_path = "/".join(parts[3:])
                     project_path_encoded = requests.utils.quote(project_path, safe='')
                 except IndexError:
-                    print(f"Invalid GitLab URL format: {repo_url}")
+                    context.log.warning(f"Invalid GitLab URL format: {repo_url}")
                     return {'repo': repo_url, 'language_name': None, 'size': None, 'repo_languages_total_bytes': None}
 
                 api_url = f"https://gitlab.com/api/v4/projects/{project_path_encoded}"  
@@ -1378,13 +1378,13 @@ def create_github_project_repos_languages_asset(env_prefix: str):
                         return {'repo': repo_url, 'language_name': None, 'size': None, 'repo_languages_total_bytes': None}
                         
                 except requests.exceptions.RequestException as e:
-                    print(f"Error fetching data from GitLab API: {e}")
+                    context.log.warning(f"Error fetching data from GitLab API: {e}")
                     return {'repo': repo_url, 'language_name': None, 'size': None, 'repo_languages_total_bytes': None}
                 except KeyError as e:
-                    print(f"Error: missing key in response.  Key: {e}") 
+                    context.log.warning(f"Error: missing key in response.  Key: {e}") 
                     return {'repo': repo_url, 'language_name': None, 'size': None, 'repo_languages_total_bytes': None}
                 except Exception as e:
-                    print(f"An unexpected error has occurred: {e}")
+                    context.log.warning(f"An unexpected error has occurred: {e}")
                     return {'repo': repo_url, 'language_name': None, 'size': None, 'repo_languages_total_bytes': None}
             else:
                 return {'repo': repo_url, 'language_name': None, 'size': None, 'repo_languages_total_bytes': None}
@@ -1416,7 +1416,7 @@ def create_github_project_repos_languages_asset(env_prefix: str):
             batch_time_history = []
 
             for i in range(0, len(repo_urls), batch_size):
-                print(f"processing batch: {i} - {i + batch_size}")
+                context.log.info(f"processing batch: {i} - {i + batch_size}")
                 start_time = time.time()
                 batch = repo_urls[i:i + batch_size]
                 processed_in_batch = set()  # Track successfully processed repos *within this batch*
@@ -1430,7 +1430,7 @@ def create_github_project_repos_languages_asset(env_prefix: str):
                         owner = parts[-2]
                         name = parts[-1]
                     except IndexError:
-                        print(f"Invalid GitHub URL format: {repo_url}")
+                        context.log.warning(f"Invalid GitHub URL format: {repo_url}")
                         # No need to append here, handle at the end of the batch loop
                         continue
 
@@ -1462,47 +1462,47 @@ def create_github_project_repos_languages_asset(env_prefix: str):
                 max_retries = 8
 
                 for attempt in range(max_retries):
-                    print(f"attempt: {attempt}")
+                    context.log.info(f"attempt: {attempt}")
 
                     try:
                         if cpu_time_used >= cpu_time_limit and real_time_used < real_time_window:
                             extra_delay = (cpu_time_used - cpu_time_limit) / 2
                             extra_delay = max(1, extra_delay)
-                            print(f"CPU time limit reached. Delaying for {extra_delay:.2f} seconds.")
+                            context.log.info(f"CPU time limit reached. Delaying for {extra_delay:.2f} seconds.")
                             time.sleep(extra_delay)
-                            print(f"resetting cpu_time_used and real_time_used to 0")
+                            context.log.info(f"resetting cpu_time_used and real_time_used to 0")
                             cpu_time_used = 0
                             real_time_used = 0
                             start_time = time.time()
                         elif real_time_used >= real_time_window and cpu_time_used < cpu_time_limit:
-                            print(f"real time limit reached without CPU time limit reached. Resetting counts.")
+                            context.log.info(f"real time limit reached without CPU time limit reached. Resetting counts.")
                             cpu_time_used = 0
                             real_time_used = 0
                         elif real_time_used >= real_time_window and cpu_time_used >= cpu_time_limit:
-                            print(f"real time limit reached. CPU time limit reached. Resetting counts.")
+                            context.log.info(f"real time limit reached. CPU time limit reached. Resetting counts.")
                             cpu_time_used = 0
                             real_time_used = 0
                         elif real_time_used < real_time_window and cpu_time_used < cpu_time_limit:
-                            print('cpu time limit not reached. Continuing...')
+                            context.log.info('cpu time limit not reached. Continuing...')
 
                         response = requests.post(api_url, json={'query': query, 'variables': variables}, headers=headers)
                         time_since_start = time.time() - start_time
-                        print(f"time_since_start: {time_since_start:.2f} seconds")
+                        context.log.info(f"time_since_start: {time_since_start:.2f} seconds")
                         time.sleep(2.5)  # Consistent delay
 
                         response.raise_for_status()
                         data = response.json()
 
                         if 'errors' in data:
-                            print(f"Status Code: {response.status_code}")
-                            print(" \nresource usage tracking:")
+                            context.log.info(f"Status Code: {response.status_code}")
+                            context.log.info(" \nresource usage tracking:")
                             rate_limit_info = {
                                 'remaining': response.headers.get('x-ratelimit-remaining'),
                                 'used': response.headers.get('x-ratelimit-used'),
                                 'reset': response.headers.get('x-ratelimit-reset'),
                                 'retry_after': response.headers.get('retry-after')
                             }
-                            print(f"Rate Limit Info: {rate_limit_info}\n")
+                            context.log.info(f"Rate Limit Info: {rate_limit_info}\n")
 
                             for error in data['errors']:
                                 if error['type'] == 'RATE_LIMITED':
@@ -1511,12 +1511,12 @@ def create_github_project_repos_languages_asset(env_prefix: str):
                                         delay = int(reset_at) - int(time.time()) + 1
                                         delay = max(1, delay)
                                         delay = min(delay, max_delay)
-                                        print(f"Rate limited.  Waiting for {delay} seconds...")
+                                        context.log.warning(f"Rate limited.  Waiting for {delay} seconds...")
                                         time.sleep(delay)
                                         continue  # Retry the entire batch
 
                                     else:
-                                        print(f"GraphQL Error: {error}")  # Print all the errors.
+                                        context.log.warning(f"GraphQL Error: {error}")  # Print all the errors.
 
                         if 'data' in data:
                             for j, repo_url in enumerate(batch):
@@ -1539,64 +1539,64 @@ def create_github_project_repos_languages_asset(env_prefix: str):
                                     processed_in_batch.add(repo_url)  # Mark as processed
 
                                 else:
-                                    print(f"repo_data is empty for repo: {repo_url}\n")
+                                    context.log.warning(f"repo_data is empty for repo: {repo_url}\n")
                                     # Don't append here; handle missing data at the end
                         break  # Exit retry loop if successful
 
                     except requests.exceptions.RequestException as e:
                     # ... (Your existing exception handling - remains largely unchanged) ...
-                        print(f"there was a request exception on attempt: {attempt}\n")
-                        print(f"procesing batch: {batch}\n")
-                        print(f"Status Code: {response.status_code}")
+                        context.log.warning(f"there was a request exception on attempt: {attempt}\n")
+                        context.log.warning(f"procesing batch: {batch}\n")
+                        context.log.warning(f"Status Code: {response.status_code}")
                         # Extract rate limit information from headers
-                        print(" \nresource usage tracking:")
+                        context.log.warning(" \nresource usage tracking:")
                         rate_limit_info = {
                             'remaining': response.headers.get('x-ratelimit-remaining'),
                             'used': response.headers.get('x-ratelimit-used'),
                             'reset': response.headers.get('x-ratelimit-reset'),
                             'retry_after': response.headers.get('retry-after')
                         }
-                        print(f"Rate Limit Info: {rate_limit_info}\n")
+                        context.log.warning(f"Rate Limit Info: {rate_limit_info}\n")
 
-                        print(f"the error is: {e}\n")
+                        context.log.warning(f"the error is: {e}\n")
                         if attempt == max_retries - 1:
-                            print(f"Max retries reached or unrecoverable error for batch. Giving up.")
+                            context.log.warning(f"Max retries reached or unrecoverable error for batch. Giving up.")
                             # Don't append here; handle failures at the end
                             break
 
                         if isinstance(e, requests.exceptions.HTTPError):
                             if e.response.status_code in (502, 504):
                                 count_502_errors += 1
-                                print(f"This process has generated {count_502_errors} 502/504 errors in total.")
+                                context.log.warning(f"This process has generated {count_502_errors} 502/504 errors in total.")
                                 delay = 1
-                                print(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
+                                context.log.warning(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
                                 time.sleep(delay)
                                 continue
                             elif e.response.status_code in (403, 429):
                                 count_403_errors += 1
-                                print(f"This process has generated {count_403_errors} 403/429 errors in total.")
+                                context.log.warning(f"This process has generated {count_403_errors} 403/429 errors in total.")
                                 retry_after = response.headers.get('Retry-After')
                                 if retry_after:
                                     delay = int(retry_after)
-                                    print(f"Rate limited (REST - Retry-After). Waiting for {delay} seconds...")
+                                    context.log.warning(f"Rate limited (REST - Retry-After). Waiting for {delay} seconds...")
                                     time.sleep(delay)
                                     continue
                                 else:
                                     delay = 1 * (2 ** attempt) + random.uniform(0, 1)
-                                    print(f"Rate limited (REST - Exponential Backoff). Waiting for {delay:.2f} seconds...")
+                                    context.log.warning(f"Rate limited (REST - Exponential Backoff). Waiting for {delay:.2f} seconds...")
                                     time.sleep(delay)
                                     continue
                         else:
                             delay = 1 * (2 ** attempt) + random.uniform(0, 1)
-                            print(f"Request failed: {e}. Waiting for {delay:.2f} seconds...")
+                            context.log.warning(f"Request failed: {e}. Waiting for {delay:.2f} seconds...")
                             time.sleep(delay)
 
                     except KeyError as e:
-                        print(f"KeyError: {e}. Response: {data}")
+                        context.log.warning(f"KeyError: {e}. Response: {data}")
                         # Don't append here; handle errors at the end
                         break
                     except Exception as e:
-                        print(f"An unexpected error occurred: {e}")
+                        context.log.warning(f"An unexpected error occurred: {e}")
                         # Don't append here; handle errors at the end
                         break
 
@@ -1604,7 +1604,7 @@ def create_github_project_repos_languages_asset(env_prefix: str):
                 for repo_url in batch:
                     if repo_url not in processed_in_batch:
                         results.append({'repo': repo_url, 'languages_data': None, 'total_size': None})
-                        print(f"adding repo to results after max retries, or was invalid url: {repo_url}")
+                        context.log.warning(f"adding repo to results after max retries, or was invalid url: {repo_url}")
 
                 end_time = time.time()
                 batch_time = end_time - start_time
@@ -1612,11 +1612,11 @@ def create_github_project_repos_languages_asset(env_prefix: str):
                 real_time_used += batch_time
                 batch_time_history.append(batch_time)
                 if batch_time_history and len(batch_time_history) > 10:
-                    print(f"average batch time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
-                print(f"batch {i} - {i + batch_size} completed. Total repos to process: {len(repo_urls)}")
-                print(f"time taken to process batch {i}: {batch_time:.2f} seconds")
-                print(f"Total CPU time used: {cpu_time_used:.2f} seconds")
-                print(f"Total real time used: {real_time_used:.2f} seconds")
+                    context.log.info(f"average batch time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
+                context.log.info(f"batch {i} - {i + batch_size} completed. Total repos to process: {len(repo_urls)}")
+                context.log.info(f"time taken to process batch {i}: {batch_time:.2f} seconds")
+                context.log.info(f"Total CPU time used: {cpu_time_used:.2f} seconds")
+                context.log.info(f"Total real time used: {real_time_used:.2f} seconds")
 
             return results, {"count_403_errors": count_403_errors, "count_502_errors": count_502_errors}
 
@@ -1632,7 +1632,7 @@ def create_github_project_repos_languages_asset(env_prefix: str):
         # Filter for GitHub URLs
         github_urls = repo_df[repo_df['repo_source'] == 'github']['repo'].tolist()
 
-        print(f"number of github urls: {len(github_urls)}")
+        context.log.info(f"number of github urls: {len(github_urls)}")
 
         results = get_github_repo_languages(github_urls, gh_pat)
 
@@ -1659,7 +1659,7 @@ def create_github_project_repos_languages_asset(env_prefix: str):
                         else:
                             data.append((repo_url, None, None, repo_languages_total_bytes))
                 else:
-                    print(f"languages_list is empty for repo: {repo_url}")
+                    context.log.warning(f"languages_list is empty for repo: {repo_url}")
                     data.append((repo_url, None, None, repo_languages_total_bytes))
             return data
 
@@ -1672,15 +1672,15 @@ def create_github_project_repos_languages_asset(env_prefix: str):
             unpacked_df = pd.DataFrame(new_rows.tolist(), columns=['repo', 'language_name', 'size', 'repo_languages_total_bytes'])
 
             # print column names
-            print("unpacked_df column names:")
-            print(unpacked_df.columns)
+            context.log.info("unpacked_df column names:")
+            context.log.info(unpacked_df.columns)
 
         # now get non-github repos urls
         non_github_results_df = repo_df[repo_df['repo_source'] != 'github']
 
         # if non_github_urls is not empty, get language data
         if not non_github_results_df.empty:
-            print("found non-github repos. Getting repo language data...")
+            context.log.info("found non-github repos. Getting repo language data...")
             # Use list comprehension to get data for each non-github repo
             language_data = [
                 get_non_github_repo_languages(row['repo'], row['repo_source'])
@@ -1691,8 +1691,8 @@ def create_github_project_repos_languages_asset(env_prefix: str):
             non_github_results_df = pd.DataFrame(language_data)
 
             # print column names
-            print("non_github_results_df column names:")
-            print(non_github_results_df.columns)
+            context.log.info("non_github_results_df column names:")
+            context.log.info(non_github_results_df.columns)
 
         # append non_github_urls to unpacked_df
         if not unpacked_df.empty and not non_github_results_df.empty:
@@ -1755,7 +1755,7 @@ def create_github_project_repos_languages_asset(env_prefix: str):
                 }
 
         except Exception as e:
-            print(f"error: {e}")
+            context.log.warning(f"error: {e}")
 
         return dg.MaterializeResult(
             metadata={
@@ -1797,7 +1797,7 @@ def create_github_project_repos_commits_asset(env_prefix: str):
 
         def get_non_github_repo_commits(repo_url, repo_source):
 
-            print(f"processing non-githubrepo: {repo_url}")
+            context.log.info(f"processing non-githubrepo: {repo_url}")
 
             # add a 0.25 second delay to avoid rate limiting
             # note: this is simplified solution but there are not many non-github repos
@@ -1812,7 +1812,7 @@ def create_github_project_repos_commits_asset(env_prefix: str):
                     if '.' in repo_slug:
                         repo_slug = repo_slug.split('.')[0]
                 except IndexError:
-                    print(f"Invalid Bitbucket URL format: {repo_url}")
+                    context.log.warning(f"Invalid Bitbucket URL format: {repo_url}")
                     return {'repo': repo_url, 'commit_count': None}
 
                 try:
@@ -1839,20 +1839,20 @@ def create_github_project_repos_commits_asset(env_prefix: str):
                             commit_count += len(data.get("values", []))
                             commits_url = data.get("next")  # Get the next page URL
                         else:
-                            print(f"Error: {response.status_code}")
+                            context.log.warning(f"Error: {response.status_code}")
                             break  # Exit the loop on error
 
                     # Get the commit count from the 'size' field
                     return {'repo': repo_url, 'commit_count': commit_count}
 
                 except requests.exceptions.RequestException as e:
-                    print(f"Error fetching data from Bitbucket API: {e}")
+                    context.log.warning(f"Error fetching data from Bitbucket API: {e}")
                     return {'repo': repo_url, 'commit_count': None}
                 except KeyError as e:
-                    print(f"Error: missing key in response.  Key: {e}")
+                    context.log.warning(f"Error: missing key in response.  Key: {e}")
                     return {'repo': repo_url, 'commit_count': None}
                 except Exception as e:
-                    print(f"An unexpected error has occurred: {e}")
+                    context.log.warning(f"An unexpected error has occurred: {e}")
                     return {'repo': repo_url, 'commit_count': None}
 
             elif repo_source == "gitlab":
@@ -1861,7 +1861,7 @@ def create_github_project_repos_commits_asset(env_prefix: str):
                     project_path = "/".join(parts[3:])
                     project_path_encoded = requests.utils.quote(project_path, safe='')
                 except IndexError:
-                    print(f"Invalid GitLab URL format: {repo_url}")
+                    context.log.warning(f"Invalid GitLab URL format: {repo_url}")
                     return {'repo': repo_url, 'commit_count': None}
 
                 api_url = f"https://gitlab.com/api/v4/projects/{project_path_encoded}"  
@@ -1894,10 +1894,10 @@ def create_github_project_repos_commits_asset(env_prefix: str):
                                 else:
                                     commits_url = None
                             else:
-                                print(f"Error: {response.status_code}")
+                                context.log.warning(f"Error: {response.status_code}")
                                 break
                         except requests.exceptions.RequestException as e:
-                            print(f"Error fetching data from GitLab API: {e}")
+                            context.log.warning(f"Error fetching data from GitLab API: {e}")
                             break
                     
                     # return the commit count data
@@ -1907,13 +1907,13 @@ def create_github_project_repos_commits_asset(env_prefix: str):
                         return {'repo': repo_url, 'commit_count': None}
                         
                 except requests.exceptions.RequestException as e:
-                    print(f"Error fetching data from GitLab API: {e}")
+                    context.log.warning(f"Error fetching data from GitLab API: {e}")
                     return {'repo': repo_url, 'commit_count': None}
                 except KeyError as e:
-                    print(f"Error: missing key in response.  Key: {e}") 
+                    context.log.warning(f"Error: missing key in response.  Key: {e}") 
                     return {'repo': repo_url, 'commit_count': None}
                 except Exception as e:
-                    print(f"An unexpected error has occurred: {e}")
+                    context.log.warning(f"An unexpected error has occurred: {e}")
                     return {'repo': repo_url, 'commit_count': None}
             else:
                 return {'repo': repo_url, 'commit_count': None}
@@ -1945,7 +1945,7 @@ def create_github_project_repos_commits_asset(env_prefix: str):
             batch_time_history = []
 
             for i in range(0, len(repo_urls), batch_size):
-                print(f"processing batch: {i} - {i + batch_size}")
+                context.log.info(f"processing batch: {i} - {i + batch_size}")
                 start_time = time.time()
                 batch = repo_urls[i:i + batch_size]
                 processed_in_batch = set()  # Track successfully processed repos *within this batch*
@@ -1959,7 +1959,7 @@ def create_github_project_repos_commits_asset(env_prefix: str):
                         owner = parts[-2]
                         name = parts[-1]
                     except IndexError:
-                        print(f"Invalid GitHub URL format: {repo_url}")
+                        context.log.warning(f"Invalid GitHub URL format: {repo_url}")
                         # No need to append here, handle at the end of the batch loop
                         continue
 
@@ -1990,53 +1990,48 @@ def create_github_project_repos_commits_asset(env_prefix: str):
                 max_retries = 8
 
                 for attempt in range(max_retries):
-                    print(f"attempt: {attempt}")
+                    context.log.info(f"attempt: {attempt}")
 
                     try:
                         if cpu_time_used >= cpu_time_limit and real_time_used < real_time_window:
                             extra_delay = (cpu_time_used - cpu_time_limit) / 2
                             extra_delay = max(1, extra_delay)
-                            print(f"CPU time limit reached. Delaying for {extra_delay:.2f} seconds.")
+                            context.log.info(f"CPU time limit reached. Delaying for {extra_delay:.2f} seconds.")
                             time.sleep(extra_delay)
-                            print(f"resetting cpu_time_used and real_time_used to 0")
+                            context.log.info(f"resetting cpu_time_used and real_time_used to 0")
                             cpu_time_used = 0
                             real_time_used = 0
                             start_time = time.time()
                         elif real_time_used >= real_time_window and cpu_time_used < cpu_time_limit:
-                            print(f"real time limit reached without CPU time limit reached. Resetting counts.")
+                            context.log.info(f"real time limit reached without CPU time limit reached. Resetting counts.")
                             cpu_time_used = 0
                             real_time_used = 0
                         elif real_time_used >= real_time_window and cpu_time_used >= cpu_time_limit:
-                            print(f"real time limit reached. CPU time limit reached. Resetting counts.")
+                            context.log.info(f"real time limit reached. CPU time limit reached. Resetting counts.")
                             cpu_time_used = 0
                             real_time_used = 0
                         elif real_time_used < real_time_window and cpu_time_used < cpu_time_limit:
-                            print('cpu time limit not reached. Continuing...')
+                            context.log.info('cpu time limit not reached. Continuing...')
 
                         response = requests.post(api_url, json={'query': query, 'variables': variables}, headers=headers)
-                        # # Calculate the size of the headers
-                        # header_size = len(str(response.headers).encode('utf-8'))
-                        # print(f"Response Header Size: {header_size} bytes")
-                        # print("Response Headers:")
-                        # for key, value in response.headers.items():
-                        #     print(f"{key}: {value}")
+
                         time_since_start = time.time() - start_time
-                        print(f"time_since_start: {time_since_start:.2f} seconds")
+                        context.log.info(f"time_since_start: {time_since_start:.2f} seconds")
                         time.sleep(1.7)  # Consistent delay
 
                         response.raise_for_status()
                         data = response.json()
 
                         if 'errors' in data:
-                            print(f"Status Code: {response.status_code}")
-                            print(" \nresource usage tracking:")
+                            context.log.info(f"Status Code: {response.status_code}")
+                            context.log.info(" \nresource usage tracking:")
                             rate_limit_info = {
                                 'remaining': response.headers.get('x-ratelimit-remaining'),
                                 'used': response.headers.get('x-ratelimit-used'),
                                 'reset': response.headers.get('x-ratelimit-reset'),
                                 'retry_after': response.headers.get('retry-after')
                             }
-                            print(f"Rate Limit Info: {rate_limit_info}\n")
+                            context.log.info(f"Rate Limit Info: {rate_limit_info}\n")
 
                             for error in data['errors']:
                                 if error['type'] == 'RATE_LIMITED':
@@ -2045,12 +2040,12 @@ def create_github_project_repos_commits_asset(env_prefix: str):
                                         delay = int(reset_at) - int(time.time()) + 1
                                         delay = max(1, delay)
                                         delay = min(delay, max_delay)
-                                        print(f"Rate limited.  Waiting for {delay} seconds...")
+                                        context.log.info(f"Rate limited.  Waiting for {delay} seconds...")
                                         time.sleep(delay)
                                         continue  # Retry the entire batch
 
                                     else:
-                                        print(f"GraphQL Error: {error}")  # Print all the errors.
+                                        context.log.info(f"GraphQL Error: {error}")  # Print all the errors.
 
                         if 'data' in data:
                             for j, repo_url in enumerate(batch):
@@ -2069,58 +2064,58 @@ def create_github_project_repos_commits_asset(env_prefix: str):
                         break  # Exit retry loop if successful
 
                     except requests.exceptions.RequestException as e:
-                        print(f"there was a request exception on attempt: {attempt}\n")
-                        print(f"procesing batch: {batch}\n")
-                        print(f"Status Code: {response.status_code}")
+                        context.log.warning(f"there was a request exception on attempt: {attempt}\n")
+                        context.log.warning(f"procesing batch: {batch}\n")
+                        context.log.warning(f"Status Code: {response.status_code}")
                         # Extract rate limit information from headers
-                        print(" \nresource usage tracking:")
+                        context.log.warning(" \nresource usage tracking:")
                         rate_limit_info = {
                             'remaining': response.headers.get('x-ratelimit-remaining'),
                             'used': response.headers.get('x-ratelimit-used'),
                             'reset': response.headers.get('x-ratelimit-reset'),
                             'retry_after': response.headers.get('retry-after')
                         }
-                        print(f"Rate Limit Info: {rate_limit_info}\n")
+                        context.log.warning(f"Rate Limit Info: {rate_limit_info}\n")
 
-                        print(f"the error is: {e}\n")
+                        context.log.warning(f"the error is: {e}\n")
                         if attempt == max_retries - 1:
-                            print(f"Max retries reached or unrecoverable error for batch. Giving up.")
+                            context.log.warning(f"Max retries reached or unrecoverable error for batch. Giving up.")
                             # Don't append here; handle failures at the end
                             break
 
                         if isinstance(e, requests.exceptions.HTTPError):
                             if e.response.status_code in (502, 504):
                                 count_502_errors += 1
-                                print(f"This process has generated {count_502_errors} 502/504 errors in total.")
+                                context.log.warning(f"This process has generated {count_502_errors} 502/504 errors in total.")
                                 delay = 1
-                                print(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
+                                context.log.warning(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
                                 time.sleep(delay)
                                 continue
                             elif e.response.status_code in (403, 429):
                                 count_403_errors += 1
-                                print(f"This process has generated {count_403_errors} 403/429 errors in total.")
+                                context.log.warning(f"This process has generated {count_403_errors} 403/429 errors in total.")
                                 retry_after = response.headers.get('Retry-After')
                                 if retry_after:
                                     delay = int(retry_after)
-                                    print(f"Rate limited (REST - Retry-After). Waiting for {delay} seconds...")
+                                    context.log.warning(f"Rate limited (REST - Retry-After). Waiting for {delay} seconds...")
                                     time.sleep(delay)
                                     continue
                                 else:
                                     delay = 1 * (2 ** attempt) + random.uniform(0, 1)
-                                    print(f"Rate limited (REST - Exponential Backoff). Waiting for {delay:.2f} seconds...")
+                                    context.log.warning(f"Rate limited (REST - Exponential Backoff). Waiting for {delay:.2f} seconds...")
                                     time.sleep(delay)
                                     continue
                         else:
                             delay = 1 * (2 ** attempt) + random.uniform(0, 1)
-                            print(f"Request failed: {e}. Waiting for {delay:.2f} seconds...")
+                            context.log.warning(f"Request failed: {e}. Waiting for {delay:.2f} seconds...")
                             time.sleep(delay)
 
                     except KeyError as e:
-                        print(f"KeyError: {e}. Response: {data}")
+                        context.log.warning(f"KeyError: {e}. Response: {data}")
                         # Don't append here; handle errors at the end
                         break
                     except Exception as e:
-                        print(f"An unexpected error occurred: {e}")
+                        context.log.warning(f"An unexpected error occurred: {e}")
                         # Don't append here; handle errors at the end
                         break
 
@@ -2128,7 +2123,7 @@ def create_github_project_repos_commits_asset(env_prefix: str):
                 for repo_url in batch:
                     if repo_url not in processed_in_batch:
                         results[repo_url] = None
-                        print(f"adding repo to results after max retries, or was invalid url: {repo_url}")
+                        context.log.warning(f"adding repo to results after max retries, or was invalid url: {repo_url}")
 
                 end_time = time.time()
                 batch_time = end_time - start_time
@@ -2136,11 +2131,11 @@ def create_github_project_repos_commits_asset(env_prefix: str):
                 real_time_used += batch_time
                 batch_time_history.append(batch_time)
                 if batch_time_history and len(batch_time_history) > 10:
-                    print(f"average batch time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
-                print(f"batch {i} - {i + batch_size} completed. Total repos to process: {len(repo_urls)}")
-                print(f"time taken to process batch {i}: {batch_time:.2f} seconds")
-                print(f"Total CPU time used: {cpu_time_used:.2f} seconds")
-                print(f"Total real time used: {real_time_used:.2f} seconds")
+                    context.log.info(f"average batch time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
+                context.log.info(f"batch {i} - {i + batch_size} completed. Total repos to process: {len(repo_urls)}")
+                context.log.info(f"time taken to process batch {i}: {batch_time:.2f} seconds")
+                context.log.info(f"Total CPU time used: {cpu_time_used:.2f} seconds")
+                context.log.info(f"Total real time used: {real_time_used:.2f} seconds")
 
             return results, {"count_403_errors": count_403_errors, "count_502_errors": count_502_errors}
 
@@ -2159,7 +2154,7 @@ def create_github_project_repos_commits_asset(env_prefix: str):
         non_github_results_df = repo_df[repo_df['repo_source'] != 'github']
 
         if len(github_urls) > 0:
-            print(f"number of github urls: {len(github_urls)}")
+            context.log.info(f"number of github urls: {len(github_urls)}")
             
             results = get_github_repo_commits(github_urls, gh_pat)
 
@@ -2175,8 +2170,8 @@ def create_github_project_repos_commits_asset(env_prefix: str):
 
         # if non_github_urls is not empty, get fork count
         if not non_github_results_df.empty:
-            print("found non-github repos. Getting repo commit data...")
-            print(f"number of non-github urls: {non_github_results_df.shape[0]}")
+            context.log.info("found non-github repos. Getting repo commit data...")
+            context.log.info(f"number of non-github urls: {non_github_results_df.shape[0]}")
             # Use list comprehension to get data for each non-github repo
             commit_data = [
                 get_non_github_repo_commits(row['repo'], row['repo_source'])
@@ -2236,7 +2231,7 @@ def create_github_project_repos_commits_asset(env_prefix: str):
                 result = conn.execute(preview_query)
                 result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
         except Exception as e:
-            print(f"error: {e}")
+            context.log.warning(f"error: {e}")
 
         return dg.MaterializeResult(
             metadata={
@@ -2279,7 +2274,7 @@ def create_github_project_repos_watcher_count_asset(env_prefix: str):
 
         def get_non_github_repo_watcher_count(repo_url, repo_source):
 
-            print(f"processing non-githubrepo: {repo_url}")
+            context.log.info(f"processing non-githubrepo: {repo_url}")
 
             # add a 1 second delay to avoid rate limiting
             # note: this is simplified solution but there are not many non-github repos
@@ -2294,7 +2289,7 @@ def create_github_project_repos_watcher_count_asset(env_prefix: str):
                     if '.' in repo_slug:
                         repo_slug = repo_slug.split('.')[0]
                 except IndexError:
-                    print(f"Invalid Bitbucket URL format: {repo_url}")
+                    context.log.warning(f"Invalid Bitbucket URL format: {repo_url}")
                     return None
 
                 try:
@@ -2315,13 +2310,13 @@ def create_github_project_repos_watcher_count_asset(env_prefix: str):
                     return watchers_data['size']
 
                 except requests.exceptions.RequestException as e:
-                    print(f"Error fetching data from Bitbucket API: {e}")
+                    context.log.warning(f"Error fetching data from Bitbucket API: {e}")
                     return None
                 except KeyError as e:
-                    print(f"Error: missing key in response.  Key: {e}")
+                    context.log.warning(f"Error: missing key in response.  Key: {e}")
                     return None
                 except Exception as e:
-                    print(f"An unexpected error has occurred: {e}")
+                    context.log.warning(f"An unexpected error has occurred: {e}")
                     return None
 
             elif repo_source == "gitlab":
@@ -2330,7 +2325,7 @@ def create_github_project_repos_watcher_count_asset(env_prefix: str):
                     project_path = "/".join(parts[3:])
                     project_path_encoded = requests.utils.quote(project_path, safe='')
                 except IndexError:
-                    print(f"Invalid GitLab URL format: {repo_url}")
+                    context.log.warning(f"Invalid GitLab URL format: {repo_url}")
                     return {'repo': repo_url, 'watcher_count': None}
 
                 api_url = f"https://gitlab.com/api/v4/projects/{project_path_encoded}"  
@@ -2363,10 +2358,10 @@ def create_github_project_repos_watcher_count_asset(env_prefix: str):
                                 else:
                                     watchers_url = None
                             else:
-                                print(f"Error: {response.status_code}")
+                                context.log.warning(f"Error: {response.status_code}")
                                 break
                         except requests.exceptions.RequestException as e:
-                            print(f"Error fetching data from GitLab API: {e}")
+                            context.log.warning(f"Error fetching data from GitLab API: {e}")
                             break
                     
                     # return the watcher count data
@@ -2376,13 +2371,13 @@ def create_github_project_repos_watcher_count_asset(env_prefix: str):
                         return None
                         
                 except requests.exceptions.RequestException as e:
-                    print(f"Error fetching data from GitLab API: {e}")
+                    context.log.warning(f"Error fetching data from GitLab API: {e}")
                     return None
                 except KeyError as e:
-                    print(f"Error: missing key in response.  Key: {e}") 
+                    context.log.warning(f"Error: missing key in response.  Key: {e}") 
                     return None
                 except Exception as e:
-                    print(f"An unexpected error has occurred: {e}")
+                    context.log.warning(f"An unexpected error has occurred: {e}")
                     return None
             else:
                 return None
@@ -2414,7 +2409,7 @@ def create_github_project_repos_watcher_count_asset(env_prefix: str):
             batch_time_history = []
 
             for i in range(0, len(repo_urls), batch_size):
-                print(f"processing batch: {i} - {i + batch_size}")
+                context.log.info(f"processing batch: {i} - {i + batch_size}")
                 # calculate the time it takes to process the batch
                 start_time = time.time()
                 batch = repo_urls[i:i + batch_size]
@@ -2429,7 +2424,7 @@ def create_github_project_repos_watcher_count_asset(env_prefix: str):
                         owner = parts[-2]
                         name = parts[-1]
                     except IndexError:
-                        print(f"Invalid GitHub URL format: {repo_url}")
+                        context.log.warning(f"Invalid GitHub URL format: {repo_url}")
                         continue
 
                     query += f"$owner{j}: String!, $name{j}: String!,"  # Declare variables
@@ -2454,32 +2449,32 @@ def create_github_project_repos_watcher_count_asset(env_prefix: str):
                 max_retries = 8
 
                 for attempt in range(max_retries):
-                    print(f"attempt: {attempt}")
+                    context.log.info(f"attempt: {attempt}")
                     
                     try:
                         if cpu_time_used >= cpu_time_limit and real_time_used < real_time_window:
                             extra_delay = (cpu_time_used - cpu_time_limit) / 2
                             extra_delay = max(1, extra_delay)
-                            print(f"CPU time limit reached. Delaying for {extra_delay:.2f} seconds.")
+                            context.log.info(f"CPU time limit reached. Delaying for {extra_delay:.2f} seconds.")
                             time.sleep(extra_delay)
-                            print(f"resetting cpu_time_used and real_time_used to 0")
+                            context.log.info(f"resetting cpu_time_used and real_time_used to 0")
                             cpu_time_used = 0
                             real_time_used = 0
                             start_time = time.time()
                         elif real_time_used >= real_time_window and cpu_time_used < cpu_time_limit:
-                            print(f"real time limit reached without CPU time limit reached. Resetting counts.")
+                            context.log.info(f"real time limit reached without CPU time limit reached. Resetting counts.")
                             cpu_time_used = 0
                             real_time_used = 0
                         elif real_time_used >= real_time_window and cpu_time_used >= cpu_time_limit:
-                            print(f"real time limit reached. CPU time limit reached. Resetting counts.")
+                            context.log.info(f"real time limit reached. CPU time limit reached. Resetting counts.")
                             cpu_time_used = 0
                             real_time_used = 0
                         elif real_time_used < real_time_window and cpu_time_used < cpu_time_limit:
-                            print('cpu time limit not reached. Continuing...')
+                            context.log.info('cpu time limit not reached. Continuing...')
 
                         response = requests.post(api_url, json={'query': query, 'variables': variables}, headers=headers)
                         time_since_start = time.time() - start_time
-                        print(f"time_since_start: {time_since_start:.2f} seconds")
+                        context.log.info(f"time_since_start: {time_since_start:.2f} seconds")
                         time.sleep(2)  # Consistent delay
 
                         # use raise for status to catch errors
@@ -2487,16 +2482,16 @@ def create_github_project_repos_watcher_count_asset(env_prefix: str):
                         data = response.json()
 
                         if 'errors' in data:
-                            print(f"Status Code: {response.status_code}")
+                            context.log.info(f"Status Code: {response.status_code}")
                             # Extract rate limit information from headers
-                            print(" \n resource usage tracking:")
+                            context.log.info(" \n resource usage tracking:")
                             rate_limit_info = {
                                 'remaining': response.headers.get('x-ratelimit-remaining'),
                                 'used': response.headers.get('x-ratelimit-used'),
                                 'reset': response.headers.get('x-ratelimit-reset'),
                                 'retry_after': response.headers.get('retry-after')
                             }
-                            print(f"Rate Limit Info: {rate_limit_info}\n")
+                            context.log.info(f"Rate Limit Info: {rate_limit_info}\n")
 
                             for error in data['errors']:
                                 if error['type'] == 'RATE_LIMITED':
@@ -2505,11 +2500,11 @@ def create_github_project_repos_watcher_count_asset(env_prefix: str):
                                         delay = int(reset_at) - int(time.time()) + 1
                                         delay = max(1, delay)
                                         delay = min(delay, max_delay)
-                                        print(f"Rate limited.  Waiting for {delay} seconds...")
+                                        context.log.warning(f"Rate limited.  Waiting for {delay} seconds...")
                                         time.sleep(delay)
                                         continue  # Retry the entire batch
                                 else:
-                                    print(f"GraphQL Error: {error}") #Print all the errors.
+                                    context.log.warning(f"GraphQL Error: {error}") #Print all the errors.
 
                         # write the url and watcher count to the database
                         if 'data' in data:
@@ -2521,61 +2516,61 @@ def create_github_project_repos_watcher_count_asset(env_prefix: str):
                                     results[repo_url] = repo_data['watchers']['totalCount']
                                     processed_in_batch.add(repo_url)  # Mark as processed
                                 else:
-                                    print(f"repo_data is empty for repo: {repo_url}\n")
+                                    context.log.warning(f"repo_data is empty for repo: {repo_url}\n")
                         break
 
                     except requests.exceptions.RequestException as e:
-                        print(f"there was a request exception on attempt: {attempt}\n")
-                        print(f"procesing batch: {batch}\n")
-                        print(f"Status Code: {response.status_code}")
+                        context.log.warning(f"there was a request exception on attempt: {attempt}\n")
+                        context.log.warning(f"procesing batch: {batch}\n")
+                        context.log.warning(f"Status Code: {response.status_code}")
                         # Extract rate limit information from headers
-                        print(" \n resource usage tracking:")
+                        context.log.warning(" \n resource usage tracking:")
                         rate_limit_info = {
                             'remaining': response.headers.get('x-ratelimit-remaining'),
                             'used': response.headers.get('x-ratelimit-used'),
                             'reset': response.headers.get('x-ratelimit-reset'),
                             'retry_after': response.headers.get('retry-after')
                         }
-                        print(f"Rate Limit Info: {rate_limit_info}\n")
+                        context.log.warning(f"Rate Limit Info: {rate_limit_info}\n")
 
-                        print(f"the error is: {e}\n")
+                        context.log.warning(f"the error is: {e}\n")
                         if attempt == max_retries - 1:
-                            print(f"Max retries reached or unrecoverable error for batch. Giving up.")
+                            context.log.warning(f"Max retries reached or unrecoverable error for batch. Giving up.")
                             break
                         # --- Rate Limit Handling (REST API style - for 403/429) ---
                         if isinstance(e, requests.exceptions.HTTPError):
                             if e.response.status_code in (502, 504):
                                 count_502_errors += 1
-                                print(f"This process has generated {count_502_errors} 502/504 errors in total.")
+                                context.log.warning(f"This process has generated {count_502_errors} 502/504 errors in total.")
                                 delay = 1
-                                print(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
+                                context.log.warning(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
                                 time.sleep(delay)
                                 continue
                             elif e.response.status_code in (403, 429):
                                 count_403_errors += 1
-                                print(f"This process has generated {count_403_errors} 403/429 errors in total.")
+                                context.log.warning(f"This process has generated {count_403_errors} 403/429 errors in total.")
                                 retry_after = response.headers.get('Retry-After')
                                 if retry_after:
                                     delay = int(retry_after)
-                                    print(f"Rate limited (REST - Retry-After). Waiting for {delay} seconds...")
+                                    context.log.warning(f"Rate limited (REST - Retry-After). Waiting for {delay} seconds...")
                                     time.sleep(delay)
                                     continue
                                 else:
                                     delay = 1 * (2 ** attempt) + random.uniform(0, 1)
-                                    print(f"Rate limited (REST - Exponential Backoff). Waiting for {delay:.2f} seconds...")
+                                    context.log.warning(f"Rate limited (REST - Exponential Backoff). Waiting for {delay:.2f} seconds...")
                                     time.sleep(delay)
                                     continue
                         else:
                             delay = 1 * (2 ** attempt) + random.uniform(0, 1)
-                            print(f"Request failed: {e}. Waiting for {delay:.2f} seconds...")
+                            context.log.warning(f"Request failed: {e}. Waiting for {delay:.2f} seconds...")
                             time.sleep(delay)
 
                     except KeyError as e:
-                        print(f"KeyError: {e}. Response: {data}")
+                        context.log.warning(f"KeyError: {e}. Response: {data}")
                         # Don't append here; handle errors at the end
                         break
                     except Exception as e:
-                        print(f"An unexpected error occurred: {e}")
+                        context.log.warning(f"An unexpected error occurred: {e}")
                         # Don't append here; handle errors at the end
                         break
 
@@ -2583,7 +2578,7 @@ def create_github_project_repos_watcher_count_asset(env_prefix: str):
                 for repo_url in batch:
                     if repo_url not in processed_in_batch:
                         results[repo_url] = None
-                        print(f"adding repo to results after max retries, or was invalid url: {repo_url}")
+                        context.log.warning(f"adding repo to results after max retries, or was invalid url: {repo_url}")
 
                 end_time = time.time()
                 batch_time = end_time - start_time
@@ -2591,11 +2586,11 @@ def create_github_project_repos_watcher_count_asset(env_prefix: str):
                 real_time_used += batch_time
                 batch_time_history.append(batch_time)
                 if batch_time_history and len(batch_time_history) > 10:
-                    print(f"average batch time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
-                print(f"batch {i} - {i + batch_size} completed. Total repos to process: {len(repo_urls)}")
-                print(f"time taken to process batch {i}: {batch_time:.2f} seconds")
-                print(f"Total CPU time used: {cpu_time_used:.2f} seconds")
-                print(f"Total real time used: {real_time_used:.2f} seconds")
+                    context.log.info(f"average batch time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
+                context.log.info(f"batch {i} - {i + batch_size} completed. Total repos to process: {len(repo_urls)}")
+                context.log.info(f"time taken to process batch {i}: {batch_time:.2f} seconds")
+                context.log.info(f"Total CPU time used: {cpu_time_used:.2f} seconds")
+                context.log.info(f"Total real time used: {real_time_used:.2f} seconds")
 
             return results, {
                 'count_403_errors': count_403_errors,
@@ -2614,7 +2609,7 @@ def create_github_project_repos_watcher_count_asset(env_prefix: str):
         # Filter for GitHub URLs
         github_urls = repo_df[repo_df['repo_source'] == 'github']['repo'].tolist()
 
-        print(f"number of github urls: {len(github_urls)}")
+        context.log.info(f"number of github urls: {len(github_urls)}")
 
         # check if github_urls is not empty
         if github_urls:
@@ -2633,7 +2628,7 @@ def create_github_project_repos_watcher_count_asset(env_prefix: str):
 
         # if non_github_urls is not empty, get watcher count
         if not non_github_results_df.empty:
-            print("found non-github repos. Getting repo watcher count...")
+            context.log.info("found non-github repos. Getting repo watcher count...")
             # apply distinct_repo_df['repo'] to get watcher count
             non_github_results_df['watcher_count'] = non_github_results_df.apply(
                 lambda row: get_non_github_repo_watcher_count(row['repo'], row['repo_source']), axis=1
@@ -2818,7 +2813,7 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
             batch_time_history = []
 
             for i in range(0, len(repo_urls), batch_size):
-                print(f"processing batch: {i} - {i + batch_size}")
+                context.log.info(f"processing batch: {i} - {i + batch_size}")
                 # calculate the time it takes to process the batch
                 start_time = time.time()
                 batch = repo_urls[i:i + batch_size]
@@ -2833,7 +2828,7 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
                         owner = parts[-2]
                         name = parts[-1]
                     except IndexError:
-                        print(f"Invalid GitHub URL format: {repo_url}")
+                        context.log.warning(f"Invalid GitHub URL format: {repo_url}")
                         continue
 
                     query += f"$owner{j}: String!, $name{j}: String!,"  # Declare variables
@@ -2856,7 +2851,7 @@ def create_github_project_repos_is_fork_asset(env_prefix: str):
                 max_retries = 8
 
                 for attempt in range(max_retries):
-                    print(f"attempt: {attempt}")
+                    context.log.info(f"attempt: {attempt}")
                     
                     try:
                         if cpu_time_used >= cpu_time_limit and real_time_used < real_time_window:
@@ -3153,7 +3148,7 @@ def create_project_repos_description_asset(env_prefix: str):
 
         def get_non_github_repo_description(repo_url, repo_source):
 
-            print(f"processing non-githubrepo: {repo_url}")
+            context.log.info(f"processing non-githubrepo: {repo_url}")
 
             # add a 1 second delay to avoid rate limiting
             # note: this is simplified solution but there are not many non-github repos
@@ -3168,7 +3163,7 @@ def create_project_repos_description_asset(env_prefix: str):
                     if '.' in repo_slug:
                         repo_slug = repo_slug.split('.')[0]
                 except IndexError:
-                    print(f"Invalid Bitbucket URL format: {repo_url}")
+                    context.log.warning(f"Invalid Bitbucket URL format: {repo_url}")
                     return None
 
                 try:
@@ -3186,13 +3181,13 @@ def create_project_repos_description_asset(env_prefix: str):
                     return repo_description
 
                 except requests.exceptions.RequestException as e:
-                    print(f"Error fetching data from Bitbucket API: {e}")
+                    context.log.warning(f"Error fetching data from Bitbucket API: {e}")
                     return None
                 except KeyError as e:
-                    print(f"Error: missing key in response.  Key: {e}")
+                    context.log.warning(f"Error: missing key in response.  Key: {e}")
                     return None
                 except Exception as e:
-                    print(f"An unexpected error has occurred: {e}")
+                    context.log.warning(f"An unexpected error has occurred: {e}")
                     return None
 
             elif repo_source == "gitlab":
@@ -3201,7 +3196,7 @@ def create_project_repos_description_asset(env_prefix: str):
                     project_path = "/".join(parts[3:])
                     project_path_encoded = requests.utils.quote(project_path, safe='')
                 except IndexError:
-                    print(f"Invalid GitLab URL format: {repo_url}")
+                    context.log.warning(f"Invalid GitLab URL format: {repo_url}")
                     return None
 
                 api_url = f"https://gitlab.com/api/v4/projects/{project_path_encoded}"  
@@ -3213,13 +3208,13 @@ def create_project_repos_description_asset(env_prefix: str):
                     # return the description
                     return response.json()['description']
                 except requests.exceptions.RequestException as e:
-                    print(f"Error fetching data from GitLab API: {e}")
+                    context.log.warning(f"Error fetching data from GitLab API: {e}")
                     return None
                 except KeyError as e:
-                    print(f"Error: missing key in response.  Key: {e}") 
+                    context.log.warning(f"Error: missing key in response.  Key: {e}") 
                     return None
                 except Exception as e:
-                    print(f"An unexpected error has occurred: {e}")
+                    context.log.warning(f"An unexpected error has occurred: {e}")
                     return None
             else:
                 return None
@@ -3251,7 +3246,7 @@ def create_project_repos_description_asset(env_prefix: str):
             batch_time_history = []
 
             for i in range(0, len(repo_urls), batch_size):
-                print(f"processing batch: {i} - {i + batch_size}")
+                context.log.info(f"processing batch: {i} - {i + batch_size}")
                 # calculate the time it takes to process the batch
                 start_time = time.time()
                 batch = repo_urls[i:i + batch_size]
@@ -3266,7 +3261,7 @@ def create_project_repos_description_asset(env_prefix: str):
                         owner = parts[-2]
                         name = parts[-1]
                     except IndexError:
-                        print(f"Invalid GitHub URL format: {repo_url}")
+                        context.log.warning(f"Invalid GitHub URL format: {repo_url}")
                         # don't return here, return errors at end of batch
                         continue
 
@@ -3290,33 +3285,33 @@ def create_project_repos_description_asset(env_prefix: str):
                 max_retries = 8
 
                 for attempt in range(max_retries):
-                    print(f"attempt: {attempt}")
+                    context.log.info(f"attempt: {attempt}")
                     
                     try:
                         if cpu_time_used >= cpu_time_limit and real_time_used < real_time_window:
                             extra_delay = (cpu_time_used - cpu_time_limit) / 2
                             extra_delay = max(1, extra_delay)
-                            print(f"CPU time limit reached. Delaying for {extra_delay:.2f} seconds.")
+                            context.log.info(f"CPU time limit reached. Delaying for {extra_delay:.2f} seconds.")
                             time.sleep(extra_delay)
-                            print(f"resetting cpu_time_used and real_time_used to 0")
+                            context.log.info(f"resetting cpu_time_used and real_time_used to 0")
                             cpu_time_used = 0
                             real_time_used = 0
                             start_time = time.time()
                         elif real_time_used >= real_time_window and cpu_time_used < cpu_time_limit:
-                            print(f"real time limit reached without CPU time limit reached. Resetting counts.")
+                            context.log.info(f"real time limit reached without CPU time limit reached. Resetting counts.")
                             cpu_time_used = 0
                             real_time_used = 0
                         elif real_time_used >= real_time_window and cpu_time_used >= cpu_time_limit:
-                            print(f"real time limit reached. CPU time limit reached. Resetting counts.")
+                            context.log.info(f"real time limit reached. CPU time limit reached. Resetting counts.")
                             cpu_time_used = 0
                             real_time_used = 0
                         elif real_time_used < real_time_window and cpu_time_used < cpu_time_limit:
-                            print('cpu time limit not reached. Continuing...')
+                            context.log.info('cpu time limit not reached. Continuing...')
 
                         response = requests.post(api_url, json={'query': query, 'variables': variables}, headers=headers)
 
                         time_since_start = time.time() - start_time
-                        print(f"time_since_start: {time_since_start:.2f} seconds")
+                        context.log.info(f"time_since_start: {time_since_start:.2f} seconds")
                         time.sleep(3)  # Consistent delay
                         
                         # use raise for status to catch errors
@@ -3324,16 +3319,16 @@ def create_project_repos_description_asset(env_prefix: str):
                         data = response.json()
 
                         if 'errors' in data:
-                            print(f"Status Code: {response.status_code}")
+                            context.log.info(f"Status Code: {response.status_code}")
                             # Extract rate limit information from headers
-                            print(" \n resource usage tracking:")
+                            context.log.info(" \n resource usage tracking:")
                             rate_limit_info = {
                                 'remaining': response.headers.get('x-ratelimit-remaining'),
                                 'used': response.headers.get('x-ratelimit-used'),
                                 'reset': response.headers.get('x-ratelimit-reset'),
                                 'retry_after': response.headers.get('retry-after')
                             }
-                            print(f"Rate Limit Info: {rate_limit_info}\n")
+                            context.log.info(f"Rate Limit Info: {rate_limit_info}\n")
 
                             for error in data['errors']:
                                 if error['type'] == 'RATE_LIMITED':
@@ -3342,11 +3337,11 @@ def create_project_repos_description_asset(env_prefix: str):
                                         delay = int(reset_at) - int(time.time()) + 1
                                         delay = max(1, delay)
                                         delay = min(delay, max_delay)
-                                        print(f"Rate limited.  Waiting for {delay} seconds...")
+                                        context.log.warning(f"Rate limited.  Waiting for {delay} seconds...")
                                         time.sleep(delay)
                                         continue  # Retry the entire batch
                                 else:
-                                    print(f"GraphQL Error: {error}") #Print all the errors.
+                                    context.log.warning(f"GraphQL Error: {error}") #Print all the errors.
 
                         # write the url and description to the database
                         if 'data' in data:
@@ -3359,28 +3354,28 @@ def create_project_repos_description_asset(env_prefix: str):
                                     results[repo_url] = repo_data['description']
                                     processed_in_batch.add(repo_url)  # Mark as processed
                                 else:
-                                    print(f"repo_data is empty for repo: {repo_url}\n")
+                                    context.log.warning(f"repo_data is empty for repo: {repo_url}\n")
                                     # don't return here, return errors at end of batch
                         break
 
                     except requests.exceptions.RequestException as e:
-                        print(f"there was a request exception on attempt: {attempt}\n")
-                        print(f"procesing batch: {batch}\n")
-                        print(f"Status Code: {response.status_code}")
+                        context.log.warning(f"there was a request exception on attempt: {attempt}\n")
+                        context.log.warning(f"procesing batch: {batch}\n")
+                        context.log.warning(f"Status Code: {response.status_code}")
 
                         # Extract rate limit information from headers
-                        print(" \n resource usage tracking:")
+                        context.log.warning(" \n resource usage tracking:")
                         rate_limit_info = {
                             'remaining': response.headers.get('x-ratelimit-remaining'),
                             'used': response.headers.get('x-ratelimit-used'),
                             'reset': response.headers.get('x-ratelimit-reset'),
                             'retry_after': response.headers.get('retry-after')
                         }
-                        print(f"Rate Limit Info: {rate_limit_info}\n")
+                        context.log.warning(f"Rate Limit Info: {rate_limit_info}\n")
 
-                        print(f"the error is: {e}\n")
+                        context.log.warning(f"the error is: {e}\n")
                         if attempt == max_retries - 1:
-                            print(f"Max retries reached or unrecoverable error for batch. Giving up.")
+                            context.log.warning(f"Max retries reached or unrecoverable error for batch. Giving up.")
                             # don't return here, return errors at end of batch
                             break
 
@@ -3388,36 +3383,36 @@ def create_project_repos_description_asset(env_prefix: str):
                         if isinstance(e, requests.exceptions.HTTPError):
                             if e.response.status_code in (502, 504):
                                 count_502_errors += 1
-                                print(f"This process has generated {count_502_errors} 502/504 errors in total.")
+                                context.log.warning(f"This process has generated {count_502_errors} 502/504 errors in total.")
                                 delay = 1
-                                print(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
+                                context.log.warning(f"502/504 Bad Gateway. Waiting for {delay:.2f} seconds...")
                                 time.sleep(delay)
                                 continue
                             elif e.response.status_code in (403, 429):
                                 count_403_errors += 1
-                                print(f"This process has generated {count_403_errors} 403/429 errors in total.")
+                                context.log.warning(f"This process has generated {count_403_errors} 403/429 errors in total.")
                                 retry_after = e.response.headers.get('Retry-After')
                                 if retry_after:
                                     delay = int(retry_after)
-                                    print(f"Rate limited (REST - Retry-After). Waiting for {delay} seconds...")
+                                    context.log.warning(f"Rate limited (REST - Retry-After). Waiting for {delay} seconds...")
                                     time.sleep(delay)
                                     continue
                                 else:
                                     delay = 1 * (2 ** attempt) + random.uniform(0, 1)
-                                    print(f"Rate limited (REST - Exponential Backoff). Waiting for {delay:.2f} seconds...")
+                                    context.log.warning(f"Rate limited (REST - Exponential Backoff). Waiting for {delay:.2f} seconds...")
                                     time.sleep(delay)
                                     continue
                         else:
                             delay = 1 * (2 ** attempt) + random.uniform(0, 1)
-                            print(f"Request failed: {e}. Waiting for {delay:.2f} seconds...")
+                            context.log.warning(f"Request failed: {e}. Waiting for {delay:.2f} seconds...")
                             time.sleep(delay)
 
                     except KeyError as e:
-                        print(f"KeyError: {e}. Response: {data}")
+                        context.log.warning(f"KeyError: {e}. Response: {data}")
                         # Don't append here; handle errors at the end
                         break
                     except Exception as e:
-                        print(f"An unexpected error occurred: {e}")
+                        context.log.warning(f"An unexpected error occurred: {e}")
                         # Don't append here; handle errors at the end
                         break
 
@@ -3425,7 +3420,7 @@ def create_project_repos_description_asset(env_prefix: str):
                 for repo_url in batch:
                     if repo_url not in processed_in_batch:
                         results[repo_url] = None
-                        print(f"adding repo to results after max retries, or was invalid url: {repo_url}")
+                        context.log.warning(f"adding repo to results after max retries, or was invalid url: {repo_url}")
                         processed_in_batch.add(repo_url)
 
                 # calculate the time it takes to process the batch
@@ -3435,11 +3430,11 @@ def create_project_repos_description_asset(env_prefix: str):
                 real_time_used += batch_time
                 batch_time_history.append(batch_time)
                 if batch_time_history and len(batch_time_history) > 10:
-                    print(f"average batch time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
-                print(f"batch {i} - {i + batch_size} completed. Total repos to process: {len(repo_urls)}")
-                print(f"time taken to process batch {i}: {batch_time:.2f} seconds")
-                print(f"Total CPU time used: {cpu_time_used:.2f} seconds")
-                print(f"Total real time used: {real_time_used:.2f} seconds")
+                    context.log.info(f"average batch time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
+                context.log.info(f"batch {i} - {i + batch_size} completed. Total repos to process: {len(repo_urls)}")
+                context.log.info(f"time taken to process batch {i}: {batch_time:.2f} seconds")
+                context.log.info(f"Total CPU time used: {cpu_time_used:.2f} seconds")
+                context.log.info(f"Total real time used: {real_time_used:.2f} seconds")
 
             return results, {
                 'count_403_errors': count_403_errors,
@@ -3474,7 +3469,7 @@ def create_project_repos_description_asset(env_prefix: str):
 
         # if non_github_urls is not empty, get repo description
         if not non_github_results_df.empty:
-            print("found non-github repos. Getting repo description...")
+            context.log.info("found non-github repos. Getting repo description...")
             # apply distinct_repo_df['repo'] to get repo description
             non_github_results_df['description'] = non_github_results_df.apply(
                 lambda row: get_non_github_repo_description(row['repo'], row['repo_source']), axis=1
@@ -4545,9 +4540,6 @@ def create_project_repos_frontend_framework_files_asset(env_prefix: str):
                     continue
                 var_defs = ", ".join([f"$owner{k}: String!, $name{k}: String!" for k in range(len(batch))])
                 full_query = f"query ({var_defs}) {{\n" + "\n".join(query_parts) + "\n}"
-                # if it is the first batch, print the full query
-                if i == 0:
-                    print(full_query)
                 
                 max_retries, base_delay = 7, 2
                 for attempt in range(max_retries):
@@ -5129,7 +5121,7 @@ def create_latest_contributor_data_asset(env_prefix: str):
             batch_time_history = []
 
             for i in range(0, len(node_ids), batch_size):
-                print(f"Processing batch: {i} - {min(i + batch_size, len(node_ids))}")
+                context.log.info(f"Processing batch: {i} - {min(i + batch_size, len(node_ids))}")
                 start_time = time.time() # Batch start time
                 current_batch_node_ids = node_ids[i:i + batch_size]
                 processed_in_batch = set() # Track success/failure per ID for the current batch
@@ -5165,7 +5157,7 @@ def create_latest_contributor_data_asset(env_prefix: str):
 
                 # 2. Combine parts into the full query
                 if not query_definition_parts: # Skip if batch was empty (e.g. if node_ids was an empty list)
-                    print(f"Skipping empty batch: {i} - {min(i + batch_size, len(node_ids))}")
+                    context.log.info(f"Skipping empty batch: {i} - {min(i + batch_size, len(node_ids))}")
                     continue
 
                 full_query_definition = "query (" + ", ".join(query_definition_parts) + ") {"
@@ -5177,7 +5169,7 @@ def create_latest_contributor_data_asset(env_prefix: str):
                 request_successful_for_batch = False
 
                 for attempt in range(max_retries):
-                    print(f"Batch {i // batch_size + 1}, Attempt: {attempt + 1}")
+                    context.log.info(f"Batch {i // batch_size + 1}, Attempt: {attempt + 1}")
                     
                     # Simple CPU/Real time throttling (can be made more sophisticated)
                     # This logic might need refinement based on actual GitHub API behavior and observed limits.
@@ -5185,14 +5177,14 @@ def create_latest_contributor_data_asset(env_prefix: str):
                     if cpu_time_used >= cpu_time_limit and real_time_used < real_time_window:
                         extra_delay = (cpu_time_used - cpu_time_limit) / 2 # Heuristic
                         extra_delay = max(1, extra_delay) 
-                        print(f"CPU time limit heuristic reached. Delaying for {extra_delay:.2f} seconds.")
+                        context.log.info(f"CPU time limit heuristic reached. Delaying for {extra_delay:.2f} seconds.")
                         time.sleep(extra_delay)
                         # Reset window counters after deliberate delay
                         cpu_time_used = 0
                         real_time_used = 0
                         start_time = time.time() # Reset batch timer
                     elif real_time_used >= real_time_window:
-                        print(f"Real time window limit reached. Resetting counters.")
+                        context.log.info(f"Real time window limit reached. Resetting counters.")
                         cpu_time_used = 0
                         real_time_used = 0
                         # No explicit sleep here, assuming next batch will start a new window.
@@ -5204,7 +5196,7 @@ def create_latest_contributor_data_asset(env_prefix: str):
                     try:
                         response = requests.post(api_url, json={'query': query, 'variables': variables}, headers=headers, timeout=30) # Added timeout
                         response_time = time.time() - batch_request_start_time
-                        print(f"API request time: {response_time:.2f} seconds")
+                        context.log.info(f"API request time: {response_time:.2f} seconds")
 
                         # Consistent delay after each request to be polite to the API
                         time.sleep(2.5) 
@@ -5215,7 +5207,7 @@ def create_latest_contributor_data_asset(env_prefix: str):
                         if 'errors' in data and data['errors']:
                             is_rate_limited = False
                             for error in data['errors']:
-                                print(f"GraphQL Error: {error.get('message', str(error))}")
+                                context.log.warning(f"GraphQL Error: {error.get('message', str(error))}")
                                 if error.get('type') == 'RATE_LIMITED':
                                     is_rate_limited = True
                                     # Try to get 'Retry-After' from GraphQL error extensions if available,
@@ -5223,7 +5215,7 @@ def create_latest_contributor_data_asset(env_prefix: str):
                                     retry_after_graphql = error.get('extensions', {}).get('retryAfter')
                                     if retry_after_graphql:
                                         delay = int(retry_after_graphql) + 1 # Add a small buffer
-                                        print(f"GraphQL Rate Limited. Suggested retry after {delay} seconds.")
+                                        context.log.warning(f"GraphQL Rate Limited. Suggested retry after {delay} seconds.")
                                     elif response.headers.get('X-RateLimit-Reset'):
                                         reset_at = int(response.headers.get('X-RateLimit-Reset'))
                                         delay = max(1, reset_at - int(time.time()) + 1)
@@ -5231,7 +5223,7 @@ def create_latest_contributor_data_asset(env_prefix: str):
                                         delay = (2 ** attempt) * 5 + random.uniform(0,1) # Exponential backoff
                                     
                                     delay = min(delay, 300) # Cap delay
-                                    print(f"Rate limited (GraphQL). Waiting for {delay:.2f} seconds...")
+                                    context.log.warning(f"Rate limited (GraphQL). Waiting for {delay:.2f} seconds...")
                                     time.sleep(delay)
                                     break # Break from error loop to retry batch
                             if is_rate_limited:
@@ -5281,7 +5273,7 @@ def create_latest_contributor_data_asset(env_prefix: str):
                                     results[node_id] = {"is_active": True, "data": extracted_info}
                                 else:
                                     # Node ID was in query, but no data returned for it (e.g. ID doesn't exist, or permission issue for this specific node)
-                                    print(f"Data for node_id {node_id} is null or missing in response.")
+                                    context.log.warning(f"Data for node_id {node_id} is null or missing in response.")
                                     results[node_id] = {"is_active": False, "data": None} # Mark as inactive if not found
                                 
                                 processed_in_batch.add(node_id)
@@ -5289,9 +5281,9 @@ def create_latest_contributor_data_asset(env_prefix: str):
                             break # Successfully processed batch, exit retry loop
 
                     except requests.exceptions.HTTPError as e:
-                        print(f"HTTP error on attempt {attempt + 1} for batch {i // batch_size + 1}: {e}")
-                        print(f"Status Code: {e.response.status_code if e.response else 'N/A'}")
-                        print(f"Response content: {e.response.text if e.response else 'N/A'}")
+                        context.log.warning(f"HTTP error on attempt {attempt + 1} for batch {i // batch_size + 1}: {e}")
+                        context.log.warning(f"Status Code: {e.response.status_code if e.response else 'N/A'}")
+                        context.log.warning(f"Response content: {e.response.text if e.response else 'N/A'}")
 
                         rate_limit_info = {
                             'remaining': e.response.headers.get('x-ratelimit-remaining') if e.response else 'N/A',
@@ -5299,13 +5291,13 @@ def create_latest_contributor_data_asset(env_prefix: str):
                             'reset': e.response.headers.get('x-ratelimit-reset') if e.response else 'N/A',
                             'retry_after_header': e.response.headers.get('Retry-After') if e.response else 'N/A'
                         }
-                        print(f"Rate Limit Info (from headers): {rate_limit_info}")
+                        context.log.warning(f"Rate Limit Info (from headers): {rate_limit_info}")
 
                         if e.response is not None:
                             if e.response.status_code in (502, 504): # Retry on Bad Gateway/Gateway Timeout
                                 count_502_errors +=1
                                 delay = (2 ** attempt) * 2 + random.uniform(0, 1) # Exponential backoff
-                                print(f"502/504 Error. Waiting for {delay:.2f} seconds...")
+                                context.log.warning(f"502/504 Error. Waiting for {delay:.2f} seconds...")
                                 time.sleep(delay)
                                 continue
                             elif e.response.status_code in (403, 429): # Rate limited by HTTP status
@@ -5313,17 +5305,17 @@ def create_latest_contributor_data_asset(env_prefix: str):
                                 retry_after_header = e.response.headers.get('Retry-After')
                                 if retry_after_header:
                                     delay = int(retry_after_header) + 1 # Add a small buffer
-                                    print(f"Rate limited by HTTP {e.response.status_code} (Retry-After header). Waiting for {delay} seconds...")
+                                    context.log.warning(f"Rate limited by HTTP {e.response.status_code} (Retry-After header). Waiting for {delay} seconds...")
                                 else:
                                     delay = (2 ** attempt) * 5 + random.uniform(0, 1) # Exponential backoff
-                                    print(f"Rate limited by HTTP {e.response.status_code} (X-RateLimit headers). Waiting for {delay:.2f} seconds...")
+                                    context.log.warning(f"Rate limited by HTTP {e.response.status_code} (X-RateLimit headers). Waiting for {delay:.2f} seconds...")
                                 
                                 delay = min(delay, 300) # Cap delay
                                 time.sleep(delay)
                                 continue
                         # For other HTTP errors, or if max retries reached
                         if attempt == max_retries - 1:
-                            print(f"Max retries reached or unrecoverable HTTP error for batch {i // batch_size + 1}.")
+                            context.log.warning(f"Max retries reached or unrecoverable HTTP error for batch {i // batch_size + 1}.")
                             break # Exit retry loop for this batch
                         else: # General backoff for other HTTP errors if retrying
                             delay = (2 ** attempt) + random.uniform(0, 1)
@@ -5331,18 +5323,18 @@ def create_latest_contributor_data_asset(env_prefix: str):
 
 
                     except requests.exceptions.RequestException as e: # Other network issues (timeout, connection error)
-                        print(f"RequestException on attempt {attempt + 1} for batch {i // batch_size + 1}: {e}")
+                        context.log.warning(f"RequestException on attempt {attempt + 1} for batch {i // batch_size + 1}: {e}")
                         if attempt == max_retries - 1:
-                            print(f"Max retries reached for RequestException for batch {i // batch_size + 1}.")
+                            context.log.warning(f"Max retries reached for RequestException for batch {i // batch_size + 1}.")
                             break
                         delay = (2 ** attempt) * 2 + random.uniform(0, 1) # Exponential backoff
-                        print(f"Waiting for {delay:.2f} seconds...")
+                        context.log.warning(f"Waiting for {delay:.2f} seconds...")
                         time.sleep(delay)
                     
                     except Exception as e: # Catch any other unexpected errors during request/response processing
-                        print(f"An unexpected error occurred on attempt {attempt + 1} for batch {i // batch_size + 1}: {e}")
+                        context.log.warning(f"An unexpected error occurred on attempt {attempt + 1} for batch {i // batch_size + 1}: {e}")
                         if attempt == max_retries - 1:
-                            print(f"Max retries reached due to unexpected error for batch {i // batch_size + 1}.")
+                            context.log.warning(f"Max retries reached due to unexpected error for batch {i // batch_size + 1}.")
                             break
                         # Basic delay, or could break immediately depending on error type
                         time.sleep(5)
@@ -5352,7 +5344,7 @@ def create_latest_contributor_data_asset(env_prefix: str):
                 if not request_successful_for_batch: # If loop exited due to max_retries or break without success
                     for node_id_in_batch in current_batch_node_ids:
                         if node_id_in_batch not in processed_in_batch:
-                            print(f"Node {node_id_in_batch} in batch {i // batch_size + 1} failed all retries or was unrecoverable.")
+                            context.log.warning(f"Node {node_id_in_batch} in batch {i // batch_size + 1} failed all retries or was unrecoverable.")
                             results[node_id_in_batch] = {"is_active": False, "data": None}
                 
                 # Timing and CPU/Real time window update
@@ -5374,12 +5366,12 @@ def create_latest_contributor_data_asset(env_prefix: str):
                 if batch_time_history: # Avoid division by zero if list is empty (though it shouldn't be here)
                     # Only print average if more than a few batches processed for meaningful avg
                     if len(batch_time_history) > 3:
-                        print(f"Average batch processing time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
-                print(f"Batch {i // batch_size + 1} completed. Total node_ids to process: {len(node_ids)}")
-                print(f"Time taken to process batch: {batch_processing_time:.2f} seconds")
-                print(f"Cumulative 'CPU time used' heuristic in window: {cpu_time_used:.2f} seconds")
-                print(f"Cumulative 'Real time used' in window: {real_time_used:.2f} seconds")
-                print("-" * 30)
+                        context.log.info(f"Average batch processing time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
+                context.log.info(f"Batch {i // batch_size + 1} completed. Total node_ids to process: {len(node_ids)}")
+                context.log.info(f"Time taken to process batch: {batch_processing_time:.2f} seconds")
+                context.log.info(f"Cumulative 'CPU time used' heuristic in window: {cpu_time_used:.2f} seconds")
+                context.log.info(f"Cumulative 'Real time used' in window: {real_time_used:.2f} seconds")
+                context.log.info("-" * 30)
 
 
             error_counts = {"count_403_errors": count_403_errors, "count_502_errors": count_502_errors}
@@ -5471,9 +5463,9 @@ def create_latest_contributor_data_asset(env_prefix: str):
         final_df = final_df.drop(columns=['contributor_node_id_from_mapping'])
 
         # print info about the contributor_results_df
-        print(f"contributor_results_df:\n {final_df.info()}")
+        context.log.info(f"contributor_results_df:\n {final_df.info()}")
         # print first 5 rows as string
-        print(f"contributor_results_df:\n {final_df.head().to_string()}")
+        context.log.info(f"contributor_results_df:\n {final_df.head().to_string()}")
 
         # write the data to the latest_inactive_contributors table
         # use truncate and append to avoid removing indexes
@@ -5483,7 +5475,7 @@ def create_latest_contributor_data_asset(env_prefix: str):
                     # first truncate the table, idempotently
                     # This ensures the table is empty if it exists, 
                     # and does nothing (without error) if it doesn't exist.
-                    print("writing to latest_contributor_data table. First truncating the table, if exists. Then appending the data, else creating the table.")
+                    context.log.info("writing to latest_contributor_data table. First truncating the table, if exists. Then appending the data, else creating the table.")
                     idempotent_truncate_sql = f"""
                     DO $$
                     BEGIN
@@ -5566,7 +5558,7 @@ def get_github_contributor_followers_count(context, node_ids, gh_pat): # Renamed
     for i in range(0, len(node_ids), batch_size):
         current_batch_node_ids = node_ids[i:i + batch_size]
         batch_number = i // batch_size + 1
-        print(f"Processing batch: {batch_number} ({i} - {min(i + batch_size, len(node_ids)) -1} of {len(node_ids)-1})")
+        context.log.info(f"Processing batch: {batch_number} ({i} - {min(i + batch_size, len(node_ids)) -1} of {len(node_ids)-1})")
 
         query_definition_parts = []
         query_body_parts = []
@@ -5599,7 +5591,7 @@ def get_github_contributor_followers_count(context, node_ids, gh_pat): # Renamed
         request_successful_for_batch = False
 
         for attempt in range(max_retries_main_batch):
-            print(f"  Batch {batch_number}, Main Request Attempt: {attempt + 1}")
+            context.log.info(f"  Batch {batch_number}, Main Request Attempt: {attempt + 1}")
             try:
                 response = requests.post(api_url, json={'query': query, 'variables': variables}, headers=headers, timeout=60)
                 time.sleep(1.0 + random.uniform(0, 0.5)) # Basic sleep after each request
@@ -5616,7 +5608,7 @@ def get_github_contributor_followers_count(context, node_ids, gh_pat): # Renamed
                             # Basic exponential backoff for GraphQL rate limits
                             delay = (2 ** attempt) * 5 + random.uniform(0,1)
                             delay = min(delay, 300) # Cap delay
-                            print(f"  Rate limited (GraphQL Batch {batch_number}). Waiting {delay:.2f}s...")
+                            context.log.warning(f"  Rate limited (GraphQL Batch {batch_number}). Waiting {delay:.2f}s...")
                             time.sleep(delay)
                             break # Break from errors loop, retry the request
                     if is_rate_limited:
@@ -5651,14 +5643,14 @@ def get_github_contributor_followers_count(context, node_ids, gh_pat): # Renamed
                         error_counts["count_502_errors"] +=1
                         delay = (2 ** attempt) * 3 + random.uniform(0,1) # Slightly more patient for 502s
                         delay = min(delay, 180)
-                        print(f"  Server error {e.response.status_code}. Retrying in {delay:.2f}s...")
+                        context.log.warning(f"  Server error {e.response.status_code}. Retrying in {delay:.2f}s...")
                         time.sleep(delay)
                         continue
                     elif e.response.status_code in (403, 429):
                         error_counts["count_403_errors"] += 1
                         delay = (2 ** attempt) * 5 + random.uniform(0,1)
                         delay = min(delay, 300)
-                        print(f"  Rate limit/Auth error {e.response.status_code}. Retrying in {delay:.2f}s...")
+                        context.log.warning(f"  Rate limit/Auth error {e.response.status_code}. Retrying in {delay:.2f}s...")
                         time.sleep(delay)
                         continue
                 if attempt == max_retries_main_batch - 1:
@@ -5695,10 +5687,10 @@ def get_github_contributor_followers_count(context, node_ids, gh_pat): # Renamed
                 if node_id_in_batch_final_fail not in results:
                     results[node_id_in_batch_final_fail] = {"id": node_id_in_batch_final_fail, "followers_total_count": None} # Indicate failure/no data
 
-        print(f"Batch {batch_number} completed processing.")
-        print("-" * 40) # Keep for visual separation in logs if desired
+        context.log.info(f"Batch {batch_number} completed processing.")
+        context.log.info("-" * 40) # Keep for visual separation in logs if desired
 
-    print(f"Finished fetching follower counts. Processed {len(results)} contributors.")
+    context.log.info(f"Finished fetching follower counts. Processed {len(results)} contributors.")
     return results, error_counts
 
 
@@ -5887,7 +5879,7 @@ def get_github_contributor_following_count(context, node_ids, gh_pat):
     batch_time_history = []
 
     for i in range(0, len(node_ids), batch_size):
-        print(f"Processing batch: {i // batch_size + 1} ({i} - {min(i + batch_size, len(node_ids)) -1} of {len(node_ids)-1})")
+        context.log.info(f"Processing batch: {i // batch_size + 1} ({i} - {min(i + batch_size, len(node_ids)) -1} of {len(node_ids)-1})")
         batch_start_time = time.time()
         current_batch_node_ids = node_ids[i:i + batch_size]
         processed_in_batch = set()
@@ -5923,11 +5915,11 @@ def get_github_contributor_following_count(context, node_ids, gh_pat):
         request_successful_for_batch = False
 
         for attempt in range(max_retries_main_batch):
-            print(f"  Batch {i // batch_size + 1}, Main Request Attempt: {attempt + 1}")
+            context.log.info(f"  Batch {i // batch_size + 1}, Main Request Attempt: {attempt + 1}")
             
             if cpu_time_used >= cpu_time_limit and real_time_used < real_time_window:
                 delay = max(1, (cpu_time_used - cpu_time_limit) / 2)
-                print(f"  CPU time heuristic. Delaying main batch for {delay:.2f}s.")
+                context.log.warning(f"  CPU time heuristic. Delaying main batch for {delay:.2f}s.")
                 time.sleep(delay)
                 cpu_time_used = real_time_used = 0
             elif real_time_used >= real_time_window:
@@ -5937,7 +5929,7 @@ def get_github_contributor_following_count(context, node_ids, gh_pat):
             try:
                 response = requests.post(api_url, json={'query': query, 'variables': variables}, headers=headers, timeout=60) 
                 response_time = time.time() - batch_req_start_time_inner
-                print(f"  Main batch API request time: {response_time:.2f} seconds")
+                context.log.info(f"  Main batch API request time: {response_time:.2f} seconds")
                 time.sleep(2.0) 
                 
                 response.raise_for_status()
@@ -5946,7 +5938,7 @@ def get_github_contributor_following_count(context, node_ids, gh_pat):
                 if 'errors' in data and data['errors']:
                     is_rate_limited = False
                     for error in data['errors']:
-                        print(f"  GraphQL Error (Main Batch): {error.get('message', str(error))}")
+                        context.log.warning(f"  GraphQL Error (Main Batch): {error.get('message', str(error))}")
                         if error.get('type') == 'RATE_LIMITED':
                             is_rate_limited = True
                             retry_after_graphql = error.get('extensions', {}).get('retryAfter')
@@ -5957,7 +5949,7 @@ def get_github_contributor_following_count(context, node_ids, gh_pat):
                             else: 
                                 delay = (2 ** attempt) * 5 + random.uniform(0,1)
                             delay = min(delay, 300)
-                            print(f"  Rate limited (GraphQL Main Batch). Waiting {delay:.2f}s...")
+                            context.log.warning(f"  Rate limited (GraphQL Main Batch). Waiting {delay:.2f}s...")
                             time.sleep(delay)
                             break 
                     if is_rate_limited: continue
@@ -5993,7 +5985,7 @@ def get_github_contributor_following_count(context, node_ids, gh_pat):
                     request_successful_for_batch = True 
                     break 
             except requests.exceptions.HTTPError as e:
-                print(f"  HTTP error (Main Batch {i // batch_size + 1}): {e}")
+                context.log.warning(f"  HTTP error (Main Batch {i // batch_size + 1}): {e}")
                 if e.response is not None:
                     if e.response.status_code in (502, 504): 
                         error_counts["count_502_errors"] +=1
@@ -6014,13 +6006,13 @@ def get_github_contributor_following_count(context, node_ids, gh_pat):
                 else: 
                     time.sleep((2 ** attempt) + random.uniform(0,1))
             except requests.exceptions.RequestException as e:
-                print(f"  RequestException (Main Batch {i // batch_size + 1}): {e}")
+                context.log.warning(f"  RequestException (Main Batch {i // batch_size + 1}): {e}")
                 if attempt == max_retries_main_batch - 1: 
                     break
                 time.sleep((2 ** attempt) * 2 + random.uniform(0,1))
             except Exception as e:
-                print(f"  Unexpected error (Main Batch {i // batch_size + 1}): {e}")
-                print(traceback.format_exc())
+                context.log.warning(f"  Unexpected error (Main Batch {i // batch_size + 1}): {e}")
+                context.log.warning(traceback.format_exc())
                 if attempt == max_retries_main_batch - 1: 
                     break
                 time.sleep(5)
@@ -6036,9 +6028,9 @@ def get_github_contributor_following_count(context, node_ids, gh_pat):
 
         batch_time_history.append(batch_processing_time)
         if len(batch_time_history) > 1: 
-            print(f"  Average total batch processing time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
-        print(f"Batch {i // batch_size + 1} completed. Time: {batch_processing_time:.2f}s. CPU heuristic: {cpu_time_used:.2f}s. Real time: {real_time_used:.2f}s.")
-        print("-" * 40)
+            context.log.info(f"  Average total batch processing time: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
+        context.log.info(f"Batch {i // batch_size + 1} completed. Time: {batch_processing_time:.2f}s. CPU heuristic: {cpu_time_used:.2f}s. Real time: {real_time_used:.2f}s.")
+        context.log.info("-" * 40)
     
     return results, error_counts
 
@@ -6170,7 +6162,7 @@ def create_latest_contributor_following_count_asset(env_prefix: str):
             )
 
         # print info about the contributor_results_df
-        print(f"contributor_following_df:\n {contributor_following_df.info()}")
+        context.log.info(f"contributor_following_df:\n {contributor_following_df.info()}")
 
         # write the data to the latest_contributor_following table
         # use truncate and append to avoid removing indexes
@@ -6180,7 +6172,7 @@ def create_latest_contributor_following_count_asset(env_prefix: str):
                     # first truncate the table, idempotently
                     # This ensures the table is empty if it exists, 
                     # and does nothing (without error) if it doesn't exist.
-                    print(f"writing to {raw_schema}.latest_contributor_following table. First truncating the table, if exists. Then appending the data, else creating the table.")
+                    context.log.info(f"writing to {raw_schema}.latest_contributor_following table. First truncating the table, if exists. Then appending the data, else creating the table.")
                     idempotent_truncate_sql = f"""
                     DO $$
                     BEGIN
@@ -6262,7 +6254,7 @@ def get_github_user_latest_activity(context, node_ids, gh_pat):
     one_year_ago_utc = now_utc - pd.Timedelta(days=365) # Contributions from the last year
     
     for i in range(0, len(node_ids), batch_size):
-        print(f"Processing batch for latest activity: {i // batch_size + 1} ({i} - {min(i + batch_size, len(node_ids)) -1} of {len(node_ids)-1})")
+        context.log.info(f"Processing batch for latest activity: {i // batch_size + 1} ({i} - {min(i + batch_size, len(node_ids)) -1} of {len(node_ids)-1})")
         batch_start_time = time.time()
         current_batch_node_ids = node_ids[i:i + batch_size]
         processed_in_batch = set()
@@ -6300,12 +6292,12 @@ def get_github_user_latest_activity(context, node_ids, gh_pat):
         request_successful_for_batch = False
 
         for attempt in range(max_retries_main_batch):
-            print(f"  Batch {i // batch_size + 1}, Main Request Attempt: {attempt + 1}")
+            context.log.info(f"  Batch {i // batch_size + 1}, Main Request Attempt: {attempt + 1}")
             batch_req_start_time_inner = time.time()
             try:
                 response = requests.post(api_url, json={'query': query, 'variables': variables}, headers=headers, timeout=90)
                 response_time = time.time() - batch_req_start_time_inner
-                print(f"  Main batch API request time: {response_time:.2f} seconds")
+                context.log.info(f"  Main batch API request time: {response_time:.2f} seconds")
                 # Optional: Shorter sleep if requests are simpler, but keep some delay
                 time.sleep(1.0 + random.uniform(0, 0.5)) 
                 
@@ -6315,7 +6307,7 @@ def get_github_user_latest_activity(context, node_ids, gh_pat):
                 if 'errors' in data and data['errors']:
                     is_rate_limited = False
                     for error_item in data['errors']:
-                        print(f"  GraphQL Error (Main Batch): {error_item.get('message', str(error_item))}")
+                        context.log.warning(f"  GraphQL Error (Main Batch): {error_item.get('message', str(error_item))}")
                         if error_item.get('type') == 'RATE_LIMITED': is_rate_limited = True; break
                     if is_rate_limited: 
                         delay = (2 ** attempt) * 10 + random.uniform(0,1); time.sleep(min(delay, 300)); continue
@@ -6346,26 +6338,26 @@ def get_github_user_latest_activity(context, node_ids, gh_pat):
                             results[node_id] = {"data": latest_contribution_details}
                         else: 
                             # This part of your existing logic seems fine
-                            print(f"No data returned for node {node_id} in API response. Marking as inactive for this batch.")
+                            context.log.warning(f"No data returned for node {node_id} in API response. Marking as inactive for this batch.")
                             results[node_id] = {"data": None}
                         processed_in_batch.add(node_id)
                     request_successful_for_batch = True 
                     break # Break from retry loop for the batch
             except requests.exceptions.HTTPError as e:
-                print(f"  HTTP error (Main Batch {i // batch_size + 1}, Attempt {attempt+1}): {e}")
+                context.log.warning(f"  HTTP error (Main Batch {i // batch_size + 1}, Attempt {attempt+1}): {e}")
                 if e.response is not None:
-                    print(f"  Response status: {e.response.status_code}, Response text: {e.response.text[:500]}")
+                    context.log.warning(f"  Response status: {e.response.status_code}, Response text: {e.response.text[:500]}")
                     if e.response.status_code in (502, 503, 504): error_counts["count_502_errors"] +=1 # Grouping 50x errors
                     elif e.response.status_code in (403, 429): error_counts["count_403_errors"] += 1
                 if attempt == max_retries_main_batch - 1: break # Failed all retries for the batch
                 time.sleep((2 ** attempt) * 5 + random.uniform(0,1)); continue # Exponential backoff
             except requests.exceptions.RequestException as e: 
-                print(f"  RequestException (Main Batch {i // batch_size + 1}, Attempt {attempt+1}): {e}")
+                context.log.warning(f"  RequestException (Main Batch {i // batch_size + 1}, Attempt {attempt+1}): {e}")
                 if attempt == max_retries_main_batch - 1: break
                 time.sleep((2 ** attempt) * 5 + random.uniform(0,1)); continue
             except Exception as e: 
-                print(f"  Unexpected error (Main Batch {i // batch_size + 1}, Attempt {attempt+1}): {e}")
-                print(traceback.format_exc())
+                context.log.warning(f"  Unexpected error (Main Batch {i // batch_size + 1}, Attempt {attempt+1}): {e}")
+                context.log.warning(traceback.format_exc())
                 if attempt == max_retries_main_batch - 1: break
                 time.sleep(5); continue
 
@@ -6374,15 +6366,15 @@ def get_github_user_latest_activity(context, node_ids, gh_pat):
             for node_id_in_batch in current_batch_node_ids:
                 if node_id_in_batch not in processed_in_batch:
                     results[node_id_in_batch] = {"is_active": False, "data": None} # Or some other failure indicator
-            print(f"Batch {i // batch_size + 1} failed after {max_retries_main_batch} attempts.")
+            context.log.warning(f"Batch {i // batch_size + 1} failed after {max_retries_main_batch} attempts.")
             
         batch_processing_time = time.time() - batch_start_time
         batch_time_history.append(batch_processing_time)
         # Log average batch time less frequently or if changed significantly
         if len(batch_time_history) % 5 == 0 and len(batch_time_history) > 0 : 
-            print(f"  Average total batch processing time over last {len(batch_time_history)} batches: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
-        print(f"Batch {i // batch_size + 1} completed. Time: {batch_processing_time:.2f}s.")
-        print("-" * 40)
+            context.log.info(f"  Average total batch processing time over last {len(batch_time_history)} batches: {sum(batch_time_history) / len(batch_time_history):.2f} seconds")
+        context.log.info(f"Batch {i // batch_size + 1} completed. Time: {batch_processing_time:.2f}s.")
+        context.log.info("-" * 40)
     
     return results, error_counts
 
@@ -6446,7 +6438,7 @@ def create_latest_contributor_activity_asset(env_prefix: str):
         if not activity_results:
             context.log.error("No activity results returned by get_github_user_latest_activity function.")
             return dg.MaterializeResult(metadata={"row_count": dg.MetadataValue.int(0)})
-        print(f"found {len(activity_results)} activity results. Proceeding to create dataframe...")
+        context.log.info(f"found {len(activity_results)} activity results. Proceeding to create dataframe...")
 
         processed_activity_rows = []
         for db_contributor_node_id, result_item in activity_results.items():
@@ -6467,7 +6459,7 @@ def create_latest_contributor_activity_asset(env_prefix: str):
                         "has_contributed_in_last_year": has_contributed_in_last_year,
                     }
                     processed_activity_rows.append(row_data)
-        print(f"create flatted python list of activity rows, of length {len(processed_activity_rows)}. Proceeding to create dataframe...")
+        context.log.info(f"create flatted python list of activity rows, of length {len(processed_activity_rows)}. Proceeding to create dataframe...")
 
         if not processed_activity_rows:
             context.log.warning("No processed rows with activity to write to the database.")
@@ -6503,7 +6495,7 @@ def create_latest_contributor_activity_asset(env_prefix: str):
                     # first truncate the table, idempotently
                     # This ensures the table is empty if it exists, 
                     # and does nothing (without error) if it doesn't exist.
-                    print(f"writing to {target_schema}.{target_table_name} table. First truncating the table, if exists. Then appending the data, else creating the table.")
+                    context.log.info(f"writing to {target_schema}.{target_table_name} table. First truncating the table, if exists. Then appending the data, else creating the table.")
                     idempotent_truncate_sql = f"""
                     DO $$
                     BEGIN
