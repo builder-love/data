@@ -1,5 +1,5 @@
 import dagster as dg
-from dagster import AssetIn
+from dagster import AssetIn, AssetKey
 import os
 import requests
 from requests.adapters import HTTPAdapter
@@ -190,10 +190,19 @@ def get_crypto_ecosystems_project_json(context, gcs_path: str):
 
 # This asset now depends on the upstream asset's GCS path output.
 def create_crypto_ecosystems_project_json_asset(env_prefix: str):
+
+    # Construct the full, prefixed AssetKey for the upstream asset.
+    upstream_asset_key = AssetKey([env_prefix, "update_crypto_ecosystems_repo_and_run_export"])
+
     @dg.asset(
         key_prefix=env_prefix,
         name="crypto_ecosystems_project_json",
-        ins={"update_crypto_ecosystems_repo_and_run_export": AssetIn()},
+        # Use the fully-qualified AssetKey in the AssetIn definition.
+        ins={
+            "update_crypto_ecosystems_repo_and_run_export": AssetIn(
+                key=upstream_asset_key
+            )
+        },
         # Updated resource keys: added GCS client, removed local repo config
         required_resource_keys={"gcs_storage_client_resource", "cloud_sql_postgres_resource", "active_env_config"},
         group_name="ingestion",
