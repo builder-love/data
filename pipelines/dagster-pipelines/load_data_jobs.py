@@ -378,3 +378,44 @@ def create_update_crypto_ecosystems_repo_and_run_export_asset(env_prefix: str):
             raise Failure(f"An unexpected error occurred: {e}") from e
 
     return _update_crypto_ecosystems_repo_and_run_export
+
+
+def create_io_manager_test_asset(env_prefix: str):
+    """
+    A lightweight factory function to create a test asset for the IO manager.
+    """
+    @dg.asset(
+        key_prefix=env_prefix,
+        name="io_manager_test",
+        # This asset explicitly requires the "gcs" resource we are testing.
+        required_resource_keys={"gcs"}, 
+        group_name="debug",
+        description="A simple asset to test if the IO manager can connect to GCS.",
+    )
+    def _io_manager_test_asset(context) -> str:
+        """
+        This asset simply returns a string. 
+        Dagster will then attempt to save this string using the configured IO manager.
+        If the IO manager's GCS connection is working, this asset will succeed.
+        """
+        context.log.info("Attempting to test the IO Manager...")
+        
+        # We can also add an explicit check of the resource here for more direct feedback.
+        # This will fail fast if the resource itself isn't being loaded correctly.
+        try:
+            gcs_resource = context.resources.gcs
+            if gcs_resource is None:
+                raise ValueError("Resource with key 'gcs' was not found on context.resources")
+
+            client = gcs_resource.get_client()
+            context.log.info(f"Successfully accessed GCS client from resource 'gcs': {client}")
+            context.log.info("The 'gcs' resource is configured correctly. Now testing IO manager by returning output.")
+
+        except Exception as e:
+            context.log.error(f"Failed to access GCS client from resource 'gcs' within the asset body. Error: {e}")
+            # Re-raise to make sure the asset fails clearly if the resource is the problem
+            raise
+            
+        return "Hello, IO Manager! If you see this in GCS, the test passed."
+
+    return _io_manager_test_asset

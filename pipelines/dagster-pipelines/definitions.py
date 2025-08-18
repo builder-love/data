@@ -284,6 +284,20 @@ final_assets = prefixed_common_assets + ([all_dbt_assets] if all_dbt_assets else
 # Determine if a keyfile path is provided. This will be true locally and false in GKE.
 gcp_keyfile = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 gcs_resource_config = {"gcp_keyfile_path": gcp_keyfile} if gcp_keyfile else {}
+# Create the shared GCS resource instance that all parts of the app will use
+shared_gcs_resource = gcs_storage_client_resource(**gcs_resource_config)
+
+# debug ------------------------------------------------------------------------------------------------------ ######
+# /////////////////////////////////////////////////////////////////////////////////////////////////////////// #
+# /////////////////////////////////////////////////////////////////////////////////////////////////////////// #
+# /////////////////////////////////////////////////////////////////////////////////////////////////////////// #
+from .load_data_jobs import create_io_manager_test_asset
+stg_io_manager_test_asset = create_io_manager_test_asset(env_prefix="stg")
+final_assets.append(stg_io_manager_test_asset)
+# /////////////////////////////////////////////////////////////////////////////////////////////////////////// #
+# /////////////////////////////////////////////////////////////////////////////////////////////////////////// #
+# /////////////////////////////////////////////////////////////////////////////////////////////////////////// #
+# debug ------------------------------------------------------------------------------------------------------ ######
 
 # Define a single, unified Definitions object
 defs = Definitions(
@@ -309,13 +323,12 @@ defs = Definitions(
         "dbt_stg_resource": dbt_stg_resource,
         "dbt_prod_resource": dbt_prod_resource,
         "electric_capital_ecosystems_repo": electric_capital_ecosystems_repo,
-        "gcs": gcs_storage_client_resource(**gcs_resource_config),
-        # Define the IO manager for passing outputs between asset steps.
+        "gcs": shared_gcs_resource,
+        # Configure the IO Manager by passing the shared resource object directly
         "io_manager": GCSPickleIOManager(
-            gcs_bucket="bl-dagster-io-storage", # Bucket for storing intermediate outputs
-            gcs_prefix=active_env_target, # A prefix within the bucket
-            # Tell the IO manager to use the GCS client defined above.
-            gcs_resource_key="gcs"
+            gcs_bucket="bl-dagster-io-storage",
+            gcs_prefix=active_env_target,
+            gcs=shared_gcs_resource  # <-- Pass the object directly
         ),
         "github_api": github_api_resource(),
     },
