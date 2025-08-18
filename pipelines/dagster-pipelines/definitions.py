@@ -315,7 +315,7 @@ defs = Definitions(
             gcs_bucket="bl-dagster-io-storage", # Bucket for storing intermediate outputs
             gcs_prefix=active_env_target, # A prefix within the bucket
             # Tell the IO manager to use the GCS client defined above.
-            gcs_resource_key="gcs_storage_client_resource"
+            gcs=gcs_storage_client_resource.configured(gcs_resource_config)
         ),
         "github_api": github_api_resource(),
     },
