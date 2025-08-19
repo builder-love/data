@@ -130,19 +130,22 @@ def contributor_node_id_swap(context, df_contributors: pd.DataFrame, cloud_sql_e
 
 # Helper function to get the export.jsonl file from GCS. 
 # uses io_manager to get the filepath output by the upstream asset
-def get_crypto_ecosystems_project_json(context, gcs_path: str):
+# Handles streaming, batching, and writing to Postgres.
+def stream_gcs_to_postgres_in_batches(context, gcs_path: str, table_name: str, schema: str, batch_size: int = 10000, data_timestamp: datetime = None):
     """
-    Downloads the exports.jsonl file from a GCS path line-by-line,
-    processes it in chunks, and loads it into a pandas DataFrame to save memory.
+    Streams a JSONL file from GCS, processes it in batches, and appends each batch
+    to a PostgreSQL table. 
     """
     process = psutil.Process(os.getpid())
+    gcs_resource = context.resources.gcs
+    storage_client = gcs_resource.get_client()
+    cloud_sql_engine = context.resources.cloud_sql_postgres_resource
+
     def log_memory_usage(stage: str):
         memory_mb = process.memory_info().rss / (1024 * 1024)
         context.log.info(f"Memory Usage ({stage}): {memory_mb:.2f} MB")
 
-    gcs_resource = context.resources.gcs
-    storage_client = gcs_resource.get_client()
-
+    # 1. Parse GCS Path
     try:
         parsed_path = urlparse(gcs_path)
         bucket_name = parsed_path.netloc
@@ -150,49 +153,69 @@ def get_crypto_ecosystems_project_json(context, gcs_path: str):
     except Exception as e:
         raise ValueError(f"Could not parse GCS path '{gcs_path}': {e}")
 
-    context.log.info(f"Streaming and processing {blob_name} from GCS bucket {bucket_name} in chunks...")
+    context.log.info(f"Streaming {blob_name} to Postgres table {schema}.{table_name} in batches of {batch_size}...")
 
-    try:
-        bucket = storage_client.bucket(bucket_name)
-        blob = bucket.blob(blob_name)
+    # 2. Truncate the staging table once before starting
+    with cloud_sql_engine.connect() as conn:
+        context.log.info(f"Truncating {schema}.{table_name} table.")
+        conn.execute(sqlalchemy.text(f"TRUNCATE TABLE {schema}.{table_name};"))
+        conn.commit()
 
-        # Instead of download_as_text(), we open a stream.
-        # This reads the file line-by-line without loading it all into memory.
-        list_of_dicts = []
-        with blob.open("r") as f:
-            for line in f:
-                # Each line is a JSON object. We parse it and add it to a list.
-                list_of_dicts.append(pd.read_json(io.StringIO(line), lines=True).to_dict('records')[0])
+    # 3. Stream from GCS and process in batches
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(blob_name)
+    batch_of_dicts = []
+    total_rows_processed = 0
 
-        log_memory_usage("After streaming and parsing")
+    with blob.open("r", encoding="utf-8") as f:
+        for line in f:
+            # Use the much faster standard json library to parse each line
+            batch_of_dicts.append(json.loads(line))
 
-        # Now, create the DataFrame from the list of dictionaries.
-        df = pd.DataFrame(list_of_dicts)
-        log_memory_usage("After creating DataFrame from list")
+            if len(batch_of_dicts) >= batch_size:
+                # Once the batch is full, process and write it to the database
+                df_batch = pd.DataFrame(batch_of_dicts)
+                
+                # Perform transformations on the small batch DataFrame
+                df_batch.rename(columns={
+                    "eco_name": "project_title",
+                    "branch": "sub_ecosystems",
+                    "repo_url": "repo",
+                    "tags": "tags"
+                }, inplace=True)
+                df_batch['data_timestamp'] = data_timestamp
 
-        if df.empty:
-            raise ValueError("DataFrame is empty after reading from GCS content.")
+                # Append batch to postgres
+                df_batch.to_sql(table_name, cloud_sql_engine, if_exists='append', index=False, schema=schema)
+                
+                total_rows_processed += len(batch_of_dicts)
+                context.log.info(f"Processed and wrote a batch of {len(batch_of_dicts)} rows. Total rows: {total_rows_processed}")
+                log_memory_usage(f"After writing batch {total_rows_processed // batch_size}")
+                
+                # Clear the list to free memory
+                batch_of_dicts = []
 
-        df.rename(columns={
-            "eco_name": "project_title",
-            "branch": "sub_ecosystems",
-            "repo_url": "repo",
-            "tags": "tags"
-        }, inplace=True)
+        # 4. Process any remaining records in the last partial batch
+        if batch_of_dicts:
+            df_batch = pd.DataFrame(batch_of_dicts)
+            df_batch.rename(columns={
+                "eco_name": "project_title",
+                "branch": "sub_ecosystems",
+                "repo_url": "repo",
+                "tags": "tags"
+            }, inplace=True)
+            df_batch['data_timestamp'] = data_timestamp
 
-        expected_cols = ['project_title', 'sub_ecosystems', 'repo', 'tags']
-        if set(expected_cols) != set(df.columns):
-            context.log.info(f"DataFrame columns: {df.columns}")
-            context.log.info(f"Expected columns: {expected_cols}")
-            raise ValueError("DataFrame columns are not as expected")
+            df_batch.to_sql(table_name, cloud_sql_engine, if_exists='append', index=False, schema=schema)
+            total_rows_processed += len(batch_of_dicts)
+            context.log.info(f"Processed and wrote the final batch of {len(batch_of_dicts)} rows. Total rows: {total_rows_processed}")
+            log_memory_usage("After final batch")
 
-    except Exception as e:
-        raise ValueError(f"Error processing file from GCS path {gcs_path}: {e}") from e
+    context.log.info("Successfully streamed all data from GCS to PostgreSQL.")
+    return total_rows_processed
 
-    context.log.info("Successfully loaded and processed data from GCS.")
-    return df
 
-# helper function to delete old gcs files in the crypto ecosystems bucket
+# (delete_old_gcs_files function remains the same)
 def delete_old_gcs_files(context, bucket_name: str, days_old: int):
     """
     Scans a GCS bucket and deletes any blobs older than 4 weeks.
@@ -201,16 +224,14 @@ def delete_old_gcs_files(context, bucket_name: str, days_old: int):
     gcs_resource = context.resources.gcs
     storage_client = gcs_resource.get_client()
     
-    # Define the cutoff date: days_old ago from the current UTC time
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=days_old)
     
     try:
         bucket = storage_client.bucket(bucket_name)
-        blobs = bucket.list_blobs() # Get all blobs in the bucket
+        blobs = bucket.list_blobs()
         
         deleted_count = 0
         for blob in blobs:
-            # blob.time_created is timezone-aware (UTC by default)
             if blob.time_created < cutoff_date:
                 context.log.info(f"Deleting old file: {blob.name} (created on {blob.time_created.strftime('%Y-%m-%d')})")
                 blob.delete()
@@ -222,76 +243,63 @@ def delete_old_gcs_files(context, bucket_name: str, days_old: int):
             context.log.info(f"No files older than {days_old} days found in {bucket_name}.")
             
     except Exception as e:
-        # Log the error but don't fail the entire asset if cleanup fails
         context.log.error(f"Could not complete cleanup of bucket {bucket_name}. Error: {e}")
 
 
-# Get the jsonl from gcs and upload to postgres staging table. 
-# depends on the upstream asset's GCS path output.
+# The main asset becomes much cleaner.
 def create_crypto_ecosystems_project_json_asset(env_prefix: str):
 
-    # Construct the full, prefixed AssetKey for the upstream asset.
     upstream_asset_key = AssetKey([env_prefix, "update_crypto_ecosystems_repo_and_run_export"])
 
     @dg.asset(
         key_prefix=env_prefix,
         name="crypto_ecosystems_project_json",
-        ins={
-            "update_crypto_ecosystems_repo_and_run_export": AssetIn(
-                key=upstream_asset_key
-            )
-        },
+        ins={"update_crypto_ecosystems_repo_and_run_export": AssetIn(key=upstream_asset_key)},
         required_resource_keys={"gcs", "cloud_sql_postgres_resource", "active_env_config"},
         group_name="ingestion",
-        description="This asset gets the project/repo list from the crypto ecosystems GCS file and loads it to a staging table.",
+        description="This asset streams the project/repo list from GCS and loads it to a staging table in batches.",
     )
     def _crypto_ecosystems_project_json_env_specific(context, update_crypto_ecosystems_repo_and_run_export: str) -> dg.MaterializeResult:
-        process = psutil.Process(os.getpid())
-        def log_memory_usage(stage: str):
-            memory_mb = process.memory_info().rss / (1024 * 1024)
-            context.log.info(f"Memory Usage ({stage}): {memory_mb:.2f} MB")
-
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config
         raw_schema = env_config["raw_schema"]
-        context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
-
+        table_name = "crypto_ecosystems_raw_file_staging"
         gcs_file_path = update_crypto_ecosystems_repo_and_run_export
+        data_timestamp = pd.Timestamp.now()
+        
+        context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
         if not gcs_file_path:
             raise ValueError("GCS file path from upstream asset is empty or None.")
 
         try:
-            log_memory_usage("Before GCS")
-            df = get_crypto_ecosystems_project_json(context, gcs_file_path)
-            log_memory_usage("After GCS")
-
-            df['data_timestamp'] = pd.Timestamp.now()
-
-            with cloud_sql_engine.connect() as conn:
-                context.log.info(f"Truncating {raw_schema}.crypto_ecosystems_raw_file_staging table")
-                conn.execute(sqlalchemy.text(f"TRUNCATE TABLE {raw_schema}.crypto_ecosystems_raw_file_staging;"))
-                conn.commit()
-
-            context.log.info(f"Appending new data to {raw_schema}.crypto_ecosystems_raw_file_staging table")
-            df.to_sql('crypto_ecosystems_raw_file_staging', cloud_sql_engine, if_exists='append', index=False, schema=raw_schema)
-
+            # The new helper function handles everything
+            total_rows = stream_gcs_to_postgres_in_batches(
+                context,
+                gcs_path=gcs_file_path,
+                table_name=table_name,
+                schema=raw_schema,
+                batch_size=20000,
+                data_timestamp=data_timestamp
+            )
         except Exception as e:
-            raise ValueError(f"Error processing GCS file and loading to database: {e}") from e
+            raise ValueError(f"Error streaming GCS file to database: {e}") from e
 
+        # Get metadata for the MaterializeResult
         with cloud_sql_engine.connect() as conn:
-            row_count = conn.execute(text(f"select count(*) from {raw_schema}.crypto_ecosystems_raw_file_staging")).scalar_one()
-            preview_df = pd.read_sql(text(f"select * from {raw_schema}.crypto_ecosystems_raw_file_staging limit 10"), conn)
+            preview_df = pd.read_sql(text(f"SELECT * FROM {raw_schema}.{table_name} LIMIT 10"), conn)
+            unique_project_count = conn.execute(text(f"SELECT COUNT(DISTINCT project_title) FROM {raw_schema}.{table_name}")).scalar_one()
+            unique_repo_count = conn.execute(text(f"SELECT COUNT(DISTINCT repo) FROM {raw_schema}.{table_name}")).scalar_one()
 
-        # cleanup - delete old gcs files
+        # Cleanup old GCS files
         delete_old_gcs_files(context, "bl-crypto-ecosystems-export", 28)
 
         return dg.MaterializeResult(
             metadata={
-                "row_count": dg.MetadataValue.int(row_count),
+                "row_count": dg.MetadataValue.int(total_rows),
                 "preview": dg.MetadataValue.md(preview_df.to_markdown(index=False)),
-                "unique_project_count": dg.MetadataValue.int(df['project_title'].nunique()),
-                "unique_repo_count": dg.MetadataValue.int(df['repo'].nunique()),
+                "unique_project_count": dg.MetadataValue.int(unique_project_count),
+                "unique_repo_count": dg.MetadataValue.int(unique_repo_count),
             }
         )
 
