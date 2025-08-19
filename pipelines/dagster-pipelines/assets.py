@@ -136,14 +136,9 @@ def stream_gcs_to_postgres_in_batches(context, gcs_path: str, table_name: str, s
     Streams a JSONL file from GCS, processes it in batches, and appends each batch
     to a PostgreSQL table. 
     """
-    process = psutil.Process(os.getpid())
     gcs_resource = context.resources.gcs
     storage_client = gcs_resource.get_client()
     cloud_sql_engine = context.resources.cloud_sql_postgres_resource
-
-    def log_memory_usage(stage: str):
-        memory_mb = process.memory_info().rss / (1024 * 1024)
-        context.log.info(f"Memory Usage ({stage}): {memory_mb:.2f} MB")
 
     # 1. Parse GCS Path
     try:
@@ -190,7 +185,6 @@ def stream_gcs_to_postgres_in_batches(context, gcs_path: str, table_name: str, s
                 
                 total_rows_processed += len(batch_of_dicts)
                 context.log.info(f"Processed and wrote a batch of {len(batch_of_dicts)} rows. Total rows: {total_rows_processed}")
-                log_memory_usage(f"After writing batch {total_rows_processed // batch_size}")
                 
                 # Clear the list to free memory
                 batch_of_dicts = []
@@ -209,7 +203,6 @@ def stream_gcs_to_postgres_in_batches(context, gcs_path: str, table_name: str, s
             df_batch.to_sql(table_name, cloud_sql_engine, if_exists='append', index=False, schema=schema)
             total_rows_processed += len(batch_of_dicts)
             context.log.info(f"Processed and wrote the final batch of {len(batch_of_dicts)} rows. Total rows: {total_rows_processed}")
-            log_memory_usage("After final batch")
 
     context.log.info("Successfully streamed all data from GCS to PostgreSQL.")
     return total_rows_processed
@@ -292,7 +285,7 @@ def create_crypto_ecosystems_project_json_asset(env_prefix: str):
             unique_repo_count = conn.execute(text(f"SELECT COUNT(DISTINCT repo) FROM {raw_schema}.{table_name}")).scalar_one()
 
         # Cleanup old GCS files
-        delete_old_gcs_files(context, "bl-crypto-ecosystems-export", 28)
+        delete_old_gcs_files(context, "crypto-ecosystems-export", 28)
 
         return dg.MaterializeResult(
             metadata={
