@@ -6432,12 +6432,12 @@ def get_github_user_latest_activity(context, node_ids, gh_pat):
 
 
 # Dagster Asset for Contributor Activity in past year (contributions only)
-# to accomodate multiple environments, we will use a factory function
+# to accommodate multiple environments, we will use a factory function
 def create_latest_contributor_activity_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="latest_contributor_activity",
-        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
+        required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api", "gcs"},
         group_name="ingestion",
         tags={"github_api": "True"},
         description="Retrieves GitHub user ID, login, and their latest activity (aiming for top 100) using the GitHub GraphQL API."
@@ -6453,7 +6453,6 @@ def create_latest_contributor_activity_asset(env_prefix: str):
         # tell the user what environment they are running in
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
-        fallback_filename = f"/tmp/contributor_activity_fallback_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.parquet"
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         gh_pat = github_api.get_client(config.key_name)
 
@@ -6494,18 +6493,11 @@ def create_latest_contributor_activity_asset(env_prefix: str):
 
         processed_activity_rows = []
         for db_contributor_node_id, result_item in activity_results.items():
-            # Check if the contributor node was processed successfully, is active, and has data
             if result_item.get("data") and isinstance(result_item.get("data"), dict):
                 user_data = result_item["data"]
-
-                # Ensure it's a User type
                 if user_data.get("__typename") == "User":
-                    github_api_user_node_id = user_data.get("id") # The Node ID from GitHub API for the user
-
-                    # Access the 'latest_commit' dictionary (or None)
+                    github_api_user_node_id = user_data.get("id")
                     has_contributed_in_last_year = user_data.get("has_contributed_in_last_year")
-
-                    # A latest commit was found for this user
                     row_data = {
                         "contributor_node_id": github_api_user_node_id,
                         "has_contributed_in_last_year": has_contributed_in_last_year,
@@ -6525,47 +6517,28 @@ def create_latest_contributor_activity_asset(env_prefix: str):
 
         contributor_activity_df = pd.DataFrame(processed_activity_rows)
         context.log.info(f"Processed {len(contributor_activity_df)} contributors' activity into DataFrame.")
-
-        # add unix datetime column
         contributor_activity_df['data_timestamp'] = pd.Timestamp.now()
-
-        # swap the github legacy contributor node id for the new format contributor node id
         contributor_activity_df = contributor_node_id_swap(context, contributor_activity_df, cloud_sql_engine)
 
-        # check results of swap
         if not isinstance(contributor_activity_df, pd.DataFrame) or contributor_activity_df.empty:
             context.log.error("no contributor results found after swapping legacy contributor node id for new format contributor node id")
-            return dg.MaterializeResult(
-                metadata={"row_count": dg.MetadataValue.int(0)}
-            )
+            return dg.MaterializeResult(metadata={"row_count": dg.MetadataValue.int(0)})
         
         target_table_name = 'latest_contributor_activity'
         target_schema = raw_schema
         try:
             with cloud_sql_engine.connect() as conn:
                 with conn.begin():
-                    # first truncate the table, idempotently
-                    # This ensures the table is empty if it exists, 
-                    # and does nothing (without error) if it doesn't exist.
                     context.log.info(f"writing to {target_schema}.{target_table_name} table. First truncating the table, if exists. Then appending the data, else creating the table.")
                     idempotent_truncate_sql = f"""
                     DO $$
                     BEGIN
-                    IF EXISTS (
-                        SELECT FROM pg_catalog.pg_tables
-                        WHERE  schemaname = '{target_schema}' -- Schema name in the catalog query
-                        AND    tablename  = '{target_table_name}'
-                    ) THEN
+                    IF EXISTS (SELECT FROM pg_catalog.pg_tables WHERE schemaname = '{target_schema}' AND tablename = '{target_table_name}') THEN
                         TRUNCATE TABLE {target_schema}.{target_table_name};
-                        RAISE NOTICE 'Table {target_schema}.{target_table_name} truncated.';
-                    ELSE
-                        RAISE NOTICE 'Table {target_schema}.{target_table_name} does not exist, no truncation needed.';
                     END IF;
                     END $$;
                     """
                     conn.execute(text(idempotent_truncate_sql))
-                    context.log.info(f"Ensured table {target_schema}.{target_table_name} is ready for new data (truncated if existed).")
-
                     contributor_activity_df.to_sql(
                         target_table_name, 
                         conn, 
@@ -6577,12 +6550,34 @@ def create_latest_contributor_activity_asset(env_prefix: str):
                     )
                     context.log.info(f"Table {target_schema}.{target_table_name} load successful.")
         except Exception as e:
-            context.log.error(f"Error writing to {target_schema}.{target_table_name} table: {e}")
+            # fallback logic uses GCS
+            context.log.error(f"Error writing to {target_schema}.{target_table_name} table: {e}. Writing to GCS as a fallback.")
             try:
-                contributor_activity_df.to_parquet(fallback_filename, index=False)
-                context.log.info(f"Fallback Parquet file saved to: {fallback_filename}")
+                gcs_bucket_name = "bl-pipeline-backup-files"
+                timestamp = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
+                blob_name = f"latest_contributor_activity/fallback_{timestamp}.parquet"
+                gcs_fallback_path = f"gs://{gcs_bucket_name}/{blob_name}"
+
+                # Get the GCS client from resources
+                gcs_resource = context.resources.gcs
+                storage_client = gcs_resource.get_client()
+                
+                # Write the DataFrame to an in-memory buffer
+                parquet_buffer = io.BytesIO()
+                contributor_activity_df.to_parquet(parquet_buffer, index=False)
+                parquet_buffer.seek(0) # Rewind the buffer to the beginning
+
+                # Upload the buffer to GCS
+                bucket = storage_client.bucket(gcs_bucket_name)
+                blob = bucket.blob(blob_name)
+                blob.upload_from_file(parquet_buffer, content_type='application/octet-stream')
+
+                context.log.info(f"Fallback Parquet file saved to GCS: {gcs_fallback_path}")
+
             except Exception as pe:
-                context.log.error(f"Error saving fallback Parquet file: {pe}")
+                context.log.error(f"Error saving fallback file to GCS: {pe}")
+            
+            # Still return a failure result
             return dg.MaterializeResult(metadata={"row_count": dg.MetadataValue.int(0)})
 
         final_row_count = len(contributor_activity_df)
