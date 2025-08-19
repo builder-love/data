@@ -209,6 +209,11 @@ def swap_target_schemas(context, previous_op_output):
         conn.execute(text(f"DROP SCHEMA IF EXISTS {target_schema_old} CASCADE;"))
         conn.execute(text(f"ALTER SCHEMA {target_schema} RENAME TO {target_schema_old};"))
         conn.execute(text(f"ALTER SCHEMA {temp_target_schema} RENAME TO {target_schema};"))
+         # finally, give access back to db_admin. This is necessary since the k8s db user performed the database swap
+        conn.execute(text(f"GRANT ALL PRIVILEGES ON SCHEMA {target_schema} TO db_admin;"))
+        conn.execute(text(f"GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA {target_schema} TO db_admin;"))
+        conn.execute(text(f"GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA {target_schema} TO db_admin;"))
+        conn.execute(text(f"GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA {target_schema} TO db_admin;"))
         conn.commit()
     context.log.info(f"Schemas swapped successfully: {temp_target_schema} is now {target_schema}. Old schema is {target_schema_old}.")
     return previous_op_output

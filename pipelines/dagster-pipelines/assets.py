@@ -22,6 +22,7 @@ import numpy as np
 import traceback
 from dagster import Config
 from .resources import github_api_resource 
+import psutil
 
 # Define the config schema for the github api resource
 class GithubAssetConfig(Config):
@@ -136,6 +137,10 @@ def get_crypto_ecosystems_project_json(context, gcs_path: str):
     Downloads the exports.jsonl file from a GCS path, processes it, 
     and loads it into a pandas DataFrame.
     """
+    process = psutil.Process(os.getpid())
+    def log_memory_usage(stage: str):
+        memory_mb = process.memory_info().rss / (1024 * 1024)
+        context.log.info(f"Memory Usage ({stage}): {memory_mb:.2f} MB")
     # 1. Get the custom resource object
     gcs_resource = context.resources.gcs
     # 2. Get the actual GCS client from the resource
@@ -161,11 +166,17 @@ def get_crypto_ecosystems_project_json(context, gcs_path: str):
         # Download the file contents as a string
         jsonl_content = blob.download_as_text()
 
+        context.log.info("Logging memory usage after downloading the jsonl file from gcs")
+        log_memory_usage("After jsonl file download")
+
         if not jsonl_content.strip():
             raise ValueError("Downloaded file from GCS is empty.")
 
         # Read the JSON Lines content from the string into a DataFrame
         df = pd.read_json(io.StringIO(jsonl_content), lines=True)
+
+        context.log.info("Logging memory usage after reading the jsonl file into a dataframe")
+        log_memory_usage("After jsonl file conversion to dataframe")
 
         if df.empty:
             raise ValueError("DataFrame is empty after reading from GCS content.")
@@ -215,7 +226,12 @@ def create_crypto_ecosystems_project_json_asset(env_prefix: str):
     # The argument name 'update_crypto_ecosystems_repo_and_run_export' creates a
     # dependency on the upstream asset with that name. It receives the GCS path.
     def _crypto_ecosystems_project_json_env_specific(context, update_crypto_ecosystems_repo_and_run_export: str) -> dg.MaterializeResult:
+        process = psutil.Process(os.getpid())
+        def log_memory_usage(stage: str):
+            memory_mb = process.memory_info().rss / (1024 * 1024)
+            context.log.info(f"Memory Usage ({stage}): {memory_mb:.2f} MB")
 
+        # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         env_config = context.resources.active_env_config 
         raw_schema = env_config["raw_schema"]  
@@ -228,8 +244,14 @@ def create_crypto_ecosystems_project_json_asset(env_prefix: str):
             raise ValueError("GCS file path from upstream asset is empty or None.")
 
         try:
+            context.log.info("Logging memory usage before accessing the gcs file")
+            log_memory_usage("Before GCS")
+
             # Call the updated helper function with the GCS path
             df = get_crypto_ecosystems_project_json(context, gcs_file_path)
+
+            context.log.info("Logging memory usage after accessing the gcs file")
+            log_memory_usage("After GCS")
 
             df['data_timestamp'] = pd.Timestamp.now()
 
