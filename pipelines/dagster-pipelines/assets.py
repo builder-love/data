@@ -6362,7 +6362,10 @@ def get_github_user_latest_activity(context, node_ids, gh_pat):
                         context.log.warning(f"  GraphQL Error (Main Batch): {error_item.get('message', str(error_item))}")
                         if error_item.get('type') == 'RATE_LIMITED': is_rate_limited = True; break
                     if is_rate_limited: 
-                        delay = (2 ** attempt) * 10 + random.uniform(0,1); time.sleep(min(delay, 300)); continue
+                        delay = (2 ** attempt) * 10 + random.uniform(0,1)
+                        context.log.info(f"  Rate limited. Sleeping for {delay} seconds.")
+                        time.sleep(min(delay, 300))
+                        continue
                 
                 if 'data' in data:
                     for j_node_idx, node_id in enumerate(current_batch_node_ids):
