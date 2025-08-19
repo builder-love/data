@@ -1,12 +1,12 @@
 import dagster as dg
-from dagster import AssetIn, AssetKey
+from dagster import AssetIn, AssetKey, Config
 import os
 import io
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
+from urllib.parse import urlparse
 import pandas as pd
-import toml
 from sqlalchemy import text, create_engine, inspect
 from sqlalchemy.exc import SQLAlchemyError
 import sqlalchemy
@@ -15,14 +15,11 @@ import time
 import random
 import gzip
 import json
-import psycopg2
-from urllib.parse import urlparse
-from datetime import datetime, timezone
 import numpy as np
 import traceback
-from dagster import Config
 from .resources import github_api_resource 
 import psutil
+from datetime import datetime, timedelta, timezone
 
 # Define the config schema for the github api resource
 class GithubAssetConfig(Config):
@@ -131,22 +128,21 @@ def contributor_node_id_swap(context, df_contributors: pd.DataFrame, cloud_sql_e
 
 
 
-# This function now gets the export.jsonl file from GCS.
+# Helper function to get the export.jsonl file from GCS. 
+# uses io_manager to get the filepath output by the upstream asset
 def get_crypto_ecosystems_project_json(context, gcs_path: str):
     """
-    Downloads the exports.jsonl file from a GCS path, processes it, 
-    and loads it into a pandas DataFrame.
+    Downloads the exports.jsonl file from a GCS path line-by-line,
+    processes it in chunks, and loads it into a pandas DataFrame to save memory.
     """
     process = psutil.Process(os.getpid())
     def log_memory_usage(stage: str):
         memory_mb = process.memory_info().rss / (1024 * 1024)
         context.log.info(f"Memory Usage ({stage}): {memory_mb:.2f} MB")
-    # 1. Get the custom resource object
+
     gcs_resource = context.resources.gcs
-    # 2. Get the actual GCS client from the resource
     storage_client = gcs_resource.get_client()
 
-    # Parse the GCS path to get the bucket and blob name
     try:
         parsed_path = urlparse(gcs_path)
         bucket_name = parsed_path.netloc
@@ -154,34 +150,29 @@ def get_crypto_ecosystems_project_json(context, gcs_path: str):
     except Exception as e:
         raise ValueError(f"Could not parse GCS path '{gcs_path}': {e}")
 
-    if not bucket_name or not blob_name:
-        raise ValueError(f"Invalid GCS path provided: {gcs_path}")
-
-    context.log.info(f"Downloading {blob_name} from GCS bucket {bucket_name}...")
+    context.log.info(f"Streaming and processing {blob_name} from GCS bucket {bucket_name} in chunks...")
 
     try:
         bucket = storage_client.bucket(bucket_name)
         blob = bucket.blob(blob_name)
-        
-        # Download the file contents as a string
-        jsonl_content = blob.download_as_text()
 
-        context.log.info("Logging memory usage after downloading the jsonl file from gcs")
-        log_memory_usage("After jsonl file download")
+        # Instead of download_as_text(), we open a stream.
+        # This reads the file line-by-line without loading it all into memory.
+        list_of_dicts = []
+        with blob.open("r") as f:
+            for line in f:
+                # Each line is a JSON object. We parse it and add it to a list.
+                list_of_dicts.append(pd.read_json(io.StringIO(line), lines=True).to_dict('records')[0])
 
-        if not jsonl_content.strip():
-            raise ValueError("Downloaded file from GCS is empty.")
+        log_memory_usage("After streaming and parsing")
 
-        # Read the JSON Lines content from the string into a DataFrame
-        df = pd.read_json(io.StringIO(jsonl_content), lines=True)
-
-        context.log.info("Logging memory usage after reading the jsonl file into a dataframe")
-        log_memory_usage("After jsonl file conversion to dataframe")
+        # Now, create the DataFrame from the list of dictionaries.
+        df = pd.DataFrame(list_of_dicts)
+        log_memory_usage("After creating DataFrame from list")
 
         if df.empty:
             raise ValueError("DataFrame is empty after reading from GCS content.")
 
-        # Rename columns for consistency
         df.rename(columns={
             "eco_name": "project_title",
             "branch": "sub_ecosystems",
@@ -189,7 +180,6 @@ def get_crypto_ecosystems_project_json(context, gcs_path: str):
             "tags": "tags"
         }, inplace=True)
 
-        # Confirm the DataFrame has the expected columns
         expected_cols = ['project_title', 'sub_ecosystems', 'repo', 'tags']
         if set(expected_cols) != set(df.columns):
             context.log.info(f"DataFrame columns: {df.columns}")
@@ -202,7 +192,42 @@ def get_crypto_ecosystems_project_json(context, gcs_path: str):
     context.log.info("Successfully loaded and processed data from GCS.")
     return df
 
-# This asset now depends on the upstream asset's GCS path output.
+# helper function to delete old gcs files in the crypto ecosystems bucket
+def delete_old_gcs_files(context, bucket_name: str, days_old: int):
+    """
+    Scans a GCS bucket and deletes any blobs older than 4 weeks.
+    """
+    context.log.info(f"Starting cleanup of old files in GCS bucket: {bucket_name}...")
+    gcs_resource = context.resources.gcs
+    storage_client = gcs_resource.get_client()
+    
+    # Define the cutoff date: days_old ago from the current UTC time
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=days_old)
+    
+    try:
+        bucket = storage_client.bucket(bucket_name)
+        blobs = bucket.list_blobs() # Get all blobs in the bucket
+        
+        deleted_count = 0
+        for blob in blobs:
+            # blob.time_created is timezone-aware (UTC by default)
+            if blob.time_created < cutoff_date:
+                context.log.info(f"Deleting old file: {blob.name} (created on {blob.time_created.strftime('%Y-%m-%d')})")
+                blob.delete()
+                deleted_count += 1
+        
+        if deleted_count > 0:
+            context.log.info(f"Successfully deleted {deleted_count} old file(s) from {bucket_name}.")
+        else:
+            context.log.info(f"No files older than {days_old} days found in {bucket_name}.")
+            
+    except Exception as e:
+        # Log the error but don't fail the entire asset if cleanup fails
+        context.log.error(f"Could not complete cleanup of bucket {bucket_name}. Error: {e}")
+
+
+# Get the jsonl from gcs and upload to postgres staging table. 
+# depends on the upstream asset's GCS path output.
 def create_crypto_ecosystems_project_json_asset(env_prefix: str):
 
     # Construct the full, prefixed AssetKey for the upstream asset.
@@ -211,54 +236,41 @@ def create_crypto_ecosystems_project_json_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="crypto_ecosystems_project_json",
-        # Use the fully-qualified AssetKey in the AssetIn definition.
         ins={
             "update_crypto_ecosystems_repo_and_run_export": AssetIn(
                 key=upstream_asset_key
             )
         },
-        # Updated resource keys: added GCS client, removed local repo config
         required_resource_keys={"gcs", "cloud_sql_postgres_resource", "active_env_config"},
         group_name="ingestion",
         description="This asset gets the project/repo list from the crypto ecosystems GCS file and loads it to a staging table.",
     )
-
-    # The argument name 'update_crypto_ecosystems_repo_and_run_export' creates a
-    # dependency on the upstream asset with that name. It receives the GCS path.
     def _crypto_ecosystems_project_json_env_specific(context, update_crypto_ecosystems_repo_and_run_export: str) -> dg.MaterializeResult:
         process = psutil.Process(os.getpid())
         def log_memory_usage(stage: str):
             memory_mb = process.memory_info().rss / (1024 * 1024)
             context.log.info(f"Memory Usage ({stage}): {memory_mb:.2f} MB")
 
-        # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
-        env_config = context.resources.active_env_config 
-        raw_schema = env_config["raw_schema"]  
+        env_config = context.resources.active_env_config
+        raw_schema = env_config["raw_schema"]
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
 
-        # The GCS path is now passed directly from the upstream asset
         gcs_file_path = update_crypto_ecosystems_repo_and_run_export
 
         if not gcs_file_path:
             raise ValueError("GCS file path from upstream asset is empty or None.")
 
         try:
-            context.log.info("Logging memory usage before accessing the gcs file")
             log_memory_usage("Before GCS")
-
-            # Call the updated helper function with the GCS path
             df = get_crypto_ecosystems_project_json(context, gcs_file_path)
-
-            context.log.info("Logging memory usage after accessing the gcs file")
             log_memory_usage("After GCS")
 
             df['data_timestamp'] = pd.Timestamp.now()
 
-            # Truncate the staging table and append the new data
             with cloud_sql_engine.connect() as conn:
                 context.log.info(f"Truncating {raw_schema}.crypto_ecosystems_raw_file_staging table")
-                conn.execute(sqlalchemy.text(f"TRUNCATE TABLE {raw_schema}.crypto_ecosystems_raw_file_staging;")) 
+                conn.execute(sqlalchemy.text(f"TRUNCATE TABLE {raw_schema}.crypto_ecosystems_raw_file_staging;"))
                 conn.commit()
 
             context.log.info(f"Appending new data to {raw_schema}.crypto_ecosystems_raw_file_staging table")
@@ -267,10 +279,12 @@ def create_crypto_ecosystems_project_json_asset(env_prefix: str):
         except Exception as e:
             raise ValueError(f"Error processing GCS file and loading to database: {e}") from e
 
-        # Capture asset metadata for the Dagster UI
         with cloud_sql_engine.connect() as conn:
             row_count = conn.execute(text(f"select count(*) from {raw_schema}.crypto_ecosystems_raw_file_staging")).scalar_one()
             preview_df = pd.read_sql(text(f"select * from {raw_schema}.crypto_ecosystems_raw_file_staging limit 10"), conn)
+
+        # cleanup - delete old gcs files
+        delete_old_gcs_files(context, "bl-crypto-ecosystems-export", 28)
 
         return dg.MaterializeResult(
             metadata={
