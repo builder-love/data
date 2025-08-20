@@ -4885,7 +4885,7 @@ def create_project_repos_documentation_files_asset(env_prefix: str):
 # Define a constant for batch size
 BATCH_SIZE = 50
 
-# --- Helper Functions for ETag Management ---
+# --- ETag Helper Functions
 def _create_etag_table_if_not_exists(context: dg.OpExecutionContext, schema: str, table_name: str):
     """Checks for and creates the ETag tracking table if it doesn't exist."""
     cloud_sql_engine = context.resources.cloud_sql_postgres_resource
@@ -4943,14 +4943,16 @@ def _update_etags_in_db(context: dg.OpExecutionContext, schema:str, table_name: 
 
 
 # define the asset that gets the contributors for a repo
-# to accomodate multiple environments, we will use a factory function
 def create_github_project_repos_contributors_asset(env_prefix: str):
     @dg.asset(
         key_prefix=env_prefix,
         name="github_project_repos_contributors",
         required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "github_api"},
         group_name="ingestion",
-        tags={"github_api": "True"},
+        tags={
+            "github_api": "True",
+            "contributor_lock": "True"
+        },
     )
     def _github_project_repos_contributors_env_specific(context, config: GithubAssetConfig) -> dg.MaterializeResult:
         env_config = context.resources.active_env_config  
@@ -4961,13 +4963,17 @@ def create_github_project_repos_contributors_asset(env_prefix: str):
         gh_pat = github_api.get_client(config.key_name)
 
         etag_table_name = "github_project_repos_contributors_etags"
-        
+        target_table_name = "project_repos_contributors"
+        # Create a unique, sanitized name for the staging table for this specific run
+        safe_run_id = context.run_id.replace("-", "_")
+        staging_table_name = f"staging_{target_table_name}_{safe_run_id}"
+
         context.log.info(f"------************** Updated: this process is running in {env_config['env']} environment. *****************---------")
+        context.log.info(f"Using staging table: {raw_schema}.{staging_table_name}")
         context.log.info(f"Checking if etag table exists...")
         _create_etag_table_if_not_exists(context, raw_schema, etag_table_name)
 
         run_timestamp = pd.Timestamp.now()
-        context.log.info(f"Run timestamp set to: {run_timestamp}")
 
         def get_next_page(response):
             link_header = response.headers.get('Link')
@@ -4996,13 +5002,11 @@ def create_github_project_repos_contributors_asset(env_prefix: str):
                         time.sleep(.5)
                         response = requests.get(current_url, headers=headers, params=params if current_url == api_url else None)
                         if current_url == api_url and response.status_code == 304:
-                            context.log.info(f"[{repo_full_name}] Cache hit. Data not modified (304).")
                             return "not_modified", None, etag
                         if current_url == api_url:
                             first_page_response_headers = response.headers
                         response.raise_for_status()
                         if response.status_code == 204:
-                            context.log.info(f"[{repo_full_name}] No contributors found (204).")
                             current_url = None
                             continue
                         contributors = response.json()
@@ -5011,83 +5015,111 @@ def create_github_project_repos_contributors_asset(env_prefix: str):
                         current_url = get_next_page(response)
                     except requests.exceptions.RequestException as e:
                         status_code = getattr(e.response, 'status_code', None)
-
                         if status_code == 404:
-                            context.log.warning(f"[{repo_full_name}] Repository not found (404). Will not retry.")
-                            return "failed", None, None # Immediately exit for this repo
-
-                        context.log.warning(f"[{repo_full_name}] Request failed on attempt {attempt + 1}/{max_retries}. Status: {status_code}. Error: {e}")
+                            return "failed", None, None
                         if attempt < max_retries - 1:
                             delay = (2 ** attempt) + random.uniform(0, 1)
                             time.sleep(delay)
                             break
                         else:
-                            context.log.error(f"[{repo_full_name}] Max retries reached. Failing this repo.")
                             return "failed", None, None
                 else:
                     new_etag = first_page_response_headers.get("ETag")
-                    context.log.info(f"[{repo_full_name}] Successfully fetched {len(contributors_list)} contributors.")
                     return "updated", contributors_list, new_etag
             return "failed", None, None
 
-        def write_batch_to_db(batch_data: list, timestamp: pd.Timestamp):
+        # Function to write to a specified staging table
+        def write_batch_to_staging_db(batch_data: list, timestamp: pd.Timestamp, table_name: str, schema: str):
             if not batch_data: return 0
-            context.log.info(f"Preparing to write batch of {len(batch_data)} records.")
             df_batch = pd.DataFrame(batch_data)
             df_batch['data_timestamp'] = timestamp
             try:
                 with cloud_sql_engine.begin() as connection:
-                    df_batch.to_sql('project_repos_contributors', connection, if_exists='append', index=False, schema=raw_schema, method='multi')
-                context.log.info(f"Successfully wrote batch of {len(df_batch)} rows.")
+                    df_batch.to_sql(table_name, connection, if_exists='append', index=False, schema=schema, method='multi')
+                context.log.info(f"Successfully wrote batch of {len(df_batch)} rows to staging table '{schema}.{table_name}'.")
                 return len(df_batch)
             except SQLAlchemyError as e:
-                context.log.error(f"Database error writing batch: {e}", exc_info=True)
+                context.log.error(f"Database error writing batch to staging table: {e}", exc_info=True)
                 raise
-
+        
         # --- Main Asset Logic ---
-        with cloud_sql_engine.connect() as conn:
-            query = text(f"SELECT repo FROM {clean_schema}.latest_active_distinct_project_repos WHERE is_active = true AND repo_source = 'github'")
-            github_repos = [row[0] for row in conn.execute(query)]
-        
-        etags_from_db = _get_etags_from_db(context, raw_schema, etag_table_name, github_repos)
-        current_batch, etags_to_update = [], {}
-        total_rows_inserted, repos_processed, repos_updated, repos_skipped_304, repos_failed = 0, 0, 0, 0, 0
+        try:
+            # Create the staging table before processing
+            with cloud_sql_engine.begin() as conn:
+                context.log.info(f"Creating staging table: {raw_schema}.{staging_table_name}")
+                # The contributor_list is gzipped bytes, so BYTEA is the correct type for Postgres
+                conn.execute(text(f"""
+                    CREATE TABLE {raw_schema}.{staging_table_name} (
+                        repo VARCHAR,
+                        contributor_list BYTEA,
+                        data_timestamp TIMESTAMP WITHOUT TIME ZONE
+                    );
+                """))
 
-        for i, repo_url in enumerate(github_repos):
-            repos_processed += 1
-            context.log.info(f"\n--- Processing {i + 1}/{len(github_repos)}: {repo_url} ---")
-            try:
-                owner, repo_name = urlparse(repo_url).path.strip("/").split("/")
-                existing_etag = etags_from_db.get(repo_url)
-                status, contributors_list, new_etag = get_contributors_for_repo(owner, repo_name, existing_etag)
-                
-                if status == "updated":
-                    repos_updated += 1
-                    etags_to_update[repo_url] = new_etag
-                    compressed_data = gzip.compress(json.dumps(contributors_list).encode('utf-8'))
-                    current_batch.append({"repo": repo_url, "contributor_list": compressed_data})
-                elif status == "not_modified":
-                    repos_skipped_304 += 1
-                    etags_to_update[repo_url] = new_etag
-                elif status == "failed":
+            with cloud_sql_engine.connect() as conn:
+                query = text(f"SELECT repo FROM {clean_schema}.latest_active_distinct_project_repos WHERE is_active = true AND repo_source = 'github'")
+                github_repos = [row[0] for row in conn.execute(query)]
+            
+            etags_from_db = _get_etags_from_db(context, raw_schema, etag_table_name, github_repos)
+            current_batch, etags_to_update = [], {}
+            total_rows_inserted, repos_processed, repos_updated, repos_skipped_304, repos_failed = 0, 0, 0, 0, 0
+
+            for i, repo_url in enumerate(github_repos):
+                repos_processed += 1
+                try:
+                    owner, repo_name = urlparse(repo_url).path.strip("/").split("/")
+                    existing_etag = etags_from_db.get(repo_url)
+                    status, contributors_list, new_etag = get_contributors_for_repo(owner, repo_name, existing_etag)
+                    
+                    if status == "updated":
+                        repos_updated += 1
+                        etags_to_update[repo_url] = new_etag
+                        compressed_data = gzip.compress(json.dumps(contributors_list).encode('utf-8'))
+                        current_batch.append({"repo": repo_url, "contributor_list": compressed_data})
+                    elif status == "not_modified":
+                        repos_skipped_304 += 1
+                        etags_to_update[repo_url] = new_etag
+                    elif status == "failed":
+                        repos_failed += 1
+                    
+                    if len(current_batch) >= BATCH_SIZE:
+                        # Write to the staging table
+                        total_rows_inserted += write_batch_to_staging_db(current_batch, run_timestamp, staging_table_name, raw_schema)
+                        current_batch.clear()
+                except Exception as e:
                     repos_failed += 1
-                
-                if len(current_batch) >= BATCH_SIZE:
-                    total_rows_inserted += write_batch_to_db(current_batch, run_timestamp)
-                    current_batch.clear()
-            except Exception as e:
-                repos_failed += 1
-                context.log.error(f"An unexpected error occurred while processing {repo_url}: {e}", exc_info=True)
+                    context.log.error(f"An unexpected error occurred while processing {repo_url}: {e}", exc_info=True)
+            
+            if current_batch:
+                # Write the final batch to the staging table
+                total_rows_inserted += write_batch_to_staging_db(current_batch, run_timestamp, staging_table_name, raw_schema)
+            
+            # Append all data from staging to the final table in a single transaction
+            if total_rows_inserted > 0:
+                with cloud_sql_engine.begin() as conn:
+                    context.log.info(f"Appending {total_rows_inserted} rows from staging table to {raw_schema}.{target_table_name}...")
+                    append_sql = text(f"""
+                        INSERT INTO {raw_schema}.{target_table_name} (repo, contributor_list, data_timestamp)
+                        SELECT repo, contributor_list, data_timestamp FROM {raw_schema}.{staging_table_name};
+                    """)
+                    conn.execute(append_sql)
+                    context.log.info("Append operation successful.")
+            else:
+                context.log.info("No new rows to append.")
+
+            _update_etags_in_db(context, raw_schema, etag_table_name, etags_to_update)
         
-        if current_batch:
-            total_rows_inserted += write_batch_to_db(current_batch, run_timestamp)
-        
-        _update_etags_in_db(context, raw_schema, etag_table_name, etags_to_update)
-        
+        finally:
+            # Ensure the staging table is always dropped
+            with cloud_sql_engine.begin() as conn:
+                context.log.info(f"Dropping staging table: {raw_schema}.{staging_table_name}")
+                conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{staging_table_name};"))
+
+        # --- Metadata Collection ---
         final_row_count = 0
         try:
             with cloud_sql_engine.connect() as conn:
-                count_query = text(f"SELECT COUNT(*) FROM {raw_schema}.project_repos_contributors")
+                count_query = text(f"SELECT COUNT(*) FROM {raw_schema}.{target_table_name}")
                 final_row_count = conn.execute(count_query).scalar_one_or_none() or 0
         except SQLAlchemyError as e:
             context.log.error(f"Database error fetching final metadata: {e}", exc_info=True)

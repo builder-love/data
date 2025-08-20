@@ -212,6 +212,9 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
         name="process_compressed_contributors_data",
         required_resource_keys={"cloud_sql_postgres_resource", "active_env_config"},
         group_name="clean_data",
+        tags={
+            "contributor_lock": "True"
+        },
         deps=[upstream_dependency_key],
         automation_condition=dg.AutomationCondition.eager(),
     )
@@ -413,13 +416,13 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
 
             # Write DataFrame to Staging Tables first
             # write to two tables here: latest_project_repos_contributors and latest_contributors
-            context.log.info(f"Writing data to staging tables {clean_schema}.{staging_table_name_contributors} and {clean_schema}.{staging_table_name_project_repos_contributors}...")
+            context.log.info(f"Writing data to staging tables {raw_schema}.{staging_table_name_contributors} and {raw_schema}.{staging_table_name_project_repos_contributors}...")
             latest_contributors_df.to_sql(
                 staging_table_name_contributors,
                 cloud_sql_engine,
                 if_exists='replace', # Replace staging table safely
                 index=False,
-                schema=clean_schema,
+                schema=raw_schema,
                 chunksize=50000 # Good for large dataframes
             )
             latest_project_repos_contributors_df.to_sql(
@@ -427,72 +430,72 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                 cloud_sql_engine,
                 if_exists='replace', # Replace staging table safely
                 index=False,
-                schema=clean_schema,
+                schema=raw_schema,
                 chunksize=50000 # Good for large dataframes
             )
             print("Successfully wrote to staging tables.")
 
             # Perform Atomic Swap via Transaction
-            context.log.info(f"Performing atomic swap to update {clean_schema}.{final_table_name_contributors} and {clean_schema}.{final_table_name_project_repos_contributors}...")
+            context.log.info(f"Performing atomic swap to update {raw_schema}.{final_table_name_contributors} and {raw_schema}.{final_table_name_project_repos_contributors}...")
             with cloud_sql_engine.connect() as conn:
                 with conn.begin(): # Start transaction
                     # Use CASCADE if Foreign Keys might point to the table
-                    print(f"Dropping old tables {clean_schema}.{old_table_name_contributors} and {clean_schema}.{old_table_name_project_repos_contributors} if they exist...")
-                    conn.execute(text(f"DROP TABLE IF EXISTS {clean_schema}.{old_table_name_contributors} CASCADE;"))
-                    conn.execute(text(f"DROP TABLE IF EXISTS {clean_schema}.{old_table_name_project_repos_contributors} CASCADE;"))
+                    print(f"Dropping old tables {raw_schema}.{old_table_name_contributors} and {raw_schema}.{old_table_name_project_repos_contributors} if they exist...")
+                    conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{old_table_name_contributors} CASCADE;"))
+                    conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{old_table_name_project_repos_contributors} CASCADE;"))
 
-                    print(f"Renaming current {clean_schema}.{final_table_name_contributors} to {clean_schema}.{old_table_name_contributors} (if it exists)...")
-                    conn.execute(text(f"ALTER TABLE IF EXISTS {clean_schema}.{final_table_name_contributors} RENAME TO {old_table_name_contributors};"))
-                    print(f"Renaming current {clean_schema}.{final_table_name_project_repos_contributors} to {clean_schema}.{old_table_name_project_repos_contributors} (if it exists)...")
-                    conn.execute(text(f"ALTER TABLE IF EXISTS {clean_schema}.{final_table_name_project_repos_contributors} RENAME TO {old_table_name_project_repos_contributors};"))
+                    print(f"Renaming current {raw_schema}.{final_table_name_contributors} to {raw_schema}.{old_table_name_contributors} (if it exists)...")
+                    conn.execute(text(f"ALTER TABLE IF EXISTS {raw_schema}.{final_table_name_contributors} RENAME TO {old_table_name_contributors};"))
+                    print(f"Renaming current {raw_schema}.{final_table_name_project_repos_contributors} to {raw_schema}.{old_table_name_project_repos_contributors} (if it exists)...")
+                    conn.execute(text(f"ALTER TABLE IF EXISTS {raw_schema}.{final_table_name_project_repos_contributors} RENAME TO {old_table_name_project_repos_contributors};"))
 
-                    print(f"Renaming staging tables {clean_schema}.{staging_table_name_contributors} and {clean_schema}.{staging_table_name_project_repos_contributors} to {clean_schema}.{final_table_name_contributors} and {clean_schema}.{final_table_name_project_repos_contributors}...")
-                    conn.execute(text(f"ALTER TABLE {clean_schema}.{staging_table_name_contributors} RENAME TO {final_table_name_contributors};"))
-                    conn.execute(text(f"ALTER TABLE {clean_schema}.{staging_table_name_project_repos_contributors} RENAME TO {final_table_name_project_repos_contributors};"))
+                    print(f"Renaming staging tables {raw_schema}.{staging_table_name_contributors} and {raw_schema}.{staging_table_name_project_repos_contributors} to {raw_schema}.{final_table_name_contributors} and {raw_schema}.{final_table_name_project_repos_contributors}...")
+                    conn.execute(text(f"ALTER TABLE {raw_schema}.{staging_table_name_contributors} RENAME TO {final_table_name_contributors};"))
+                    conn.execute(text(f"ALTER TABLE {raw_schema}.{staging_table_name_project_repos_contributors} RENAME TO {final_table_name_project_repos_contributors};"))
                 # Transaction commits here if no exceptions were raised inside the 'with conn.begin()' block
             context.log.info("Atomic swap successful.")
 
             # cleanup old table (outside the main transaction)
-            context.log.info(f"Cleaning up old tables {clean_schema}.{old_table_name_contributors} and {clean_schema}.{old_table_name_project_repos_contributors}...")
+            context.log.info(f"Cleaning up old tables {raw_schema}.{old_table_name_contributors} and {raw_schema}.{old_table_name_project_repos_contributors}...")
             try:
                 with cloud_sql_engine.connect() as conn:
                     with conn.begin():
-                        conn.execute(text(f"DROP TABLE IF EXISTS {clean_schema}.{old_table_name_contributors} CASCADE;"))
-                        conn.execute(text(f"DROP TABLE IF EXISTS {clean_schema}.{old_table_name_project_repos_contributors} CASCADE;"))
-                        context.log.info(f"Cleaned up tables {clean_schema}.{old_table_name_contributors} and {clean_schema}.{old_table_name_project_repos_contributors}.")
+                        conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{old_table_name_contributors} CASCADE;"))
+                        conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{old_table_name_project_repos_contributors} CASCADE;"))
+                        context.log.info(f"Cleaned up tables {raw_schema}.{old_table_name_contributors} and {raw_schema}.{old_table_name_project_repos_contributors}.")
             except Exception as cleanup_e:
                 # Log warning - cleanup failure shouldn't fail the asset run
-                context.log.warning(f"Could not drop old tables {clean_schema}.{old_table_name_contributors} and {clean_schema}.{old_table_name_project_repos_contributors}: {cleanup_e}")
+                context.log.warning(f"Could not drop old tables {raw_schema}.{old_table_name_contributors} and {raw_schema}.{old_table_name_project_repos_contributors}: {cleanup_e}")
 
             # recreate the indexes for both tables
             try:
                 with cloud_sql_engine.connect() as conn:
                     with conn.begin():
                         # create the unique_id index
-                        conn.execute(text(f"CREATE INDEX IF NOT EXISTS idx_latest_contributors_unique_id ON {clean_schema}.{final_table_name_contributors} (contributor_unique_id_builder_love);"))
-                        conn.execute(text(f"CREATE INDEX IF NOT EXISTS idx_latest_project_repos_contributors_unique_id ON {clean_schema}.{final_table_name_project_repos_contributors} (contributor_unique_id_builder_love);"))
+                        conn.execute(text(f"CREATE INDEX IF NOT EXISTS idx_latest_contributors_unique_id ON {raw_schema}.{final_table_name_contributors} (contributor_unique_id_builder_love);"))
+                        conn.execute(text(f"CREATE INDEX IF NOT EXISTS idx_latest_project_repos_contributors_unique_id ON {raw_schema}.{final_table_name_project_repos_contributors} (contributor_unique_id_builder_love);"))
 
                         # create repo index
-                        conn.execute(text(f"CREATE INDEX IF NOT EXISTS idx_latest_project_repos_contributors_repo ON {clean_schema}.{final_table_name_project_repos_contributors} (repo);"))
+                        conn.execute(text(f"CREATE INDEX IF NOT EXISTS idx_latest_project_repos_contributors_repo ON {raw_schema}.{final_table_name_project_repos_contributors} (repo);"))
 
                         # analyze the tables to ensure the indexes are used
-                        conn.execute(text(f"ANALYZE {clean_schema}.{final_table_name_contributors};"))
-                        conn.execute(text(f"ANALYZE {clean_schema}.{final_table_name_project_repos_contributors};"))
+                        conn.execute(text(f"ANALYZE {raw_schema}.{final_table_name_contributors};"))
+                        conn.execute(text(f"ANALYZE {raw_schema}.{final_table_name_project_repos_contributors};"))
             except Exception as index_e:
-                print(f"Could not create indexes for {clean_schema}.{final_table_name_contributors} and {clean_schema}.{final_table_name_project_repos_contributors}: {index_e}")
+                print(f"Could not create indexes for {raw_schema}.{final_table_name_contributors} and {raw_schema}.{final_table_name_project_repos_contributors}: {index_e}")
                 raise e
 
             # Fetch Metadata from the FINAL table for MaterializeResult
             print("Fetching metadata for Dagster result...")
             with cloud_sql_engine.connect() as conn:
-                row_count_result = conn.execute(text(f"SELECT COUNT(*) FROM {clean_schema}.{final_table_name_contributors}"))
-                row_count_result_project_repos_contributors = conn.execute(text(f"SELECT COUNT(*) FROM {clean_schema}.{final_table_name_project_repos_contributors}"))
+                row_count_result = conn.execute(text(f"SELECT COUNT(*) FROM {raw_schema}.{final_table_name_contributors}"))
+                row_count_result_project_repos_contributors = conn.execute(text(f"SELECT COUNT(*) FROM {raw_schema}.{final_table_name_project_repos_contributors}"))
                 # Use scalar_one() for single value, assumes table not empty after swap
                 row_count = row_count_result.scalar_one()
                 row_count_project_repos_contributors = row_count_result_project_repos_contributors.scalar_one()
 
-                preview_result = conn.execute(text(f"SELECT * FROM {clean_schema}.{final_table_name_contributors} LIMIT 10"))
-                preview_result_project_repos_contributors = conn.execute(text(f"SELECT * FROM {clean_schema}.{final_table_name_project_repos_contributors} LIMIT 10"))
+                preview_result = conn.execute(text(f"SELECT * FROM {raw_schema}.{final_table_name_contributors} LIMIT 10"))
+                preview_result_project_repos_contributors = conn.execute(text(f"SELECT * FROM {raw_schema}.{final_table_name_project_repos_contributors} LIMIT 10"))
                 # Fetch into dicts using .mappings().all() for easy DataFrame creation
                 result_df = pd.DataFrame(preview_result.mappings().all())
                 result_df_project_repos_contributors = pd.DataFrame(preview_result_project_repos_contributors.mappings().all())
