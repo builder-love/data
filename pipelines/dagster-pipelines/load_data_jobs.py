@@ -236,7 +236,10 @@ def cleanup_old_target_schema(context, previous_op_output):
     # yield Output(None) # Use yield
 
 @job(
-    tags={"github_api": "True"},
+    tags={
+        "github_api": "True",
+        "nightly_dbt_model_lock": "True"
+    },
 )
 def refresh_prod_schema():
     """

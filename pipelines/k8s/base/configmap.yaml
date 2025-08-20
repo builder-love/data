@@ -58,6 +58,9 @@ data:
           - key: "contributor_lock"
             value: "true"
             limit: 1
+          - key: "nightly_dbt_model_lock"
+            value: "true"
+            limit: 1
           - key: "github_api_key1"
             value: "True"
             limit: 1

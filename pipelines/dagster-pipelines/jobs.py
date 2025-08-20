@@ -69,42 +69,60 @@ def update_crypto_ecosystems_raw_file_job():
 stg_normalized_dbt_assets_job = define_asset_job(
     name="normalized_stg_dbt_assets_job", # Renamed for clarity
     selection=AssetSelection.groups("dbt_stg") & AssetSelection.tag("timestamp_normalized", ""),
-    description="Runs STAGING data normalization dbt models with tag 'timestamp_normalized'."
+    description="Runs STAGING data normalization dbt models with tag 'timestamp_normalized'.",
+    tags={
+        "nightly_dbt_model_lock": "True"
+    }
 )
 
 # Define a Dagster job for STAGING latest clean data dbt assets
 stg_latest_dbt_assets_job = define_asset_job(
     name="latest_stg_dbt_assets_job", # Renamed for clarity
     selection=AssetSelection.groups("dbt_stg") & AssetSelection.tag("latest_clean_data", ""),
-    description="Runs STAGING dbt models to get latest clean data with tag 'latest_clean_data'."
+    description="Runs STAGING dbt models to get latest clean data with tag 'latest_clean_data'.",
+    tags={
+        "nightly_dbt_model_lock": "True"
+    }
 )
 
 # Define a Dagster job for STAGING period change data dbt assets
 stg_period_change_data_dbt_assets_job = define_asset_job(
     name="period_change_stg_dbt_assets_job", # Renamed for clarity
     selection=AssetSelection.groups("dbt_stg") & AssetSelection.tag("period_change_data", ""),
-    description="Runs STAGING dbt models for period change data with tag 'period_change_data'."
+    description="Runs STAGING dbt models for period change data with tag 'period_change_data'.",
+    tags={
+        "nightly_dbt_model_lock": "True"
+    }
 )
 
 # Define a Dagster job for PROD normalized dbt assets
 prod_normalized_dbt_assets_job = define_asset_job(
     name="normalized_prod_dbt_assets_job", # Renamed for clarity
     selection=AssetSelection.groups("dbt_prod") & AssetSelection.tag("timestamp_normalized", ""),
-    description="Runs PROD data normalization dbt models with tag 'timestamp_normalized'."
+    description="Runs PROD data normalization dbt models with tag 'timestamp_normalized'.",
+    tags={
+        "nightly_dbt_model_lock": "True"
+    }
 )
 
 # Define a Dagster job for PROD latest clean data dbt assets
 prod_latest_dbt_assets_job = define_asset_job(
     name="latest_prod_dbt_assets_job", # Renamed for clarity
     selection=AssetSelection.groups("dbt_prod") & AssetSelection.tag("latest_clean_data", ""),
-    description="Runs PROD dbt models to get latest clean data with tag 'latest_clean_data'."
+    description="Runs PROD dbt models to get latest clean data with tag 'latest_clean_data'.",
+    tags={
+        "nightly_dbt_model_lock": "True"
+    }
 )
 
 # Define a Dagster job for PROD period change data dbt assets
 prod_period_change_data_dbt_assets_job = define_asset_job(
     name="period_change_prod_dbt_assets_job", # Renamed for clarity
     selection=AssetSelection.groups("dbt_prod") & AssetSelection.tag("period_change_data", ""),
-    description="Runs PROD dbt models for period change data with tag 'period_change_data'."
+    description="Runs PROD dbt models for period change data with tag 'period_change_data'.",
+    tags={
+        "nightly_dbt_model_lock": "True"
+    }
 )
 
 ## ------------------------------------- JOB FOR THE FULL ML PIPELINE ------------------------------------- ##
