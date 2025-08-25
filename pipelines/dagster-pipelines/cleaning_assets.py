@@ -253,117 +253,117 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                     conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{staging_table_name_project_repos_contributors} CASCADE;"))
                     conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{temp_staging_all_contributors} CASCADE;"))
 
-                # --- Generator for Streaming Data ---
-                def generate_contributor_rows(db_connection):
-                    context.log.info("Streaming source data from the database...")
-                    source_query = text(f"""
-                        SELECT repo, contributor_list
-                        FROM {raw_schema}.project_repos_contributors
-                        WHERE data_timestamp = (SELECT MAX(data_timestamp) FROM {raw_schema}.project_repos_contributors)
-                    """)
-                    
-                    # Iterate directly on the result proxy to avoid loading all rows into memory
-                    for repo, compressed_byte_data in db_connection.execute(source_query):
-                        if not compressed_byte_data:
-                            continue
-                        try:
-                            # Decompress and parse the data
-                            contributors_json_string = gzip.decompress(compressed_byte_data)
-                            contributors_list = json.loads(contributors_json_string)
+                    # --- Generator for Streaming Data ---
+                    def generate_contributor_rows(db_connection):
+                        context.log.info("Streaming source data from the database...")
+                        source_query = text(f"""
+                            SELECT repo, contributor_list
+                            FROM {raw_schema}.project_repos_contributors
+                            WHERE data_timestamp = (SELECT MAX(data_timestamp) FROM {raw_schema}.project_repos_contributors)
+                        """)
+                        
+                        # Iterate directly on the result proxy to avoid loading all rows into memory
+                        for repo, compressed_byte_data in db_connection.execute(source_query):
+                            if not compressed_byte_data:
+                                continue
+                            try:
+                                # Decompress and parse the data
+                                contributors_json_string = gzip.decompress(compressed_byte_data)
+                                contributors_list = json.loads(contributors_json_string)
+                                
+                                # Yield one dictionary per contributor
+                                for contributor in contributors_list:
+                                    if contributor.get('type') != 'Anonymous':
+                                        yield {
+                                            "repo": repo,
+                                            "contributor_login": contributor.get('login'),
+                                            "contributor_id": contributor.get('id'),
+                                            "contributor_node_id": contributor.get('node_id'),
+                                            "contributor_avatar_url": contributor.get('avatar_url'),
+                                            "contributor_gravatar_id": contributor.get('gravatar_id'),
+                                            "contributor_url": contributor.get('url'),
+                                            "contributor_html_url": contributor.get('html_url'),
+                                            "contributor_followers_url": contributor.get('followers_url'),
+                                            "contributor_following_url": contributor.get('following_url'),
+                                            "contributor_gists_url": contributor.get('gists_url'),
+                                            "contributor_starred_url": contributor.get('starred_url'),
+                                            "contributor_subscriptions_url": contributor.get('subscriptions_url'),
+                                            "contributor_organizations_url": contributor.get('organizations_url'),
+                                            "contributor_repos_url": contributor.get('repos_url'),
+                                            "contributor_events_url": contributor.get('events_url'),
+                                            "contributor_received_events_url": contributor.get('received_events_url'),
+                                            "contributor_type": contributor.get('type'),
+                                            "contributor_user_view_type": contributor.get('user_view_type'),
+                                            "contributor_contributions": contributor.get('contributions'),
+                                            "contributor_name": contributor.get('name'), # contributor.get('name') is not always present
+                                            "contributor_email": contributor.get('email'), # contributor.get('email') is not always present,
+                                            "contributor_unique_id_builder_love": f"{contributor.get('login')}|{contributor.get('id')}", # derived unique identifier for the contributor
+                                        }
+                                    else: # Handle Anonymous contributors
+                                        yield {
+                                            "repo": repo,
+                                            "contributor_login": contributor.get('name'),
+                                            "contributor_id": None,
+                                            "contributor_node_id": None,
+                                            "contributor_avatar_url": None,
+                                            "contributor_gravatar_id": None,
+                                            "contributor_url": None,
+                                            "contributor_html_url": None,
+                                            "contributor_followers_url": None,
+                                            "contributor_following_url": None,
+                                            "contributor_gists_url": None,
+                                            "contributor_starred_url": None,
+                                            "contributor_subscriptions_url": None,
+                                            "contributor_organizations_url": None,
+                                            "contributor_repos_url": None,
+                                            "contributor_events_url": None,
+                                            "contributor_received_events_url": None,
+                                            "contributor_type": contributor.get('type'),
+                                            "contributor_user_view_type": None,
+                                            "contributor_contributions": contributor.get('contributions'),
+                                            "contributor_name": contributor.get('name'), # contributor.get('name') is not always present
+                                            "contributor_email": contributor.get('email'), # contributor.get('email') is not always present,
+                                            "contributor_unique_id_builder_love": f"{contributor.get('name')}|{contributor.get('email')}",
+                                        }
+                            except (gzip.BadGzipFile, json.JSONDecodeError) as e:
+                                context.log.warning(f"Skipping repo '{repo}' due to processing error: {e}")
+                                continue
+
+                    # --- Process and Load Data in Chunks ---
+                    context.log.info("Processing data in chunks and loading to staging tables...")
+                    chunk_size = 10000  # Number of contributor records per chunk
+                    data_chunk = []
+
+                    # Define the columns for each target table once
+                    latest_project_repos_contributors_columns = ['contributor_unique_id_builder_love', 'repo', 'contributor_contributions', 'data_timestamp']
+                    latest_contributors_columns = ['contributor_unique_id_builder_love', 'contributor_login', 'contributor_id', 'contributor_node_id', 'contributor_avatar_url', 'contributor_gravatar_id', 'contributor_url', 'contributor_html_url', 'contributor_followers_url', 'contributor_following_url', 'contributor_gists_url', 'contributor_starred_url', 'contributor_subscriptions_url', 'contributor_organizations_url', 'contributor_repos_url', 'contributor_events_url', 'contributor_received_events_url', 'contributor_type', 'contributor_user_view_type', 'contributor_name', 'contributor_email', 'data_timestamp']
+
+                    for row_dict in generate_contributor_rows(conn):
+                        data_chunk.append(row_dict)
+                        if len(data_chunk) >= chunk_size:
+                            chunk_df = pd.DataFrame(data_chunk)
+                            chunk_df['data_timestamp'] = data_timestamp
                             
-                            # Yield one dictionary per contributor
-                            for contributor in contributors_list:
-                                if contributor.get('type') != 'Anonymous':
-                                    yield {
-                                        "repo": repo,
-                                        "contributor_login": contributor.get('login'),
-                                        "contributor_id": contributor.get('id'),
-                                        "contributor_node_id": contributor.get('node_id'),
-                                        "contributor_avatar_url": contributor.get('avatar_url'),
-                                        "contributor_gravatar_id": contributor.get('gravatar_id'),
-                                        "contributor_url": contributor.get('url'),
-                                        "contributor_html_url": contributor.get('html_url'),
-                                        "contributor_followers_url": contributor.get('followers_url'),
-                                        "contributor_following_url": contributor.get('following_url'),
-                                        "contributor_gists_url": contributor.get('gists_url'),
-                                        "contributor_starred_url": contributor.get('starred_url'),
-                                        "contributor_subscriptions_url": contributor.get('subscriptions_url'),
-                                        "contributor_organizations_url": contributor.get('organizations_url'),
-                                        "contributor_repos_url": contributor.get('repos_url'),
-                                        "contributor_events_url": contributor.get('events_url'),
-                                        "contributor_received_events_url": contributor.get('received_events_url'),
-                                        "contributor_type": contributor.get('type'),
-                                        "contributor_user_view_type": contributor.get('user_view_type'),
-                                        "contributor_contributions": contributor.get('contributions'),
-                                        "contributor_name": contributor.get('name'), # contributor.get('name') is not always present
-                                        "contributor_email": contributor.get('email'), # contributor.get('email') is not always present,
-                                        "contributor_unique_id_builder_love": f"{contributor.get('login')}|{contributor.get('id')}", # derived unique identifier for the contributor
-                                    }
-                                else: # Handle Anonymous contributors
-                                    yield {
-                                        "repo": repo,
-                                        "contributor_login": contributor.get('name'),
-                                        "contributor_id": None,
-                                        "contributor_node_id": None,
-                                        "contributor_avatar_url": None,
-                                        "contributor_gravatar_id": None,
-                                        "contributor_url": None,
-                                        "contributor_html_url": None,
-                                        "contributor_followers_url": None,
-                                        "contributor_following_url": None,
-                                        "contributor_gists_url": None,
-                                        "contributor_starred_url": None,
-                                        "contributor_subscriptions_url": None,
-                                        "contributor_organizations_url": None,
-                                        "contributor_repos_url": None,
-                                        "contributor_events_url": None,
-                                        "contributor_received_events_url": None,
-                                        "contributor_type": contributor.get('type'),
-                                        "contributor_user_view_type": None,
-                                        "contributor_contributions": contributor.get('contributions'),
-                                        "contributor_name": contributor.get('name'), # contributor.get('name') is not always present
-                                        "contributor_email": contributor.get('email'), # contributor.get('email') is not always present,
-                                        "contributor_unique_id_builder_love": f"{contributor.get('name')}|{contributor.get('email')}",
-                                    }
-                        except (gzip.BadGzipFile, json.JSONDecodeError) as e:
-                            context.log.warning(f"Skipping repo '{repo}' due to processing error: {e}")
-                            continue
+                            # Write to project_repos_contributors staging table
+                            chunk_df[latest_project_repos_contributors_columns].to_sql(staging_table_name_project_repos_contributors, conn, schema=raw_schema, if_exists='append', index=False)
+                            
+                            # Write to temporary table that allows duplicates
+                            chunk_df[latest_contributors_columns].to_sql(temp_staging_all_contributors, conn, schema=raw_schema, if_exists='append', index=False)
 
-                # --- Process and Load Data in Chunks ---
-                context.log.info("Processing data in chunks and loading to staging tables...")
-                chunk_size = 10000  # Number of contributor records per chunk
-                data_chunk = []
+                            data_chunk = [] # Reset chunk
 
-                # Define the columns for each target table once
-                latest_project_repos_contributors_columns = ['contributor_unique_id_builder_love', 'repo', 'contributor_contributions', 'data_timestamp']
-                latest_contributors_columns = ['contributor_unique_id_builder_love', 'contributor_login', 'contributor_id', 'contributor_node_id', 'contributor_avatar_url', 'contributor_gravatar_id', 'contributor_url', 'contributor_html_url', 'contributor_followers_url', 'contributor_following_url', 'contributor_gists_url', 'contributor_starred_url', 'contributor_subscriptions_url', 'contributor_organizations_url', 'contributor_repos_url', 'contributor_events_url', 'contributor_received_events_url', 'contributor_type', 'contributor_user_view_type', 'contributor_name', 'contributor_email', 'data_timestamp']
-
-                for row_dict in generate_contributor_rows(conn):
-                    data_chunk.append(row_dict)
-                    if len(data_chunk) >= chunk_size:
+                    # Process the final, smaller chunk
+                    if data_chunk:
                         chunk_df = pd.DataFrame(data_chunk)
                         chunk_df['data_timestamp'] = data_timestamp
-                        
-                        # Write to project_repos_contributors staging table
                         chunk_df[latest_project_repos_contributors_columns].to_sql(staging_table_name_project_repos_contributors, conn, schema=raw_schema, if_exists='append', index=False)
-                        
-                        # Write to temporary table that allows duplicates
                         chunk_df[latest_contributors_columns].to_sql(temp_staging_all_contributors, conn, schema=raw_schema, if_exists='append', index=False)
+                    
+                    context.log.info("Finished streaming data to intermediate tables.")
 
-                        data_chunk = [] # Reset chunk
-
-                # Process the final, smaller chunk
-                if data_chunk:
-                    chunk_df = pd.DataFrame(data_chunk)
-                    chunk_df['data_timestamp'] = data_timestamp
-                    chunk_df[latest_project_repos_contributors_columns].to_sql(staging_table_name_project_repos_contributors, conn, schema=raw_schema, if_exists='append', index=False)
-                    chunk_df[latest_contributors_columns].to_sql(temp_staging_all_contributors, conn, schema=raw_schema, if_exists='append', index=False)
-                
-                context.log.info("Finished streaming data to intermediate tables.")
-
-                # --- Offload Duplicate Removal to SQL ---
-                context.log.info("Removing duplicates from contributors data using the postgres DB...")
-                with conn.begin():
+                    # --- Offload Duplicate Removal to SQL ---
+                    context.log.info("Removing duplicates from contributors data using the postgres DB...")
+                    
                     # Using DISTINCT ON is highly efficient in PostgreSQL
                     deduplication_query = text(f"""
                         CREATE TABLE {raw_schema}.{staging_table_name_contributors} AS
@@ -373,7 +373,7 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                     conn.execute(deduplication_query)
                     # Clean up the temporary table
                     conn.execute(text(f"DROP TABLE {raw_schema}.{temp_staging_all_contributors};"))
-                context.log.info("Duplicate removal complete.")
+                    context.log.info("Duplicate removal complete.")
 
                 # --- Validate Using Staging Table Counts ---
                 new_count_contributors = conn.execute(text(f"SELECT COUNT(*) FROM {raw_schema}.{staging_table_name_contributors}")).scalar()
