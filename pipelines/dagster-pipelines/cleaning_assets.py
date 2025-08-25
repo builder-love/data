@@ -219,36 +219,37 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
         # Extracts, decompresses, and inserts data into the clean table.
         try:
             with cloud_sql_engine.connect() as conn:
-
-                # first get data_timestamp from source and target tables to compare
-                result = conn.execute(text(f"select max(data_timestamp) from {raw_schema}.project_repos_contributors"))
-                max_source_ts_aware = result.scalar()
-                result = conn.execute(text(f"select max(data_timestamp) from {clean_schema}.latest_contributors"))
-                target_ts_aware_contributors = result.scalar()
-
-                # confirm max_source_ts_aware and target_ts_aware_contributors are not None
-                if max_source_ts_aware is None or target_ts_aware_contributors is None:
-                    raise ValueError("Validation failed: max_source_ts_aware or target_ts_aware_contributors is None.")
-
-                datetime_validation = process_compressed_contributors_validation_dates(context, target_ts_aware_contributors, max_source_ts_aware, final_table_name_contributors)
-
-                if not datetime_validation:
-                    context.log.warning("Validation failed: Data is not valid.")
-                    return dg.MaterializeResult(
-                        metadata={
-                            "latest_contributors_preview": "No rows found for preview.",
-                            "latest_project_repos_contributors_preview": "No rows found for preview.",
-                            "message": "Data is not valid."
-                        }
-                    )
-                context.log.info("Date validation passed. Proceeding with data extraction...")
-
-                # set the data_timestamp up front so it doesn't change with batching
-                data_timestamp = pd.Timestamp.now()
-
-                # --- Setup Staging Tables ---
-                context.log.info("Dropping old staging tables if they exist...")
                 with conn.begin():
+
+                    # first get data_timestamp from source and target tables to compare
+                    result = conn.execute(text(f"select max(data_timestamp) from {raw_schema}.project_repos_contributors"))
+                    max_source_ts_aware = result.scalar()
+                    result = conn.execute(text(f"select max(data_timestamp) from {clean_schema}.latest_contributors"))
+                    target_ts_aware_contributors = result.scalar()
+
+                    # confirm max_source_ts_aware and target_ts_aware_contributors are not None
+                    if max_source_ts_aware is None or target_ts_aware_contributors is None:
+                        raise ValueError("Validation failed: max_source_ts_aware or target_ts_aware_contributors is None.")
+
+                    datetime_validation = process_compressed_contributors_validation_dates(context, target_ts_aware_contributors, max_source_ts_aware, final_table_name_contributors)
+
+                    if not datetime_validation:
+                        context.log.warning("Validation failed: Data is not valid.")
+                        return dg.MaterializeResult(
+                            metadata={
+                                "latest_contributors_preview": "No rows found for preview.",
+                                "latest_project_repos_contributors_preview": "No rows found for preview.",
+                                "message": "Data is not valid."
+                            }
+                        )
+                    context.log.info("Date validation passed. Proceeding with data extraction...")
+
+                    # set the data_timestamp up front so it doesn't change with batching
+                    data_timestamp = pd.Timestamp.now()
+
+                    # --- Setup Staging Tables ---
+                    context.log.info("Dropping old staging tables if they exist...")
+                
                     conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{staging_table_name_contributors} CASCADE;"))
                     conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{staging_table_name_project_repos_contributors} CASCADE;"))
                     conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{temp_staging_all_contributors} CASCADE;"))
@@ -363,7 +364,7 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
 
                     # --- Offload Duplicate Removal to SQL ---
                     context.log.info("Removing duplicates from contributors data using the postgres DB...")
-                    
+
                     # Using DISTINCT ON is highly efficient in PostgreSQL
                     deduplication_query = text(f"""
                         CREATE TABLE {raw_schema}.{staging_table_name_contributors} AS
