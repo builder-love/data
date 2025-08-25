@@ -43,7 +43,7 @@ data:
           container_config:
             resources:
               requests:
-                memory: "8Gi"
+                memory: "4Gi"
                 cpu: "1"
               limits:
                 memory: "12Gi"
