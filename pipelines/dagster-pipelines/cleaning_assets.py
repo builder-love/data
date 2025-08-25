@@ -113,88 +113,64 @@ def process_compressed_contributors_validation_dates(context, target_ts_aware_co
 
 # validation function for the compressed data
 def run_validations(context, 
-                    df_contributors: pd.DataFrame, 
-                    df_project_repos_contributors: pd.DataFrame, 
+                    new_contributors_count: int, 
+                    new_project_repos_contributors_count: int, 
                     engine, 
+                    clean_schema: str,
                     final_table_name_contributors: str = "latest_contributors", 
                     final_table_name_project_repos_contributors: str = "latest_project_repos_contributors") -> bool:
-    """Runs validation checks on the DataFrame against the existing final table."""
+    """Runs validation checks using record counts against the existing final table."""
+    
+    context.log.info("-------------************** Running validations on record counts **************-------------")
 
-    env_config = context.resources.active_env_config  # Get environment config
-    clean_schema = env_config["clean_schema"]
+    # empty data and NULL column checks are implicitly handled by the streaming logic.
+    # If the process generates 0 records, it will be caught here.
 
-    context.log.info(f"-------------************** Running validations in environment: {env_config['env']} **************-------------")
-
-    context.log.info("Checking if DataFrames are empty...")
-    if df_contributors.empty or df_project_repos_contributors.empty:
-        raise ValueError("Validation failed: Input DataFrames are empty.")
-    context.log.info("DataFrames are not empty.")
-
-    context.log.info("Checking if 'contributor_unique_id_builder_love' or 'repo' column contains NULL values in either DataFrame...")
-    if df_project_repos_contributors['repo'].isnull().any():
-        raise ValueError("Validation failed: 'repo' column contains NULL values.")
-    if df_contributors['contributor_unique_id_builder_love'].isnull().any() or df_project_repos_contributors['contributor_unique_id_builder_love'].isnull().any():
-        raise ValueError("Validation failed: 'contributor_unique_id_builder_love' column contains NULL values.")
-    context.log.info("'repo' and 'contributor_unique_id_builder_love' columns do not contain NULL values.")
-
-    existing_record_count_val_contributors = None
-    existing_record_count_val_project_repos_contributors = None
+    existing_record_count_val_contributors = 0
+    existing_record_count_val_project_repos_contributors = 0
 
     try:
         context.log.info(f"Checking existing data in {clean_schema}.{final_table_name_contributors} and {clean_schema}.{final_table_name_project_repos_contributors}...")
         with engine.connect() as conn:
-            table_exists_result_contributors = conn.execute(text(
-                f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = '{clean_schema}' AND table_name = '{final_table_name_contributors}');"
-            ))
-            final_table_exists_contributors = table_exists_result_contributors.scalar_one()
-
-            table_exists_result_project_repos_contributors = conn.execute(text(
-                f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = '{clean_schema}' AND table_name = '{final_table_name_project_repos_contributors}');"
-            ))
-            final_table_exists_project_repos_contributors = table_exists_result_project_repos_contributors.scalar_one()
-
-            if final_table_exists_contributors:
+            # Check for contributors table
+            if conn.dialect.has_table(conn, final_table_name_contributors, schema=clean_schema):
                 result_count = conn.execute(text(f"SELECT COUNT(*) FROM {clean_schema}.{final_table_name_contributors}"))
                 existing_record_count_val_contributors = result_count.scalar()
             else:
-                context.log.warning(f"Final table {clean_schema}.{final_table_name_contributors} does not exist. Skipping comparison checks for this table.")
+                context.log.warning(f"Final table {clean_schema}.{final_table_name_contributors} does not exist. Assuming 0 records.")
 
-            if final_table_exists_project_repos_contributors:
+            # Check for project_repos_contributors table
+            if conn.dialect.has_table(conn, final_table_name_project_repos_contributors, schema=clean_schema):
                 result_count = conn.execute(text(f"SELECT COUNT(*) FROM {clean_schema}.{final_table_name_project_repos_contributors}"))
                 existing_record_count_val_project_repos_contributors = result_count.scalar()
             else:
-                context.log.warning(f"Final table {clean_schema}.{final_table_name_project_repos_contributors} does not exist. Skipping comparison checks for this table.")
+                context.log.warning(f"Final table {clean_schema}.{final_table_name_project_repos_contributors} does not exist. Assuming 0 records.")
     except Exception as e:
         context.log.error(f"Error accessing existing data: {e}", exc_info=True)
         raise ValueError(f"Validation failed: Error accessing existing data.")
 
     # --- Record Count Comparison Validations ---
-    if existing_record_count_val_contributors is not None: # Only if target table existed
-        context.log.info(f"Checking record count deviation for '{final_table_name_contributors}' (New: {df_contributors.shape[0]}, Existing: {existing_record_count_val_contributors})...")
-        if existing_record_count_val_contributors > 0:
-            deviation = abs(df_contributors.shape[0] - existing_record_count_val_contributors) / existing_record_count_val_contributors
-            if deviation > 0.5:
-                raise ValueError(f"Validation failed for '{final_table_name_contributors}': Record count deviation ({deviation:.1%}) exceeds 50%.")
-            context.log.info(f"Record count deviation for '{final_table_name_contributors}' ({deviation:.1%}) within 50% threshold.")
-        elif df_contributors.shape[0] > 0: # Existing was 0, new has data
-            context.log.info(f"Target table '{final_table_name_contributors}' had 0 records, new data has records. This is acceptable.")
-        else: # Both 0
-            context.log.info(f"Both existing and new data for '{final_table_name_contributors}' appear empty (0 records). Raising error.")
-            raise ValueError(f"Validation failed for '{final_table_name_contributors}': Both existing and new data appear empty.")
+    context.log.info(f"Checking record count deviation for '{final_table_name_contributors}' (New: {new_contributors_count}, Existing: {existing_record_count_val_contributors})...")
+    if existing_record_count_val_contributors > 0:
+        deviation = abs(new_contributors_count - existing_record_count_val_contributors) / existing_record_count_val_contributors
+        if deviation > 0.5:
+            raise ValueError(f"Validation failed for '{final_table_name_contributors}': Record count deviation ({deviation:.1%}) exceeds 50%.")
+        context.log.info(f"Record count deviation for '{final_table_name_contributors}' ({deviation:.1%}) within 50% threshold.")
+    elif new_contributors_count > 0:
+        context.log.info(f"Target table '{final_table_name_contributors}' had 0 records, new data has records. This is acceptable.")
+    else:
+        raise ValueError(f"Validation failed for '{final_table_name_contributors}': Both existing and new data appear empty (0 records).")
 
-
-    if existing_record_count_val_project_repos_contributors is not None: # Only if target table existed
-        context.log.info(f"Checking record count deviation for '{final_table_name_project_repos_contributors}' (New: {df_project_repos_contributors.shape[0]}, Existing: {existing_record_count_val_project_repos_contributors})...")
-        if existing_record_count_val_project_repos_contributors > 0:
-            deviation = abs(df_project_repos_contributors.shape[0] - existing_record_count_val_project_repos_contributors) / existing_record_count_val_project_repos_contributors
-            if deviation > 0.5:
-                raise ValueError(f"Validation failed for '{final_table_name_project_repos_contributors}': Record count deviation ({deviation:.1%}) exceeds 50%.")
-            context.log.info(f"Record count deviation for '{final_table_name_project_repos_contributors}' ({deviation:.1%}) within 50% threshold.")
-        elif df_project_repos_contributors.shape[0] > 0: # Existing was 0, new has data
-             context.log.info(f"Target table '{final_table_name_project_repos_contributors}' had 0 records, new data has records. This is acceptable.")
-        else: # Both 0
-            context.log.info(f"Both existing and new data for '{final_table_name_project_repos_contributors}' appear empty (0 records). Raising error.")
-            raise ValueError(f"Validation failed for '{final_table_name_project_repos_contributors}': Both existing and new data appear empty.")
+    context.log.info(f"Checking record count deviation for '{final_table_name_project_repos_contributors}' (New: {new_project_repos_contributors_count}, Existing: {existing_record_count_val_project_repos_contributors})...")
+    if existing_record_count_val_project_repos_contributors > 0:
+        deviation = abs(new_project_repos_contributors_count - existing_record_count_val_project_repos_contributors) / existing_record_count_val_project_repos_contributors
+        if deviation > 0.5:
+            raise ValueError(f"Validation failed for '{final_table_name_project_repos_contributors}': Record count deviation ({deviation:.1%}) exceeds 50%.")
+        context.log.info(f"Record count deviation for '{final_table_name_project_repos_contributors}' ({deviation:.1%}) within 50% threshold.")
+    elif new_project_repos_contributors_count > 0:
+        context.log.info(f"Target table '{final_table_name_project_repos_contributors}' had 0 records, new data has records. This is acceptable.")
+    else:
+        raise ValueError(f"Validation failed for '{final_table_name_project_repos_contributors}': Both existing and new data appear empty (0 records).")
 
     context.log.info("All validations passed.")
     return True
@@ -221,16 +197,20 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
     def _process_compressed_contributors_data_env_specific(context) -> dg.MaterializeResult:
         # Get the cloud sql postgres resource
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
-        env_config = context.resources.active_env_config  # Get environment config
+        env_config = context.resources.active_env_config
         clean_schema = env_config["clean_schema"]
         raw_schema = env_config["raw_schema"]
-        # Define table names constants for clarity and easy changes
+
+        # Define table names
         staging_table_name_contributors = "latest_contributors_staging"
         final_table_name_contributors = "latest_contributors"
         old_table_name_contributors = "latest_contributors_old"
         staging_table_name_project_repos_contributors = "latest_project_repos_contributors_staging"
         final_table_name_project_repos_contributors = "latest_project_repos_contributors"
         old_table_name_project_repos_contributors = "latest_project_repos_contributors_old"
+        
+        # A temporary table to hold all contributor records before deduplication
+        temp_staging_all_contributors = "latest_contributors_all_temp"
 
         # tell the user what environment they are running in
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
@@ -263,193 +243,176 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                     )
                 context.log.info("Date validation passed. Proceeding with data extraction...")
 
-                # get the data from the source table
-                result = conn.execute(text(
-                    f"""
-                    SELECT repo, contributor_list -- select the bytea column data
-                    FROM {raw_schema}.project_repos_contributors
-                    WHERE data_timestamp = (SELECT MAX(data_timestamp) FROM {raw_schema}.project_repos_contributors)
-                    """
-                ))
+                # set the data_timestamp up front so it doesn't change with batching
+                data_timestamp = pd.Timestamp.now()
 
-                rows = pd.DataFrame(result.fetchall(), columns=result.keys())
+                # --- Setup Staging Tables ---
+                context.log.info("Dropping old staging tables if they exist...")
+                with conn.begin():
+                    conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{staging_table_name_contributors} CASCADE;"))
+                    conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{staging_table_name_project_repos_contributors} CASCADE;"))
+                    conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{temp_staging_all_contributors} CASCADE;"))
 
-                if rows.empty:
-                    raise ValueError("Validation failed: DataFrame is empty.")
+                # --- Generator for Streaming Data ---
+                def generate_contributor_rows(db_connection):
+                    context.log.info("Streaming source data from the database...")
+                    source_query = text(f"""
+                        SELECT repo, contributor_list
+                        FROM {raw_schema}.project_repos_contributors
+                        WHERE data_timestamp = (SELECT MAX(data_timestamp) FROM {raw_schema}.project_repos_contributors)
+                    """)
+                    
+                    # Iterate directly on the result proxy to avoid loading all rows into memory
+                    for repo, compressed_byte_data in db_connection.execute(source_query):
+                        if not compressed_byte_data:
+                            continue
+                        try:
+                            # Decompress and parse the data
+                            contributors_json_string = gzip.decompress(compressed_byte_data)
+                            contributors_list = json.loads(contributors_json_string)
+                            
+                            # Yield one dictionary per contributor
+                            for contributor in contributors_list:
+                                if contributor.get('type') != 'Anonymous':
+                                    yield {
+                                        "repo": repo,
+                                        "contributor_login": contributor.get('login'),
+                                        "contributor_id": contributor.get('id'),
+                                        "contributor_node_id": contributor.get('node_id'),
+                                        "contributor_avatar_url": contributor.get('avatar_url'),
+                                        "contributor_gravatar_id": contributor.get('gravatar_id'),
+                                        "contributor_url": contributor.get('url'),
+                                        "contributor_html_url": contributor.get('html_url'),
+                                        "contributor_followers_url": contributor.get('followers_url'),
+                                        "contributor_following_url": contributor.get('following_url'),
+                                        "contributor_gists_url": contributor.get('gists_url'),
+                                        "contributor_starred_url": contributor.get('starred_url'),
+                                        "contributor_subscriptions_url": contributor.get('subscriptions_url'),
+                                        "contributor_organizations_url": contributor.get('organizations_url'),
+                                        "contributor_repos_url": contributor.get('repos_url'),
+                                        "contributor_events_url": contributor.get('events_url'),
+                                        "contributor_received_events_url": contributor.get('received_events_url'),
+                                        "contributor_type": contributor.get('type'),
+                                        "contributor_user_view_type": contributor.get('user_view_type'),
+                                        "contributor_contributions": contributor.get('contributions'),
+                                        "contributor_name": contributor.get('name'), # contributor.get('name') is not always present
+                                        "contributor_email": contributor.get('email'), # contributor.get('email') is not always present,
+                                        "contributor_unique_id_builder_love": f"{contributor.get('login')}|{contributor.get('id')}", # derived unique identifier for the contributor
+                                    }
+                                else: # Handle Anonymous contributors
+                                    yield {
+                                        "repo": repo,
+                                        "contributor_login": contributor.get('name'),
+                                        "contributor_id": None,
+                                        "contributor_node_id": None,
+                                        "contributor_avatar_url": None,
+                                        "contributor_gravatar_id": None,
+                                        "contributor_url": None,
+                                        "contributor_html_url": None,
+                                        "contributor_followers_url": None,
+                                        "contributor_following_url": None,
+                                        "contributor_gists_url": None,
+                                        "contributor_starred_url": None,
+                                        "contributor_subscriptions_url": None,
+                                        "contributor_organizations_url": None,
+                                        "contributor_repos_url": None,
+                                        "contributor_events_url": None,
+                                        "contributor_received_events_url": None,
+                                        "contributor_type": contributor.get('type'),
+                                        "contributor_user_view_type": None,
+                                        "contributor_contributions": contributor.get('contributions'),
+                                        "contributor_name": contributor.get('name'), # contributor.get('name') is not always present
+                                        "contributor_email": contributor.get('email'), # contributor.get('email') is not always present,
+                                        "contributor_unique_id_builder_love": f"{contributor.get('name')}|{contributor.get('email')}",
+                                    }
+                        except (gzip.BadGzipFile, json.JSONDecodeError) as e:
+                            context.log.warning(f"Skipping repo '{repo}' due to processing error: {e}")
+                            continue
 
-                # capture the data in a list
-                print(f"Fetched {len(rows)} repos with compressed data. Decompressing...")
-                data = []
-                for repo, compressed_byte_data in rows.itertuples(index=False):
+                # --- Process and Load Data in Chunks ---
+                context.log.info("Processing data in chunks and loading to staging tables...")
+                chunk_size = 10000  # Number of contributor records per chunk
+                data_chunk = []
 
-                    if compressed_byte_data is None:
-                        print(f"Warning: Skipping repo {repo} due to NULL compressed data.")
-                        continue # Skip this row if data is NUL
+                # Define the columns for each target table once
+                latest_project_repos_contributors_columns = ['contributor_unique_id_builder_love', 'repo', 'contributor_contributions', 'data_timestamp']
+                latest_contributors_columns = ['contributor_unique_id_builder_love', 'contributor_login', 'contributor_id', 'contributor_node_id', 'contributor_avatar_url', 'contributor_gravatar_id', 'contributor_url', 'contributor_html_url', 'contributor_followers_url', 'contributor_following_url', 'contributor_gists_url', 'contributor_starred_url', 'contributor_subscriptions_url', 'contributor_organizations_url', 'contributor_repos_url', 'contributor_events_url', 'contributor_received_events_url', 'contributor_type', 'contributor_user_view_type', 'contributor_name', 'contributor_email', 'data_timestamp']
 
-                    # Decompress the data - returns json byte string
-                    try:
-                        contributors_json_string = gzip.decompress(compressed_byte_data)
-                    except gzip.BadGzipFile as e:
-                        print(f"Error decompressing data for repo {repo}: {e}. Skipping.")
-                        continue # Skip this repo if decompression fails
-                    except Exception as e:
-                        print(f"Unexpected error during decompression for repo {repo}: {e}. Skipping.")
-                        continue # Skip on other unexpected errors
+                for row_dict in generate_contributor_rows(conn):
+                    data_chunk.append(row_dict)
+                    if len(data_chunk) >= chunk_size:
+                        chunk_df = pd.DataFrame(data_chunk)
+                        chunk_df['data_timestamp'] = data_timestamp
+                        
+                        # Write to project_repos_contributors staging table
+                        chunk_df[latest_project_repos_contributors_columns].to_sql(staging_table_name_project_repos_contributors, conn, schema=raw_schema, if_exists='append', index=False)
+                        
+                        # Write to temporary table that allows duplicates
+                        chunk_df[latest_contributors_columns].to_sql(temp_staging_all_contributors, conn, schema=raw_schema, if_exists='append', index=False)
 
-                    # Parse the JSON string into a list of dictionaries
-                    try:
-                        contributors_list = json.loads(contributors_json_string)
-                    except json.JSONDecodeError as e:
-                        print(f"Error decoding JSON for repo {repo}: {e}. Skipping.")
-                        continue # Skip if JSON is invalid
+                        data_chunk = [] # Reset chunk
 
-                    for contributor in contributors_list:
-                        if contributor['type'] != 'Anonymous':
-                            data.append({
-                                "repo": repo,
-                                "contributor_login": contributor['login'],
-                                "contributor_id": contributor.get('id'),
-                                "contributor_node_id": contributor.get('node_id'),
-                                "contributor_avatar_url": contributor.get('avatar_url'),
-                                "contributor_gravatar_id": contributor.get('gravatar_id'),
-                                "contributor_url": contributor.get('url'),
-                                "contributor_html_url": contributor.get('html_url'),
-                                "contributor_followers_url": contributor.get('followers_url'),
-                                "contributor_following_url": contributor.get('following_url'),
-                                "contributor_gists_url": contributor.get('gists_url'),
-                                "contributor_starred_url": contributor.get('starred_url'),
-                                "contributor_subscriptions_url": contributor.get('subscriptions_url'),
-                                "contributor_organizations_url": contributor.get('organizations_url'),
-                                "contributor_repos_url": contributor.get('repos_url'),
-                                "contributor_events_url": contributor.get('events_url'),
-                                "contributor_received_events_url": contributor.get('received_events_url'),
-                                "contributor_type": contributor.get('type'),
-                                "contributor_user_view_type": contributor.get('user_view_type'),
-                                "contributor_contributions": contributor.get('contributions'),
-                                "contributor_name": contributor.get('name'), # contributor.get('name') is not always present
-                                "contributor_email": contributor.get('email'), # contributor.get('email') is not always present,
-                                "contributor_unique_id_builder_love": f"{contributor.get('login')}|{contributor.get('id')}", # derived unique identifier for the contributor
-                            })
-                        else:
-                            data.append({
-                                "repo": repo,
-                                "contributor_login": f"{contributor['name']}",
-                                "contributor_id": None,
-                                "contributor_node_id": None,
-                                "contributor_avatar_url": None,
-                                "contributor_gravatar_id": None,
-                                "contributor_url": None,
-                                "contributor_html_url": None,
-                                "contributor_followers_url": None,
-                                "contributor_following_url": None,
-                                "contributor_gists_url": None,
-                                "contributor_starred_url": None,
-                                "contributor_subscriptions_url": None,
-                                "contributor_organizations_url": None,
-                                "contributor_repos_url": None,
-                                "contributor_events_url": None,
-                                "contributor_received_events_url": None,
-                                "contributor_type": contributor.get('type'),
-                                "contributor_user_view_type": None,
-                                "contributor_contributions": contributor['contributions'],
-                                "contributor_name": contributor['name'],
-                                "contributor_email": contributor['email'],
-                                "contributor_unique_id_builder_love": f"{contributor.get('name')}|{contributor.get('email')}", # derived unique identifier for the contributor
-                            })
+                # Process the final, smaller chunk
+                if data_chunk:
+                    chunk_df = pd.DataFrame(data_chunk)
+                    chunk_df['data_timestamp'] = data_timestamp
+                    chunk_df[latest_project_repos_contributors_columns].to_sql(staging_table_name_project_repos_contributors, conn, schema=raw_schema, if_exists='append', index=False)
+                    chunk_df[latest_contributors_columns].to_sql(temp_staging_all_contributors, conn, schema=raw_schema, if_exists='append', index=False)
+                
+                context.log.info("Finished streaming data to intermediate tables.")
 
-            if not data:
-                context.log.info("Data list is empty after processing raw rows. Raising error.")
-                raise ValueError("Validation failed: Data is empty.")
+                # --- Offload Duplicate Removal to SQL ---
+                context.log.info("Removing duplicates from contributors data using the postgres DB...")
+                with conn.begin():
+                    # Using DISTINCT ON is highly efficient in PostgreSQL
+                    deduplication_query = text(f"""
+                        CREATE TABLE {raw_schema}.{staging_table_name_contributors} AS
+                        SELECT DISTINCT ON (contributor_unique_id_builder_love) *
+                        FROM {raw_schema}.{temp_staging_all_contributors};
+                    """)
+                    conn.execute(deduplication_query)
+                    # Clean up the temporary table
+                    conn.execute(text(f"DROP TABLE {raw_schema}.{temp_staging_all_contributors};"))
+                context.log.info("Duplicate removal complete.")
 
-            # write the data to a pandas dataframe
-            contributors_df = pd.DataFrame(data)
+                # --- Validate Using Staging Table Counts ---
+                new_count_contributors = conn.execute(text(f"SELECT COUNT(*) FROM {raw_schema}.{staging_table_name_contributors}")).scalar()
+                new_count_project_repos = conn.execute(text(f"SELECT COUNT(*) FROM {raw_schema}.{staging_table_name_project_repos_contributors}")).scalar()
+                
+                if not new_count_contributors or not new_count_project_repos:
+                    context.log.warning(f"Staging process resulted in zero records. new count contributors: {new_count_contributors}, new count project repos: {new_count_project_repos}")
+                    raise ValueError("Staging process resulted in zero records.")
 
-            # get the current unix timestamp as an object so we can pass it to the dataframes
-            data_timestamp = pd.Timestamp.now()
-
-            # create two new dataframes from the contributors_df
-            # one containing the columns: contributor_unique_id_builder_love, repo, contributor_contributions, data_timestamp
-            latest_project_repos_contributors_columns = ['contributor_unique_id_builder_love', 'repo', 'contributor_contributions']
-            # one containing the columns: contributor_unique_id_builder_love, contributor_login, contributor_id, contributor_node_id, contributor_avatar_url, contributor_gravatar_id, contributor_url, contributor_html_url, contributor_followers_url, contributor_following_url, contributor_gists_url, contributor_starred_url, contributor_subscriptions_url, contributor_organizations_url, contributor_repos_url, contributor_events_url, contributor_received_events_url, contributor_type, contributor_user_view_type, contributor_name, contributor_email, data_timestamp
-            latest_contributors_columns = ['contributor_unique_id_builder_love','contributor_login', 'contributor_id', 'contributor_node_id', 'contributor_avatar_url', 'contributor_gravatar_id', 'contributor_url', 'contributor_html_url', 'contributor_followers_url', 'contributor_following_url', 'contributor_gists_url', 'contributor_starred_url', 'contributor_subscriptions_url', 'contributor_organizations_url', 'contributor_repos_url', 'contributor_events_url', 'contributor_received_events_url', 'contributor_type', 'contributor_user_view_type', 'contributor_name', 'contributor_email']
-
-            # create the new dataframes
-            latest_project_repos_contributors_df = contributors_df[latest_project_repos_contributors_columns]
-            latest_contributors_df = contributors_df[latest_contributors_columns]
-
-            # print the number of rows in the dataframes
-            if len(contributors_df) > 0 and len(latest_project_repos_contributors_df) > 0 and len(latest_contributors_df) > 0:
-                print(f"Created decompressed dataframe with {len(contributors_df)} rows.")
-                print(f"Created latest_project_repos_contributors_df with {len(latest_project_repos_contributors_df)} rows.")
-                print(f"Created latest_contributors_df with {len(latest_contributors_df)} rows.")
-                if len(latest_project_repos_contributors_df) != len(latest_contributors_df) != len(contributors_df):
-                    raise ValueError("Validation failed: Dataframes are not the same size.")
-                else:
-                    print("All dataframes have the same number of rows.")
-                    print("Dropping old dataframes to free up memory...")
-                    del contributors_df
-            else:
-                raise ValueError("Validation failed: Dataframes are empty.")
-
-            # first update the unix timestamp so that both dataframes have the same data_timestamp
-            # add the data_timestamp to the dataframes
-            latest_project_repos_contributors_df['data_timestamp'] = data_timestamp
-            latest_contributors_df['data_timestamp'] = data_timestamp
-
-            # drop full duplicates from the latest_contributors_df
-            # this table represents the unique contributors across all repos
-            latest_contributors_df = latest_contributors_df.drop_duplicates()
-
-            # Run Validations (Comparing processed data against current FINAL table)
-            validations_passed = run_validations(context, latest_contributors_df, latest_project_repos_contributors_df, cloud_sql_engine, final_table_name_contributors, final_table_name_project_repos_contributors)
-            
-            if not validations_passed:
-                context.log.warning("Validation failed: Data is not valid.")
-                return dg.MaterializeResult(
-                    metadata={
-                        "latest_contributors_preview": "No rows found for preview.",
-                        "latest_project_repos_contributors_preview": "No rows found for preview.",
-                        "message": "Data is not valid."
-                    }
+                validations_passed = run_validations(
+                    context=context,
+                    new_contributors_count=new_count_contributors,
+                    new_project_repos_contributors_count=new_count_project_repos,
+                    engine=cloud_sql_engine,
+                    clean_schema=clean_schema # clean_schema is where final tables are
                 )
-            print("All validations passed. Proceeding with data processing...")
 
-            # Write DataFrame to Staging Tables first
-            # write to two tables here: latest_project_repos_contributors and latest_contributors
-            context.log.info(f"Writing data to staging tables {raw_schema}.{staging_table_name_contributors} and {raw_schema}.{staging_table_name_project_repos_contributors}...")
-            latest_contributors_df.to_sql(
-                staging_table_name_contributors,
-                cloud_sql_engine,
-                if_exists='replace', # Replace staging table safely
-                index=False,
-                schema=raw_schema,
-                chunksize=50000 # Good for large dataframes
-            )
-            latest_project_repos_contributors_df.to_sql(
-                staging_table_name_project_repos_contributors,
-                cloud_sql_engine,
-                if_exists='replace', # Replace staging table safely
-                index=False,
-                schema=raw_schema,
-                chunksize=50000 # Good for large dataframes
-            )
-            print("Successfully wrote to staging tables.")
+                if not validations_passed:
+                    # The run_validations function will raise an error if it fails
+                    context.log.warning("Validation checks failed. Halting asset materialization.")
+                    return # Or handle as needed
+
+                context.log.info("All validations passed. Proceeding with atomic swap...")
 
             # Perform Atomic Swap via Transaction
             context.log.info(f"Performing atomic swap to update {raw_schema}.{final_table_name_contributors} and {raw_schema}.{final_table_name_project_repos_contributors}...")
             with cloud_sql_engine.connect() as conn:
                 with conn.begin(): # Start transaction
                     # Use CASCADE if Foreign Keys might point to the table
-                    print(f"Dropping old tables {raw_schema}.{old_table_name_contributors} and {raw_schema}.{old_table_name_project_repos_contributors} if they exist...")
+                    context.log.info(f"Dropping old tables {raw_schema}.{old_table_name_contributors} and {raw_schema}.{old_table_name_project_repos_contributors} if they exist...")
                     conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{old_table_name_contributors} CASCADE;"))
                     conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{old_table_name_project_repos_contributors} CASCADE;"))
 
-                    print(f"Renaming current {raw_schema}.{final_table_name_contributors} to {raw_schema}.{old_table_name_contributors} (if it exists)...")
+                    context.log.info(f"Renaming current {raw_schema}.{final_table_name_contributors} to {raw_schema}.{old_table_name_contributors} (if it exists)...")
                     conn.execute(text(f"ALTER TABLE IF EXISTS {raw_schema}.{final_table_name_contributors} RENAME TO {old_table_name_contributors};"))
-                    print(f"Renaming current {raw_schema}.{final_table_name_project_repos_contributors} to {raw_schema}.{old_table_name_project_repos_contributors} (if it exists)...")
+                    context.log.info(f"Renaming current {raw_schema}.{final_table_name_project_repos_contributors} to {raw_schema}.{old_table_name_project_repos_contributors} (if it exists)...")
                     conn.execute(text(f"ALTER TABLE IF EXISTS {raw_schema}.{final_table_name_project_repos_contributors} RENAME TO {old_table_name_project_repos_contributors};"))
 
-                    print(f"Renaming staging tables {raw_schema}.{staging_table_name_contributors} and {raw_schema}.{staging_table_name_project_repos_contributors} to {raw_schema}.{final_table_name_contributors} and {raw_schema}.{final_table_name_project_repos_contributors}...")
+                    context.log.info(f"Renaming staging tables {raw_schema}.{staging_table_name_contributors} and {raw_schema}.{staging_table_name_project_repos_contributors} to {raw_schema}.{final_table_name_contributors} and {raw_schema}.{final_table_name_project_repos_contributors}...")
                     conn.execute(text(f"ALTER TABLE {raw_schema}.{staging_table_name_contributors} RENAME TO {final_table_name_contributors};"))
                     conn.execute(text(f"ALTER TABLE {raw_schema}.{staging_table_name_project_repos_contributors} RENAME TO {final_table_name_project_repos_contributors};"))
                 # Transaction commits here if no exceptions were raised inside the 'with conn.begin()' block
@@ -482,11 +445,11 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                         conn.execute(text(f"ANALYZE {raw_schema}.{final_table_name_contributors};"))
                         conn.execute(text(f"ANALYZE {raw_schema}.{final_table_name_project_repos_contributors};"))
             except Exception as index_e:
-                print(f"Could not create indexes for {raw_schema}.{final_table_name_contributors} and {raw_schema}.{final_table_name_project_repos_contributors}: {index_e}")
+                context.log.warning(f"Could not create indexes for {raw_schema}.{final_table_name_contributors} and {raw_schema}.{final_table_name_project_repos_contributors}: {index_e}")
                 raise e
 
             # Fetch Metadata from the FINAL table for MaterializeResult
-            print("Fetching metadata for Dagster result...")
+            context.log.info("Fetching metadata for Dagster result...")
             with cloud_sql_engine.connect() as conn:
                 row_count_result = conn.execute(text(f"SELECT COUNT(*) FROM {raw_schema}.{final_table_name_contributors}"))
                 row_count_result_project_repos_contributors = conn.execute(text(f"SELECT COUNT(*) FROM {raw_schema}.{final_table_name_project_repos_contributors}"))
@@ -500,8 +463,8 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                 result_df = pd.DataFrame(preview_result.mappings().all())
                 result_df_project_repos_contributors = pd.DataFrame(preview_result_project_repos_contributors.mappings().all())
 
-            print(f"Asset materialization complete. Final row count: {row_count}")
-            print(f"Asset materialization complete. Final row count: {row_count_project_repos_contributors}")
+            context.log.info(f"Asset materialization complete. Final row count: {row_count}")
+            context.log.info(f"Asset materialization complete. Final row count: {row_count_project_repos_contributors}")
             return dg.MaterializeResult(
                 metadata={
                     "latest_contributors_row_count": dg.MetadataValue.int(row_count),
