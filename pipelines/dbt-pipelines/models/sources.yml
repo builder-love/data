@@ -93,6 +93,14 @@ sources:
         loaded_at_field: data_timestamp
         freshness: 
           warn_after: {count: 32, period: day}
+      - name: latest_contributors
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
+      - name: latest_project_repos_contributors
+        loaded_at_field: data_timestamp
+        freshness: 
+          warn_after: {count: 32, period: day}
   - name: clean_schema
     database: "{{ env_var('cloud_sql_postgres_db', 'postgres') }}"
     schema: "{{ 'clean_stg' if target.name == 'stg' else 'clean' }}"

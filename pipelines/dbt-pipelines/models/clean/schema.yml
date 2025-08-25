@@ -704,6 +704,64 @@ models:
           lower_threshold_factor: 0.50 # New count should not be less than 50% of old count
           upper_threshold_factor: 1.50 # New count should not be more than 150% of old count
           min_rows_for_check: 100 
+  - name: latest_contributors
+    columns:
+      - name: contributor_unique_id_builder_love
+        tests:
+          - not_null
+      - name: contributor_login
+      - name: contributor_id
+      - name: contributor_node_id
+      - name: contributor_avatar_url
+      - name: contributor_gravatar_id
+      - name: contributor_url
+      - name: contributor_html_url
+      - name: contributor_followers_url
+      - name: contributor_following_url
+      - name: contributor_gists_url
+      - name: contributor_starred_url
+      - name: contributor_subscriptions_url
+      - name: contributor_organizations_url
+      - name: contributor_repos_url
+      - name: contributor_events_url
+      - name: contributor_received_events_url
+      - name: contributor_type
+      - name: contributor_user_view_type
+      - name: contributor_name
+      - name: contributor_email
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+    tests:
+      - unique_combination_of_columns:
+          column_names: [contributor_unique_id_builder_love, data_timestamp]
+      - check_row_count_stability:
+          lower_threshold_factor: 0.50 # New count should not be less than 50% of old count
+          upper_threshold_factor: 1.50 # New count should not be more than 150% of old count
+          min_rows_for_check: 100 
+  - name: latest_project_repos_contributors
+    columns:
+      - name: contributor_unique_id_builder_love
+        tests:
+          - not_null
+      - name: repo
+        tests:
+          - not_null
+      - name: contributor_contributions
+      - name: data_timestamp
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              column_type: timestamp without time zone
+    tests:
+      - unique_combination_of_columns:
+          column_names: [contributor_unique_id_builder_love, repo, data_timestamp]
+      - check_row_count_stability:
+          lower_threshold_factor: 0.50 # New count should not be less than 50% of old count
+          upper_threshold_factor: 1.50 # New count should not be more than 150% of old count
+          min_rows_for_check: 100 
   - name: latest_contributor_data
     columns:
       - name: contributor_node_id
