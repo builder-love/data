@@ -211,6 +211,7 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
         
         # A temporary table to hold all contributor records before deduplication
         temp_staging_all_contributors = "latest_contributors_all_temp"
+        temp_staging_all_project_repos_contributors = "latest_project_repos_contributors_all_temp"
 
         # tell the user what environment they are running in
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
@@ -253,6 +254,7 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                     conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{staging_table_name_contributors} CASCADE;"))
                     conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{staging_table_name_project_repos_contributors} CASCADE;"))
                     conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{temp_staging_all_contributors} CASCADE;"))
+                    conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{temp_staging_all_project_repos_contributors} CASCADE;"))
 
                     # --- Generator for Streaming Data ---
                     def generate_contributor_rows(db_connection):
@@ -346,7 +348,7 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                             chunk_df['data_timestamp'] = data_timestamp
                             
                             # Write to project_repos_contributors staging table
-                            chunk_df[latest_project_repos_contributors_columns].to_sql(staging_table_name_project_repos_contributors, conn, schema=raw_schema, if_exists='append', index=False)
+                            chunk_df[latest_project_repos_contributors_columns].to_sql(temp_staging_all_project_repos_contributors, conn, schema=raw_schema, if_exists='append', index=False)
                             
                             # Write to temporary table that allows duplicates
                             chunk_df[latest_contributors_columns].to_sql(temp_staging_all_contributors, conn, schema=raw_schema, if_exists='append', index=False)
@@ -357,23 +359,33 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                     if data_chunk:
                         chunk_df = pd.DataFrame(data_chunk)
                         chunk_df['data_timestamp'] = data_timestamp
-                        chunk_df[latest_project_repos_contributors_columns].to_sql(staging_table_name_project_repos_contributors, conn, schema=raw_schema, if_exists='append', index=False)
+                        chunk_df[latest_project_repos_contributors_columns].to_sql(temp_staging_all_project_repos_contributors, conn, schema=raw_schema, if_exists='append', index=False)
                         chunk_df[latest_contributors_columns].to_sql(temp_staging_all_contributors, conn, schema=raw_schema, if_exists='append', index=False)
                     
                     context.log.info("Finished streaming data to intermediate tables.")
 
                     # --- Offload Duplicate Removal to SQL ---
-                    context.log.info("Removing duplicates from contributors data using the postgres DB...")
+                    context.log.info("Removing duplicates from both tables data using the postgres DB...")
 
                     # Using DISTINCT ON is highly efficient in PostgreSQL
-                    deduplication_query = text(f"""
+                    deduplication_query_contributors = text(f"""
                         CREATE TABLE {raw_schema}.{staging_table_name_contributors} AS
                         SELECT DISTINCT ON (contributor_unique_id_builder_love) *
                         FROM {raw_schema}.{temp_staging_all_contributors};
                     """)
-                    conn.execute(deduplication_query)
+                    conn.execute(deduplication_query_contributors)
                     # Clean up the temporary table
                     conn.execute(text(f"DROP TABLE {raw_schema}.{temp_staging_all_contributors};"))
+
+                    deduplication_query_project_repos = text(f"""
+                        CREATE TABLE {raw_schema}.{staging_table_name_project_repos_contributors} AS
+                        SELECT DISTINCT ON (contributor_unique_id_builder_love, repo, contributor_contributions, data_timestamp) *
+                        FROM {raw_schema}.{temp_staging_all_project_repos_contributors};
+                    """)
+                    conn.execute(deduplication_query_project_repos)
+                    # Clean up the temporary table
+                    conn.execute(text(f"DROP TABLE {raw_schema}.{temp_staging_all_project_repos_contributors};"))
+
                     context.log.info("Duplicate removal complete.")
 
                 # --- Validate Using Staging Table Counts ---
