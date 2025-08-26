@@ -807,7 +807,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         gcs_client = context.resources.gcs
         env_config = context.resources.active_env_config
         gcs_bucket_name = "bl-repo-corpus-public"
-        gcs_pickle_file_path = "embeddings_data/repo_embeddings_bge_m3.pkl"
+        gcs_pickle_file_path = "embeddings_data/repo_embeddings_qwen_4b.pkl"
         raw_schema = env_config["raw_schema"]
 
         # get embeddings from gcs bucket
