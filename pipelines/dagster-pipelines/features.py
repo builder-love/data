@@ -726,6 +726,27 @@ def log_memory_usage(context: dg.OpExecutionContext, message: str):
     memory_mb = process.memory_info().rss / (1024 * 1024)  # in MB
     context.log.info(f"{message} - Memory Usage: {memory_mb:.2f} MB")
 
+def get_average_embedding(embedding_data, context: dg.OpExecutionContext):
+    # Handles cases where the data might be None or an empty list
+    if embedding_data is None or len(embedding_data) == 0:
+        context.log.info("Embedding data is None or empty. Returning None.")
+        return None
+
+    # Handles the case where it's a single array, not in a list
+    if isinstance(embedding_data, np.ndarray) and embedding_data.ndim == 1:
+        context.log.info("Embedding data is a single array. Returning it as is.")
+        return embedding_data.tolist()
+
+    try:
+        # If it's a list of arrays, create a new writable array and average it
+        embedding_array = np.array(embedding_data, dtype=np.float32)
+        context.log.info("Converting embedding array to list of floats")
+        return np.mean(embedding_array, axis=0).tolist()
+    except ValueError:
+        context.log.info("Error converting embedding array to list of floats. Returning None.")
+        # This catches the "ragged array" error and returns None for that row
+        return None
+
 # factory function to get embeddings from gcs bucket and store them in postgres vector column - table raw.repo_corpus_embeddings
 def create_project_repos_corpus_embeddings_asset(env_prefix: str):
     """
@@ -796,7 +817,12 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                 context.log.info(f"Loaded {len(df)} records from batch.")
 
                 if not df.empty and not isinstance(df['corpus_embedding'].iloc[0], str):
-                    df['corpus_embedding'] = df['corpus_embedding'].apply(lambda x: np.mean(np.array(x, dtype=np.float32), axis=0).tolist())
+                    context.log.info("Converting corpus_embedding to list of floats")
+                    df['corpus_embedding'] = df['corpus_embedding'].apply(get_average_embedding)
+                    context.log.info("Converted corpus_embedding to list of floats...")
+                    # Remove rows where embedding could not be processed
+                    df.dropna(subset=['corpus_embedding'], inplace=True)
+                    context.log.info(f"Removed {len(df)} rows where embedding could not be processed.")
 
                 df.to_sql(
                     name=table_name,
