@@ -719,75 +719,6 @@ def create_project_repos_corpus_asset(env_prefix: str):
     return _project_repos_corpus_env_specific
 
 
-
-# get pickle file from gcs bucket
-def get_pickle_file_from_gcs(context: dg.OpExecutionContext, gcs_client: storage.Client, gcs_bucket_name: str, gcs_pickle_file_path: str):
-    """
-    Downloads embeddings from GCS and imports them into a Cloud SQL database.
-    """
-    context.log.info("Starting import process...")
-
-    # Download embeddings from GCS
-    try:
-        context.log.info(f"Downloading {gcs_pickle_file_path} from bucket {gcs_bucket_name}...")
-        bucket = gcs_client.bucket(gcs_bucket_name)
-        blob = bucket.blob(gcs_pickle_file_path)
-        pickle_data = blob.download_as_bytes()
-    except Exception as e:
-        context.log.error(f"Failed to download pickle file from GCS: {e}")
-        raise
-
-    try:
-        context.log.info("Unpickling embeddings...")
-        embeddings_dict = pickle.loads(pickle_data)
-    except Exception as e:
-        context.log.error(f"Failed to unpickle embeddings: {e}")
-        raise
-
-    context.log.info(f"Successfully downloaded and unpickled {len(embeddings_dict)} embeddings.")
-
-    return embeddings_dict
-
-def store_embeddings_in_postgres(context: dg.OpExecutionContext, embeddings_dict: dict, cloud_sql_engine: sqlalchemy.engine.Engine, raw_schema: str):
-    """
-    Efficiently replaces embeddings in Postgres using a full refresh pattern.
-    """
-    table_name = "latest_project_repo_corpus_embeddings"
-    full_table_name = f"{raw_schema}.{table_name}"
-
-    context.log.info(f"Starting full refresh for {full_table_name}")
-
-    try:
-        # 1. Prepare data in a pandas DataFrame
-        df = pd.DataFrame(list(embeddings_dict.items()), columns=['repo', 'corpus_embedding'])
-        df['corpus_embedding'] = df['corpus_embedding'].apply(lambda x: str(x.tolist()))
-        context.log.info(f"Prepared DataFrame with {len(df)} records.")
-
-        # 2. Drop the old index and truncate the table in a single transaction
-        with cloud_sql_engine.begin() as conn:
-            context.log.info(f"Truncating table {full_table_name}...")
-            conn.execute(text(f"TRUNCATE TABLE {full_table_name};"))
-        
-        # 3. Insert new data in batches (this is the slowest step)
-        context.log.info(f"Bulk inserting {len(df)} records...")
-        df.to_sql(
-            name=table_name,
-            con=cloud_sql_engine,
-            schema=raw_schema,
-            if_exists='append',
-            index=False,
-            chunksize=10000,
-            method='multi'
-        )
-        context.log.info("Bulk insert complete.")
-
-    except Exception as e:
-        context.log.error(f"Failed during full refresh of {full_table_name}: {e}")
-        raise
-
-    context.log.info(f"Successfully refreshed {full_table_name} with {len(df)} records.")
-
-
 # factory function to get embeddings from gcs bucket and store them in postgres vector column - table raw.repo_corpus_embeddings
 def create_project_repos_corpus_embeddings_asset(env_prefix: str):
     """
@@ -806,15 +737,78 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         gcs_client = context.resources.gcs
         env_config = context.resources.active_env_config
+        
+        # Updated configuration to point to the new Parquet files
         gcs_bucket_name = "bl-repo-corpus-public"
-        gcs_pickle_file_path = "embeddings_data/repo_embeddings_qwen_4b.pkl"
+        # chore: get this value from upstream dagster asset's yielded output
+        gcs_parquet_folder_path = "embeddings_data/akash-qwen-checkpoints/20250827-162519"
         raw_schema = env_config["raw_schema"]
+        table_name = "latest_project_repo_corpus_embeddings"
+        full_table_name = f"{raw_schema}.{table_name}"
+        
+        total_records_processed = 0
 
-        # get embeddings from gcs bucket
-        embeddings_dict = get_pickle_file_from_gcs(context, gcs_client, gcs_bucket_name, gcs_pickle_file_path)
+        try:
+            # 1. List all the batch files in the GCS directory
+            context.log.info(f"Listing batch files from gs://{gcs_bucket_name}/{gcs_parquet_folder_path}...")
+            bucket = gcs_client.bucket(gcs_bucket_name)
+            blobs = list(bucket.list_blobs(prefix=gcs_parquet_folder_path))
+            
+            # Filter out the directory placeholder itself
+            parquet_blobs = [b for b in blobs if b.name.endswith('.parquet')]
+            context.log.info(f"Found {len(parquet_blobs)} batch files to process.")
 
-        # store embeddings in postgres vector column - table raw.repo_corpus_embeddings
-        store_embeddings_in_postgres(context, embeddings_dict, cloud_sql_engine, raw_schema)
+            if not parquet_blobs:
+                context.log.warning("No Parquet files found. Exiting.")
+                return dg.MaterializeResult(metadata={"records_processed": 0})
+
+            # 2. Truncate the target table ONCE before starting the loop
+            with cloud_sql_engine.begin() as conn:
+                context.log.info(f"Resetting target table: TRUNCATE TABLE {full_table_name};")
+                conn.execute(text(f"TRUNCATE TABLE {full_table_name};"))
+            
+            # 3. Process each batch file one by one
+            for i, blob in enumerate(parquet_blobs):
+                context.log.info(f"--- Processing Batch {i+1}/{len(parquet_blobs)}: {blob.name} ---")
+
+                # Download batch to a temporary in-memory buffer
+                gcs_path = f"gs://{gcs_bucket_name}/{blob.name}"
+                
+                # Read the parquet file directly from GCS into a pandas DataFrame
+                df = pd.read_parquet(gcs_path, filesystem=gcsfs.GCSFileSystem())
+                context.log.info(f"Loaded {len(df)} records from batch.")
+
+                # The embedding is already a list/array in the source pickle, so it should be fine.
+                # If it's a numpy array, convert to list string for pgvector.
+                if not df.empty and not isinstance(df['corpus_embedding'].iloc[0], str):
+                    df['corpus_embedding'] = df['corpus_embedding'].apply(lambda x: str(list(x)))
+
+                # Append the DataFrame batch to the Postgres table
+                df.to_sql(
+                    name=table_name,
+                    con=cloud_sql_engine,
+                    schema=raw_schema,
+                    if_exists='append',
+                    index=False,
+                    chunksize=10000, # Further chunking for the database insert
+                    method='multi'
+                )
+                total_records_processed += len(df)
+                context.log.info(f"Successfully inserted batch. Total records processed: {total_records_processed}")
+
+        except Exception as e:
+            context.log.error(f"Failed during streaming refresh of {full_table_name}: {e}")
+            raise
+
+        context.log.info(f"✅ Successfully refreshed {full_table_name} with {total_records_processed} records.")
+        
+        return dg.MaterializeResult(
+            metadata={
+                "records_processed": total_records_processed,
+                "batches": len(parquet_blobs),
+                "gcs_source_path": f"gs://{gcs_bucket_name}/{gcs_parquet_folder_path}"
+            }
+        )
 
     return _project_repos_corpus_embeddings_env_specific
 
