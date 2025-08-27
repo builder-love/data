@@ -107,6 +107,7 @@ asset_job_schedule_params_map = {
     "contributor_follower_count": {"base_job_name": "contributor_follower_count_refresh", "base_job_desc": "Queries follower count...", "job_tags": {"github_api_key1": "True"}, "cron_str": "10 0 9 * *", "base_schedule_name": "contributor_follower_count_schedule", "github_key_name": "github_finegrain_trebor"},
     "latest_contributor_following_count": {"base_job_name": "latest_contributor_following_count_refresh", "base_job_desc": "Queries following count...", "job_tags": {"github_api_key1": "True"}, "cron_str": "10 0 12 * *", "base_schedule_name": "latest_contributor_following_count_schedule", "github_key_name": "github_finegrain_trebor"},
     "latest_contributor_activity": {"base_job_name": "latest_contributor_activity_refresh", "base_job_desc": "Queries recent activity...", "job_tags": {"github_api_key2": "True"}, "cron_str": "10 0 13 * *", "base_schedule_name": "latest_contributor_activity_schedule", "github_key_name": "github_finegrain_jackatj"},
+    "project_repos_corpus_embeddings": {"base_job_name": "project_repos_corpus_embeddings_refresh", "base_job_desc": "Gets corpus embeddings from gcs...", "job_tags": {"ml_ops": "True"}, "cron_str": "0 0 28 * *", "base_schedule_name": "project_repos_corpus_embeddings_schedule"},
 }
 
 ## ------------------------------------------ define common assets, jobs, and schedules --------------------------------- ##
