@@ -726,27 +726,6 @@ def log_memory_usage(context: dg.OpExecutionContext, message: str):
     memory_mb = process.memory_info().rss / (1024 * 1024)  # in MB
     context.log.info(f"{message} - Memory Usage: {memory_mb:.2f} MB")
 
-def get_average_embedding(embedding_data, context: dg.OpExecutionContext):
-    # Handles cases where the data might be None or an empty list
-    if embedding_data is None or len(embedding_data) == 0:
-        context.log.info("Embedding data is None or empty. Returning None.")
-        return None
-
-    # Handles the case where it's a single array, not in a list
-    if isinstance(embedding_data, np.ndarray) and embedding_data.ndim == 1:
-        context.log.info("Embedding data is a single array. Returning it as is.")
-        return embedding_data.tolist()
-
-    try:
-        # If it's a list of arrays, create a new writable array and average it
-        embedding_array = np.array(embedding_data, dtype=np.float32)
-        context.log.info("Converting embedding array to list of floats")
-        return np.mean(embedding_array, axis=0).tolist()
-    except ValueError:
-        context.log.info("Error converting embedding array to list of floats. Returning None.")
-        # This catches the "ragged array" error and returns None for that row
-        return None
-
 # factory function to get embeddings from gcs bucket and store them in postgres vector column - table raw.repo_corpus_embeddings
 def create_project_repos_corpus_embeddings_asset(env_prefix: str):
     """
@@ -762,6 +741,45 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         tags={"feature_engineering": "True"}
     )
     def _project_repos_corpus_embeddings_env_specific(context: dg.OpExecutionContext) -> dg.MaterializeResult:
+
+        # helper function to get the average embedding from a list of embeddings
+        def get_average_embedding_with_logging(embedding_data, context: dg.OpExecutionContext):
+            EXPECTED_DIM = 2560
+
+            # Handle empty/None cases first
+            if embedding_data is None or (isinstance(embedding_data, list) and not embedding_data):
+                context.log.info("Embedding data is None or empty. Returning None.")
+                return None
+
+            final_vector = None
+
+            # Case 1: Data is a single flat array
+            if isinstance(embedding_data, np.ndarray) and embedding_data.ndim == 1:
+                context.log.info("Embedding data is a single flat array. Returning it as is.")
+                final_vector = embedding_data
+            
+            # Case 2: Data is a list of arrays that needs averaging
+            else:
+                try:
+                    context.log.info("Embedding data is a list of arrays. Converting to numpy array and averaging.")
+                    embedding_array = np.array(embedding_data, dtype=np.float32)
+                    context.log.info("Converting embedding array to list of floats")
+                    final_vector = np.mean(embedding_array, axis=0)
+                except ValueError:
+                    # This error means the arrays in the list have different lengths.
+                    shapes = [arr.shape for arr in embedding_data if hasattr(arr, 'shape')]
+                    context.log.warning(f"Row has embeddings with inconsistent shapes: {shapes}. Skipping row.")
+                    return None
+            
+            # Final dimension check for all cases
+            if final_vector.shape[0] != EXPECTED_DIM:
+                context.log.warning(
+                    f"Embedding has incorrect dimension. Expected {EXPECTED_DIM}, but got {final_vector.shape[0]}. Skipping row."
+                )
+                return None
+
+            return final_vector.tolist()
+        
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         gcs_resource = context.resources.gcs 
         storage_client = gcs_resource.get_client()
@@ -780,49 +798,44 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         try:
             log_memory_usage(context, "Start of asset execution")
 
-            # 1. Get an iterator for the blobs without loading them all into memory
             context.log.info(f"Listing batch files from gs://{gcs_bucket_name}/{gcs_parquet_folder_path}...")
             bucket = storage_client.bucket(gcs_bucket_name)
             all_blobs_iterator = bucket.list_blobs(prefix=gcs_parquet_folder_path)
-
-            # Use a generator expression to filter for Parquet files. This is still memory-efficient.
-            parquet_blob_generator = (b for b in all_blobs_iterator if b.name.endswith('.parquet'))
-            
-            # We must convert to a list to count them, but we will do this only once
-            # and then use the list for iteration. This is a trade-off.
-            parquet_blobs = list(parquet_blob_generator)
+            parquet_blobs = [b for b in all_blobs_iterator if b.name.endswith('.parquet')]
             num_batches = len(parquet_blobs)
             context.log.info(f"Found {num_batches} batch files to process.")
-
-            log_memory_usage(context, "After listing blobs")
 
             if not num_batches:
                 context.log.warning("No Parquet files found. Exiting.")
                 return dg.MaterializeResult(metadata={"records_processed": 0})
 
-            # 2. Truncate the target table ONCE before starting the loop
             with cloud_sql_engine.begin() as conn:
                 context.log.info(f"Resetting target table: TRUNCATE TABLE {full_table_name};")
                 conn.execute(text(f"TRUNCATE TABLE {full_table_name};"))
-            log_memory_usage(context, "After truncating table")
-            # 3. Process each batch file one by one using the list
+            
             for i, blob in enumerate(parquet_blobs):
                 context.log.info(f"--- Processing Batch {i+1}/{num_batches}: {blob.name} ---")
-                log_memory_usage(context, f"Batch {i+1}: Start of loop")
 
                 gcs_path = f"gs://{gcs_bucket_name}/{blob.name}"
-                
                 df = pd.read_parquet(gcs_path, filesystem=gcsfs.GCSFileSystem())
-                log_memory_usage(context, f"Batch {i+1}: After pd.read_parquet")
                 context.log.info(f"Loaded {len(df)} records from batch.")
 
-                if not df.empty and not isinstance(df['corpus_embedding'].iloc[0], str):
-                    context.log.info("Converting corpus_embedding to list of floats")
-                    df['corpus_embedding'] = df['corpus_embedding'].apply(get_average_embedding)
-                    context.log.info("Converted corpus_embedding to list of floats...")
-                    # Remove rows where embedding could not be processed
+                if not df.empty:
+                    df['corpus_embedding'] = df['corpus_embedding'].apply(get_average_embedding_with_logging)
+                    
+                    # Remove rows where the helper function returned None due to an issue
+                    rows_before_dropping = len(df)
                     df.dropna(subset=['corpus_embedding'], inplace=True)
-                    context.log.info(f"Removed {len(df)} rows where embedding could not be processed.")
+                    rows_after_dropping = len(df)
+                    
+                    if rows_before_dropping > rows_after_dropping:
+                        context.log.warning(
+                            f"Dropped {rows_before_dropping - rows_after_dropping} rows due to embedding format/dimension issues."
+                        )
+
+                if df.empty:
+                    context.log.warning(f"Batch {i+1} is empty after cleaning. Nothing to insert.")
+                    continue
 
                 df.to_sql(
                     name=table_name,
@@ -833,7 +846,6 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                     chunksize=10000,
                     method='multi'
                 )
-                log_memory_usage(context, f"Batch {i+1}: After df.to_sql")
                 total_records_processed += len(df)
                 context.log.info(f"Successfully inserted batch. Total records processed: {total_records_processed}")
 
