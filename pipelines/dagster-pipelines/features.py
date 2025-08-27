@@ -735,7 +735,8 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
     )
     def _project_repos_corpus_embeddings_env_specific(context: dg.OpExecutionContext) -> dg.MaterializeResult:
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
-        gcs_client = context.resources.gcs
+        gcs_resource = context.resources.gcs 
+        storage_client = gcs_resource.get_client()
         env_config = context.resources.active_env_config
         
         # Updated configuration to point to the new Parquet files
@@ -751,7 +752,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         try:
             # 1. List all the batch files in the GCS directory
             context.log.info(f"Listing batch files from gs://{gcs_bucket_name}/{gcs_parquet_folder_path}...")
-            bucket = gcs_client.bucket(gcs_bucket_name)
+            bucket = storage_client.bucket(gcs_bucket_name)
             blobs = list(bucket.list_blobs(prefix=gcs_parquet_folder_path))
             
             # Filter out the directory placeholder itself
@@ -778,7 +779,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                 df = pd.read_parquet(gcs_path, filesystem=gcsfs.GCSFileSystem())
                 context.log.info(f"Loaded {len(df)} records from batch.")
 
-                # The embedding is already a list/array in the source pickle, so it should be fine.
+                # The embedding is already a list/array in the source parquet, so it should be fine.
                 # If it's a numpy array, convert to list string for pgvector.
                 if not df.empty and not isinstance(df['corpus_embedding'].iloc[0], str):
                     df['corpus_embedding'] = df['corpus_embedding'].apply(lambda x: str(list(x)))
