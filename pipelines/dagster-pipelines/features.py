@@ -720,6 +720,12 @@ def create_project_repos_corpus_asset(env_prefix: str):
     return _project_repos_corpus_env_specific
 
 
+def log_memory_usage(context: dg.OpExecutionContext, message: str):
+    """Logs the current RSS memory usage of the process."""
+    process = psutil.Process(os.getpid())
+    memory_mb = process.memory_info().rss / (1024 * 1024)  # in MB
+    context.log.info(f"{message} - Memory Usage: {memory_mb:.2f} MB")
+
 # factory function to get embeddings from gcs bucket and store them in postgres vector column - table raw.repo_corpus_embeddings
 def create_project_repos_corpus_embeddings_asset(env_prefix: str):
     """
@@ -751,6 +757,8 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         total_records_processed = 0
 
         try:
+            log_memory_usage(context, "Start of asset execution")
+
             # 1. Get an iterator for the blobs without loading them all into memory
             context.log.info(f"Listing batch files from gs://{gcs_bucket_name}/{gcs_parquet_folder_path}...")
             bucket = storage_client.bucket(gcs_bucket_name)
@@ -765,6 +773,8 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             num_batches = len(parquet_blobs)
             context.log.info(f"Found {num_batches} batch files to process.")
 
+            log_memory_usage(context, "After listing blobs")
+
             if not num_batches:
                 context.log.warning("No Parquet files found. Exiting.")
                 return dg.MaterializeResult(metadata={"records_processed": 0})
@@ -773,14 +783,16 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             with cloud_sql_engine.begin() as conn:
                 context.log.info(f"Resetting target table: TRUNCATE TABLE {full_table_name};")
                 conn.execute(text(f"TRUNCATE TABLE {full_table_name};"))
-            
+            log_memory_usage(context, "After truncating table")
             # 3. Process each batch file one by one using the list
             for i, blob in enumerate(parquet_blobs):
                 context.log.info(f"--- Processing Batch {i+1}/{num_batches}: {blob.name} ---")
+                log_memory_usage(context, f"Batch {i+1}: Start of loop")
 
                 gcs_path = f"gs://{gcs_bucket_name}/{blob.name}"
                 
                 df = pd.read_parquet(gcs_path, filesystem=gcsfs.GCSFileSystem())
+                log_memory_usage(context, f"Batch {i+1}: After pd.read_parquet")
                 context.log.info(f"Loaded {len(df)} records from batch.")
 
                 if not df.empty and not isinstance(df['corpus_embedding'].iloc[0], str):
@@ -795,6 +807,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                     chunksize=10000,
                     method='multi'
                 )
+                log_memory_usage(context, f"Batch {i+1}: After df.to_sql")
                 total_records_processed += len(df)
                 context.log.info(f"Successfully inserted batch. Total records processed: {total_records_processed}")
 
