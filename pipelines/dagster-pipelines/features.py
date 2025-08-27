@@ -14,6 +14,7 @@ from google.cloud import storage
 import pickle
 import pyarrow as pa
 import pyarrow.parquet as pq
+import gcsfs
 
 def aggregate_corpus_text(features_df: pd.DataFrame, context: dg.OpExecutionContext) -> pd.DataFrame:
     """
