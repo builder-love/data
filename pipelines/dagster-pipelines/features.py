@@ -749,7 +749,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         # Updated configuration to point to the new Parquet files
         gcs_bucket_name = "bl-repo-corpus-public"
         # chore: get this value from upstream dagster asset's yielded output
-        gcs_parquet_folder_path = "embeddings_data/akash-qwen-checkpoints/20250827-162519"
+        gcs_parquet_folder_path = "embeddings_data/akash-qwen-checkpoints/20250827-194354"
         raw_schema = env_config["raw_schema"]
         table_name = "latest_project_repo_corpus_embeddings"
         full_table_name = f"{raw_schema}.{table_name}"
@@ -796,7 +796,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                 context.log.info(f"Loaded {len(df)} records from batch.")
 
                 if not df.empty and not isinstance(df['corpus_embedding'].iloc[0], str):
-                    df['corpus_embedding'] = df['corpus_embedding'].apply(lambda x: str(list(x)))
+                    df['corpus_embedding'] = df['corpus_embedding'].apply(lambda x: np.mean(x, axis=0).tolist())
 
                 df.to_sql(
                     name=table_name,
