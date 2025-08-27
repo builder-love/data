@@ -743,7 +743,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
     def _project_repos_corpus_embeddings_env_specific(context: dg.OpExecutionContext) -> dg.MaterializeResult:
 
         # helper function to get the average embedding from a list of embeddings
-        def get_average_embedding_with_logging(embedding_data, context: dg.OpExecutionContext):
+        def get_average_embedding_with_logging(embedding_data):
             EXPECTED_DIM = 2560
 
             # Handle empty/None cases first
