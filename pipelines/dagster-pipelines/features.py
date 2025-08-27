@@ -751,16 +751,21 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         total_records_processed = 0
 
         try:
-            # 1. List all the batch files in the GCS directory
+            # 1. Get an iterator for the blobs without loading them all into memory
             context.log.info(f"Listing batch files from gs://{gcs_bucket_name}/{gcs_parquet_folder_path}...")
             bucket = storage_client.bucket(gcs_bucket_name)
-            blobs = list(bucket.list_blobs(prefix=gcs_parquet_folder_path))
-            
-            # Filter out the directory placeholder itself
-            parquet_blobs = [b for b in blobs if b.name.endswith('.parquet')]
-            context.log.info(f"Found {len(parquet_blobs)} batch files to process.")
+            all_blobs_iterator = bucket.list_blobs(prefix=gcs_parquet_folder_path)
 
-            if not parquet_blobs:
+            # Use a generator expression to filter for Parquet files. This is still memory-efficient.
+            parquet_blob_generator = (b for b in all_blobs_iterator if b.name.endswith('.parquet'))
+            
+            # We must convert to a list to count them, but we will do this only once
+            # and then use the list for iteration. This is a trade-off.
+            parquet_blobs = list(parquet_blob_generator)
+            num_batches = len(parquet_blobs)
+            context.log.info(f"Found {num_batches} batch files to process.")
+
+            if not num_batches:
                 context.log.warning("No Parquet files found. Exiting.")
                 return dg.MaterializeResult(metadata={"records_processed": 0})
 
@@ -769,30 +774,25 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                 context.log.info(f"Resetting target table: TRUNCATE TABLE {full_table_name};")
                 conn.execute(text(f"TRUNCATE TABLE {full_table_name};"))
             
-            # 3. Process each batch file one by one
+            # 3. Process each batch file one by one using the list
             for i, blob in enumerate(parquet_blobs):
-                context.log.info(f"--- Processing Batch {i+1}/{len(parquet_blobs)}: {blob.name} ---")
+                context.log.info(f"--- Processing Batch {i+1}/{num_batches}: {blob.name} ---")
 
-                # Download batch to a temporary in-memory buffer
                 gcs_path = f"gs://{gcs_bucket_name}/{blob.name}"
                 
-                # Read the parquet file directly from GCS into a pandas DataFrame
                 df = pd.read_parquet(gcs_path, filesystem=gcsfs.GCSFileSystem())
                 context.log.info(f"Loaded {len(df)} records from batch.")
 
-                # The embedding is already a list/array in the source parquet, so it should be fine.
-                # If it's a numpy array, convert to list string for pgvector.
                 if not df.empty and not isinstance(df['corpus_embedding'].iloc[0], str):
                     df['corpus_embedding'] = df['corpus_embedding'].apply(lambda x: str(list(x)))
 
-                # Append the DataFrame batch to the Postgres table
                 df.to_sql(
                     name=table_name,
                     con=cloud_sql_engine,
                     schema=raw_schema,
                     if_exists='append',
                     index=False,
-                    chunksize=10000, # Further chunking for the database insert
+                    chunksize=10000,
                     method='multi'
                 )
                 total_records_processed += len(df)
@@ -802,7 +802,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             context.log.error(f"Failed during streaming refresh of {full_table_name}: {e}")
             raise
 
-        context.log.info(f"✅ Successfully refreshed {full_table_name} with {total_records_processed} records.")
+        context.log.info(f"Successfully refreshed {full_table_name} with {total_records_processed} records.")
         
         return dg.MaterializeResult(
             metadata={
