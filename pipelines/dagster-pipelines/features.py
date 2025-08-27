@@ -796,7 +796,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                 context.log.info(f"Loaded {len(df)} records from batch.")
 
                 if not df.empty and not isinstance(df['corpus_embedding'].iloc[0], str):
-                    df['corpus_embedding'] = df['corpus_embedding'].apply(lambda x: np.mean(x, axis=0).tolist())
+                    df['corpus_embedding'] = df['corpus_embedding'].apply(lambda x: np.mean(np.array(x, dtype=np.float32), axis=0).tolist())
 
                 df.to_sql(
                     name=table_name,
