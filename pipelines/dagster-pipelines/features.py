@@ -746,35 +746,41 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         def get_average_embedding_with_logging(embedding_data):
             EXPECTED_DIM = 2560
 
-            # Handle empty/None cases first
-            if embedding_data is None or (isinstance(embedding_data, list) and not embedding_data):
-                context.log.info("Embedding data is None or empty. Returning None.")
+            if embedding_data is None:
                 return None
+
+            # If data is a numpy array of objects, convert it to a standard list first.
+            # This is the key fix.
+            if isinstance(embedding_data, np.ndarray) and embedding_data.dtype == 'object':
+                embedding_data = embedding_data.tolist()
 
             final_vector = None
 
-            # Case 1: Data is a single flat array
-            if isinstance(embedding_data, np.ndarray) and embedding_data.ndim == 1:
-                context.log.info("Embedding data is a single flat array. Returning it as is.")
+            # Case 1: Data is a single flat vector
+            if isinstance(embedding_data, np.ndarray):
                 final_vector = embedding_data
             
-            # Case 2: Data is a list of arrays that needs averaging
-            else:
+            # Case 2: Data is a list of vectors that needs averaging
+            elif isinstance(embedding_data, list):
+                if not embedding_data:
+                    return None
                 try:
-                    context.log.info("Embedding data is a list of arrays. Converting to numpy array and averaging.")
+                    # This will now correctly process the converted object array
                     embedding_array = np.array(embedding_data, dtype=np.float32)
-                    context.log.info("Converting embedding array to list of floats")
                     final_vector = np.mean(embedding_array, axis=0)
                 except ValueError:
-                    # This error means the arrays in the list have different lengths.
                     shapes = [arr.shape for arr in embedding_data if hasattr(arr, 'shape')]
-                    context.log.warning(f"Row has embeddings with inconsistent shapes: {shapes}. Skipping row.")
+                    context.log.warning(f"Row has embeddings with inconsistent shapes: {shapes}. Skipping.")
                     return None
             
-            # Final dimension check for all cases
+            if final_vector is None:
+                context.log.warning(f"Could not process embedding of type {type(embedding_data)}. Skipping.")
+                return None
+
+            # Final dimension check
             if final_vector.shape[0] != EXPECTED_DIM:
                 context.log.warning(
-                    f"Embedding has incorrect dimension. Expected {EXPECTED_DIM}, but got {final_vector.shape[0]}. Skipping row."
+                    f"Embedding has incorrect dimension. Expected {EXPECTED_DIM}, got {final_vector.shape[0]}. Skipping."
                 )
                 return None
 
