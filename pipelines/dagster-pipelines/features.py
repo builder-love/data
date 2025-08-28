@@ -742,6 +742,9 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
     )
     def _project_repos_corpus_embeddings_env_specific(context: dg.OpExecutionContext) -> dg.MaterializeResult:
 
+        # first set datatimestamp w/0 tz
+        data_timestamp = pd.Timestamp.now()
+
         # helper function to get the average embedding from a list of embeddings
         def get_average_embedding_with_logging(embedding_data):
             EXPECTED_DIM = 2560
@@ -806,7 +809,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         env_config = context.resources.active_env_config
         
         gcs_bucket_name = "bl-repo-corpus-public"
-        gcs_parquet_folder_path = "embeddings_data/akash-qwen-checkpoints/20250827-194354"
+        gcs_parquet_folder_path = "embeddings_data/akash-qwen-checkpoints/20250828-002628"
         raw_schema = env_config["raw_schema"]
         table_name = "latest_project_repo_corpus_embeddings"
         full_table_name = f"{raw_schema}.{table_name}"
@@ -851,6 +854,9 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                 if df.empty:
                     context.log.warning(f"Batch {i+1} is empty after cleaning.")
                     continue
+
+                # add a timestamp column
+                df['data_timestamp'] = data_timestamp
 
                 # USE THE CUSTOM INSERT METHOD
                 context.log.info(f"Inserting {len(df)} rows into the database...")
