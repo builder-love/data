@@ -837,9 +837,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                 gcs_path = f"gs://{gcs_bucket_name}/{blob.name}"
                 df = pd.read_parquet(gcs_path, filesystem=gcsfs.GCSFileSystem())
                 context.log.info(f"Loaded {len(df)} records from batch.")
-
-                # print the first row
-                context.log.info(f"First row: \n {df.iloc[0]}")
+                log_memory_usage(context, f"After loading batch {i+1}")
 
                 if not df.empty:
                     initial_row_count = len(df)
@@ -864,9 +862,10 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                     name=table_name,
                     con=cloud_sql_engine,
                     schema=raw_schema,
+                    chunksize=10000,
                     if_exists='append',
                     index=False,
-                    method=sql_insert_with_error_handling 
+                    method='multi' 
                 )
                 total_records_processed += len(df)
                 context.log.info(f"Successfully processed batch. Total records processed so far: {total_records_processed}")
