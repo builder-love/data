@@ -840,7 +840,9 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
 
                 if not df.empty:
                     initial_row_count = len(df)
+                    context.log.info(f"Getting ready to average across embedding chunks for {initial_row_count} rows...")
                     df['corpus_embedding'] = df['corpus_embedding'].apply(get_average_embedding_with_logging)
+                    context.log.info(f"Processed {len(df)} rows with embeddings. Dropping rows with None embeddings...")
                     df.dropna(subset=['corpus_embedding'], inplace=True)
                     rows_dropped = initial_row_count - len(df)
                     if rows_dropped > 0:
@@ -851,6 +853,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                     continue
 
                 # USE THE CUSTOM INSERT METHOD
+                context.log.info(f"Inserting {len(df)} rows into the database...")
                 df.to_sql(
                     name=table_name,
                     con=cloud_sql_engine,
