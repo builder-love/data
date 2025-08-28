@@ -835,6 +835,9 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                 df = pd.read_parquet(gcs_path, filesystem=gcsfs.GCSFileSystem())
                 context.log.info(f"Loaded {len(df)} records from batch.")
 
+                # print the first row
+                context.log.info(f"First row: \n {df.iloc[0]}")
+
                 if not df.empty:
                     initial_row_count = len(df)
                     df['corpus_embedding'] = df['corpus_embedding'].apply(get_average_embedding_with_logging)
