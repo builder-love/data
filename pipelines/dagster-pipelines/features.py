@@ -15,6 +15,7 @@ import pickle
 import pyarrow as pa
 import pyarrow.parquet as pq
 import gcsfs
+import gc
 
 def aggregate_corpus_text(features_df: pd.DataFrame, context: dg.OpExecutionContext) -> pd.DataFrame:
     """
@@ -868,6 +869,13 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                 )
                 total_records_processed += len(df)
                 context.log.info(f"Successfully processed batch. Total records processed so far: {total_records_processed}")
+
+                # explicitly garbage collect to ensure memory leakage doesn't kill the pod
+                context.log.info(f"Cleaning up memory for batch {i+1}...")
+                log_memory_usage(context, f"Before cleaning up batch {i+1}")
+                del df
+                gc.collect()
+                log_memory_usage(context, f"After cleaning up batch {i+1}")
 
         except Exception as e:
             context.log.error(f"A critical error occurred during the asset execution: {e}")
