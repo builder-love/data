@@ -799,7 +799,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                     conn.execute(stmt)
                 except Exception as e:
                     # Log the error and the problematic row data without crashing
-                    context.log.error(f"Failed to insert row: {dict(zip(keys, row_data))}. Error: {e}")
+                    context.log.warning(f"Failed to insert row: {dict(zip(keys, row_data))}. Error: {e}")
             conn.commit()
 
         # --- Asset logic continues ---
@@ -862,10 +862,9 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                     name=table_name,
                     con=cloud_sql_engine,
                     schema=raw_schema,
-                    chunksize=10000,
                     if_exists='append',
                     index=False,
-                    method='multi' 
+                    method=sql_insert_with_error_handling 
                 )
                 total_records_processed += len(df)
                 context.log.info(f"Successfully processed batch. Total records processed so far: {total_records_processed}")
