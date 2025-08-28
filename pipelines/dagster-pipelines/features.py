@@ -786,14 +786,26 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
 
             return final_vector.tolist()
         
+        # custom insert method to insert rows one-by-one and log errors
+        def sql_insert_with_error_handling(dftable, conn, keys, data_iter):
+            """Custom `to_sql` method to insert rows one-by-one and log errors."""
+            for row_data in data_iter:
+                try:
+                    # Create an insert statement for the current row
+                    stmt = dftable.table.insert().values(**dict(zip(keys, row_data)))
+                    conn.execute(stmt)
+                except Exception as e:
+                    # Log the error and the problematic row data without crashing
+                    context.log.error(f"Failed to insert row: {dict(zip(keys, row_data))}. Error: {e}")
+            conn.commit()
+
+        # --- Asset logic continues ---
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
         gcs_resource = context.resources.gcs 
         storage_client = gcs_resource.get_client()
         env_config = context.resources.active_env_config
         
-        # Updated configuration to point to the new Parquet files
         gcs_bucket_name = "bl-repo-corpus-public"
-        # chore: get this value from upstream dagster asset's yielded output
         gcs_parquet_folder_path = "embeddings_data/akash-qwen-checkpoints/20250827-194354"
         raw_schema = env_config["raw_schema"]
         table_name = "latest_project_repo_corpus_embeddings"
@@ -803,16 +815,14 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
 
         try:
             log_memory_usage(context, "Start of asset execution")
-
             context.log.info(f"Listing batch files from gs://{gcs_bucket_name}/{gcs_parquet_folder_path}...")
             bucket = storage_client.bucket(gcs_bucket_name)
-            all_blobs_iterator = bucket.list_blobs(prefix=gcs_parquet_folder_path)
-            parquet_blobs = [b for b in all_blobs_iterator if b.name.endswith('.parquet')]
+            blobs = list(bucket.list_blobs(prefix=gcs_parquet_folder_path))
+            parquet_blobs = [b for b in blobs if b.name.endswith('.parquet')]
             num_batches = len(parquet_blobs)
             context.log.info(f"Found {num_batches} batch files to process.")
 
             if not num_batches:
-                context.log.warning("No Parquet files found. Exiting.")
                 return dg.MaterializeResult(metadata={"records_processed": 0})
 
             with cloud_sql_engine.begin() as conn:
@@ -821,45 +831,39 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             
             for i, blob in enumerate(parquet_blobs):
                 context.log.info(f"--- Processing Batch {i+1}/{num_batches}: {blob.name} ---")
-
                 gcs_path = f"gs://{gcs_bucket_name}/{blob.name}"
                 df = pd.read_parquet(gcs_path, filesystem=gcsfs.GCSFileSystem())
                 context.log.info(f"Loaded {len(df)} records from batch.")
 
                 if not df.empty:
+                    initial_row_count = len(df)
                     df['corpus_embedding'] = df['corpus_embedding'].apply(get_average_embedding_with_logging)
-                    
-                    # Remove rows where the helper function returned None due to an issue
-                    rows_before_dropping = len(df)
                     df.dropna(subset=['corpus_embedding'], inplace=True)
-                    rows_after_dropping = len(df)
-                    
-                    if rows_before_dropping > rows_after_dropping:
-                        context.log.warning(
-                            f"Dropped {rows_before_dropping - rows_after_dropping} rows due to embedding format/dimension issues."
-                        )
+                    rows_dropped = initial_row_count - len(df)
+                    if rows_dropped > 0:
+                        context.log.warning(f"Dropped {rows_dropped} rows due to format/dimension issues.")
 
                 if df.empty:
-                    context.log.warning(f"Batch {i+1} is empty after cleaning. Nothing to insert.")
+                    context.log.warning(f"Batch {i+1} is empty after cleaning.")
                     continue
 
+                # USE THE CUSTOM INSERT METHOD
                 df.to_sql(
                     name=table_name,
                     con=cloud_sql_engine,
                     schema=raw_schema,
                     if_exists='append',
                     index=False,
-                    chunksize=10000,
-                    method='multi'
+                    method=sql_insert_with_error_handling 
                 )
                 total_records_processed += len(df)
-                context.log.info(f"Successfully inserted batch. Total records processed: {total_records_processed}")
+                context.log.info(f"Successfully processed batch. Total records processed so far: {total_records_processed}")
 
         except Exception as e:
-            context.log.error(f"Failed during streaming refresh of {full_table_name}: {e}")
+            context.log.error(f"A critical error occurred during the asset execution: {e}")
             raise
 
-        context.log.info(f"Successfully refreshed {full_table_name} with {total_records_processed} records.")
+        context.log.info(f" Successfully refreshed {full_table_name} with {total_records_processed} records.")
         
         return dg.MaterializeResult(
             metadata={
