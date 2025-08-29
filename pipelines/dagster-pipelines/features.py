@@ -923,13 +923,14 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                             df_exploded['corpus_embedding'] = df_exploded['corpus_embedding'].apply(sanitize_and_validate_embedding)
                             df_exploded.dropna(subset=['corpus_embedding'], inplace=True)
                             context.log.info(f"sanitized sub-chunk {start_row}")
-
+                            context.log.info(f"inserting sub-chunk {start_row}")
                             if not df_exploded.empty:
                                 df_exploded.to_sql(
                                     staging_chunks_table, conn, schema=staging_schema, if_exists='append',
                                     index=False, method=sql_insert_with_error_handling, 
                                     dtype={'corpus_embedding': Vector(ORIGINAL_DIM), 'repo': TEXT, 'chunk_id': TEXT}
                                 )
+                            context.log.info(f"inserted sub-chunk {start_row}")
                             del df_sub_chunk, df_exploded
                             gc.collect()
                 # The connection is automatically closed here, releasing its memory.
