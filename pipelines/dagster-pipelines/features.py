@@ -832,13 +832,13 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                     CREATE TABLE IF NOT EXISTS {full_staging_chunks_table} (
                         repo TEXT,
                         chunk_id TEXT,
-                        embedding VECTOR({ORIGINAL_DIM})
+                        corpus_embedding VECTOR({ORIGINAL_DIM})
                     );
                 """))
                 conn.execute(text(f"""
                     CREATE TABLE IF NOT EXISTS {full_aggregated_table} (
                         repo TEXT,
-                        avg_embedding VECTOR({ORIGINAL_DIM})
+                        corpus_embedding VECTOR({ORIGINAL_DIM})
                     );
                 """))
                 conn.execute(text(f"""
@@ -868,8 +868,8 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                 df_chunk = pd.read_parquet(f"gs://{gcs_bucket_name}/{blob.name}", filesystem=gcsfs.GCSFileSystem())
                 
                 initial_count = len(df_chunk)
-                df_chunk['embedding'] = df_chunk['embedding'].apply(sanitize_and_validate_embedding)
-                df_chunk.dropna(subset=['embedding'], inplace=True)
+                df_chunk['corpus_embedding'] = df_chunk['corpus_embedding'].apply(sanitize_and_validate_embedding)
+                df_chunk.dropna(subset=['corpus_embedding'], inplace=True)
                 
                 context.log.warning(f"Dropped {initial_count - len(df_chunk)} rows due to validation errors.")
 
@@ -881,7 +881,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                         if_exists='append',
                         index=False, 
                         method=sql_insert_with_error_handling, 
-                        dtype={'embedding': Vector(ORIGINAL_DIM)}
+                        dtype={'corpus_embedding': Vector(ORIGINAL_DIM)}
                     )
                 del df_chunk; gc.collect()
 
@@ -889,8 +889,8 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             context.log.info("Aggregating chunk embeddings into a single embedding per repo using SQL...")
             with conn.begin():
                 conn.execute(text(f"""
-                    INSERT INTO {full_aggregated_table} (repo, avg_embedding)
-                    SELECT repo, AVG(embedding)::VECTOR({ORIGINAL_DIM})
+                    INSERT INTO {full_aggregated_table} (repo, corpus_embedding)
+                    SELECT repo, AVG(corpus_embedding)::VECTOR({ORIGINAL_DIM})
                     FROM {full_staging_chunks_table}
                     GROUP BY repo;
                 """))
@@ -899,14 +899,14 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             # 4. PCA TRAINING: Train a global PCA model on a sample of data
             context.log.info(f"Fetching a sample of {PCA_TRAINING_SAMPLE_SIZE} embeddings to train PCA model...")
             df_sample = pd.read_sql(
-                text(f"SELECT avg_embedding FROM {full_aggregated_table} LIMIT {PCA_TRAINING_SAMPLE_SIZE}"),
+                text(f"SELECT corpus_embedding FROM {full_aggregated_table} LIMIT {PCA_TRAINING_SAMPLE_SIZE}"),
                 conn
             )
             
             if df_sample.empty:
                 raise ValueError("No data available for PCA training after aggregation.")
 
-            training_data = np.vstack(df_sample['avg_embedding'].values)
+            training_data = np.vstack(df_sample['corpus_embedding'].values)
             
             context.log.info(f"Training IncrementalPCA model to reduce dims from {ORIGINAL_DIM} to {REDUCED_DIM}...")
             pca = IncrementalPCA(n_components=REDUCED_DIM, batch_size=512)
@@ -928,7 +928,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             while True:
                 log_memory_usage(context, f"Processing batch starting at offset {offset}")
                 df_batch = pd.read_sql(
-                    text(f"SELECT repo, avg_embedding FROM {full_aggregated_table} ORDER BY repo LIMIT {PROCESSING_BATCH_SIZE} OFFSET {offset}"),
+                    text(f"SELECT repo, corpus_embedding FROM {full_aggregated_table} ORDER BY repo LIMIT {PROCESSING_BATCH_SIZE} OFFSET {offset}"),
                     conn
                 )
                 
@@ -937,7 +937,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                     break
                 
                 # Apply PCA transformation
-                original_vectors = np.vstack(df_batch['avg_embedding'].values)
+                original_vectors = np.vstack(df_batch['corpus_embedding'].values)
                 reduced_vectors = pca.transform(original_vectors)
                 
                 # Prepare DataFrame for final insertion
