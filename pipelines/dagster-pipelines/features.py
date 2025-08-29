@@ -867,11 +867,27 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                 context.log.info(f"--- Loading & Sanitizing Batch {i+1}/{len(parquet_blobs)}: {blob.name} ---")
                 df_chunk = pd.read_parquet(f"gs://{gcs_bucket_name}/{blob.name}", filesystem=gcsfs.GCSFileSystem())
                 
-                initial_count = len(df_chunk)
+                if df_chunk.empty:
+                    context.log.warning(f"Batch {i+1} is empty. Skipping.")
+                    continue
+
+                # 1. Explode the list of embeddings into separate rows
+                initial_repo_count = len(df_chunk)
+                df_chunk = df_chunk.explode('corpus_embedding', ignore_index=True)
+                context.log.info(f"Exploded {initial_repo_count} repo rows into {len(df_chunk)} individual chunk rows.")
+
+                # 2. Create a new unique chunk_id for each new row
+                # This prevents duplicate chunk_ids from the original file
+                df_chunk['chunk_id'] = df_chunk['repo'] + '_' + df_chunk.groupby('repo').cumcount().astype(str)
+
+                # 3. Now, sanitize and validate each individual embedding row
+                initial_chunk_count = len(df_chunk)
                 df_chunk['corpus_embedding'] = df_chunk['corpus_embedding'].apply(sanitize_and_validate_embedding)
                 df_chunk.dropna(subset=['corpus_embedding'], inplace=True)
                 
-                context.log.warning(f"Dropped {initial_count - len(df_chunk)} rows due to validation errors.")
+                dropped_count = initial_chunk_count - len(df_chunk)
+                if dropped_count > 0:
+                    context.log.warning(f"Dropped {dropped_count} chunk rows due to validation errors.")
 
                 if not df_chunk.empty:
                     df_chunk.to_sql(
@@ -881,7 +897,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                         if_exists='append',
                         index=False, 
                         method=sql_insert_with_error_handling, 
-                        dtype={'corpus_embedding': Vector(ORIGINAL_DIM)}
+                        dtype={'corpus_embedding': Vector(ORIGINAL_DIM), 'repo': TEXT, 'chunk_id': TEXT}
                     )
                 del df_chunk; gc.collect()
 
