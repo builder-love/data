@@ -863,14 +863,16 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             if not parquet_blobs:
                 context.log.warning("No Parquet files found in GCS path. Exiting.")
                 return dg.MaterializeResult(metadata={"records_processed": 0, "status": "No files found"})
-            
+
+            # Create the GCS filesystem object ONCE before the loop
+            gcs_fs = gcsfs.GCSFileSystem()
             context.log.info(f"Found {len(parquet_blobs)} batch files. Loading into staging table...")
             for i, blob in enumerate(parquet_blobs):
                 context.log.info(f"--- Processing Parquet File {i+1}/{len(parquet_blobs)}: {blob.name} ---")
                 
-                # *** Use a fresh connection for each Parquet file ***
+                # Use a fresh connection for each Parquet file
                 with cloud_sql_engine.connect() as conn:
-                    df_parquet = pd.read_parquet(f"gs://{gcs_bucket_name}/{blob.name}", filesystem=gcsfs.GCSFileSystem())
+                    df_parquet = pd.read_parquet(f"gs://{gcs_bucket_name}/{blob.name}", filesystem=gcs_fs)
                     if df_parquet.empty: continue
                     
                     log_memory_usage(context, f"Before processing sub-chunks for file {i+1}")
