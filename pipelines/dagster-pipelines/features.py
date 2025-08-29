@@ -808,7 +808,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             return embedding_data.tolist()
 
         def sql_insert_with_error_handling(dftable, conn, keys, data_iter):
-            """Custom `to_sql` method to insert rows one-by-one and log errors without crashing."""
+            # This function runs within a transaction managed by the main loop
             successful_inserts = 0
             for row_data in data_iter:
                 try:
@@ -816,8 +816,9 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                     conn.execute(stmt)
                     successful_inserts += 1
                 except Exception as e:
-                    context.log.warning(f"Failed to insert row: {dict(zip(keys, row_data))}. Error: {e}")
-            context.log.info(f"Custom writer successfully inserted {successful_inserts} rows.")
+                    context.log.warning(f"Failed to insert row. Error: {e}")
+            if successful_inserts > 0:
+                context.log.info(f"Custom writer successfully inserted {successful_inserts} rows.")
 
         # --- Main Logic ---
         conn = None
@@ -866,37 +867,38 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             context.log.info(f"Found {len(parquet_blobs)} batch files. Loading into staging table...")
             for i, blob in enumerate(parquet_blobs):
                 context.log.info(f"--- Processing Parquet File {i+1}/{len(parquet_blobs)}: {blob.name} ---")
-                df_parquet = pd.read_parquet(f"gs://{gcs_bucket_name}/{blob.name}", filesystem=gcsfs.GCSFileSystem())
                 
-                if df_parquet.empty:
-                    context.log.warning(f"Parquet file is empty. Skipping.")
-                    continue
-                
-                # Loop through the loaded DataFrame in smaller chunks
-                log_memory_usage(context, f"Before exploding chunk rows for batch {i+1}")
-                for start_row in range(0, len(df_parquet), PARQUET_PROCESSING_CHUNK_SIZE):
-                    end_row = start_row + PARQUET_PROCESSING_CHUNK_SIZE
-                    df_sub_chunk = df_parquet.iloc[start_row:end_row]
-                    context.log.info(f"  Processing rows {start_row} to {end_row} from Parquet file...")
+                # *** Use a fresh connection for each Parquet file ***
+                with cloud_sql_engine.connect() as conn:
+                    df_parquet = pd.read_parquet(f"gs://{gcs_bucket_name}/{blob.name}", filesystem=gcsfs.GCSFileSystem())
+                    if df_parquet.empty: continue
+                    
+                    log_memory_usage(context, f"Before processing sub-chunks for file {i+1}")
+                    
+                    # Begin a single transaction for all chunks in this file
+                    with conn.begin():
+                        for start_row in range(0, len(df_parquet), PARQUET_PROCESSING_CHUNK_SIZE):
+                            df_sub_chunk = df_parquet.iloc[start_row:start_row + PARQUET_PROCESSING_CHUNK_SIZE]
 
-                    df_exploded = df_sub_chunk.explode('corpus_embedding', ignore_index=True)
-                    if df_exploded.empty or df_exploded['corpus_embedding'].isnull().all():
-                        context.log.warning("  Sub-chunk was empty after exploding. Skipping.")
-                        continue
-                    
-                    df_exploded['chunk_id'] = df_exploded['repo'] + '_' + df_exploded.groupby('repo').cumcount().astype(str)
-                    df_exploded['corpus_embedding'] = df_exploded['corpus_embedding'].apply(sanitize_and_validate_embedding)
-                    df_exploded.dropna(subset=['corpus_embedding'], inplace=True)
-                    
-                    if not df_exploded.empty:
-                        df_exploded.to_sql(
-                            staging_chunks_table, conn, schema=staging_schema, if_exists='append',
-                            index=False, method=sql_insert_with_error_handling, 
-                            dtype={'corpus_embedding': Vector(ORIGINAL_DIM), 'repo': TEXT, 'chunk_id': TEXT}
-                        )
-                    del df_sub_chunk, df_exploded; gc.collect()
-                del df_parquet; gc.collect()
-                log_memory_usage(context, f"After inserting chunk rows for batch {i+1} and collecting garbage")
+                            df_exploded = df_sub_chunk.explode('corpus_embedding', ignore_index=True)
+                            if df_exploded.empty or df_exploded['corpus_embedding'].isnull().all(): continue
+                            
+                            df_exploded['chunk_id'] = df_exploded['repo'] + '_' + df_exploded.groupby('repo').cumcount().astype(str)
+                            df_exploded['corpus_embedding'] = df_exploded['corpus_embedding'].apply(sanitize_and_validate_embedding)
+                            df_exploded.dropna(subset=['corpus_embedding'], inplace=True)
+                            
+                            if not df_exploded.empty:
+                                df_exploded.to_sql(
+                                    staging_chunks_table, conn, schema=staging_schema, if_exists='append',
+                                    index=False, method=sql_insert_with_error_handling, 
+                                    dtype={'corpus_embedding': Vector(ORIGINAL_DIM), 'repo': TEXT, 'chunk_id': TEXT}
+                                )
+                            del df_sub_chunk, df_exploded
+                            gc.collect()
+                # The connection is automatically closed here, releasing its memory.
+                del df_parquet
+                gc.collect()
+                log_memory_usage(context, f"After processing file {i+1}")
 
             # 3. AGGREGATION: Perform GROUP BY and AVG entirely in SQL
             context.log.info("Aggregating chunk embeddings into a single embedding per repo using SQL...")
