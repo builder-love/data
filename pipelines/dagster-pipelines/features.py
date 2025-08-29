@@ -19,6 +19,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import gcsfs
 import io
+import tracemalloc
+import linecache
 
 def aggregate_corpus_text(features_df: pd.DataFrame, context: dg.OpExecutionContext) -> pd.DataFrame:
     """
@@ -725,6 +727,26 @@ def create_project_repos_corpus_asset(env_prefix: str):
 
 
 # Helper function to log memory usage
+def log_memory_snapshot(context: dg.OpExecutionContext, snapshot, previous_snapshot=None, key_type='lineno', limit=10):
+    """
+    Logs a formatted summary of a tracemalloc snapshot, showing memory usage by line.
+    If a previous snapshot is provided, it shows the growth in memory usage.
+    """
+    if previous_snapshot:
+        stats = snapshot.compare_to(previous_snapshot, key_type)
+        context.log.info(f"--- MEMORY SNAPSHOT: Top {limit} new allocations since last snapshot ---")
+    else:
+        stats = snapshot.statistics(key_type)
+        context.log.info(f"--- MEMORY SNAPSHOT: Top {limit} allocations ---")
+
+    for index, stat in enumerate(stats[:limit], 1):
+        frame = stat.traceback[0]
+        filename = os.sep.join(frame.filename.split(os.sep)[-2:])
+        context.log.info(f"#{index}: {filename}:{frame.lineno}: {stat.size / 1024:.1f} KiB")
+        line = linecache.getline(frame.filename, frame.lineno).strip()
+        if line:
+            context.log.info(f"    Line: {line}")
+
 def log_memory_usage(context: dg.OpExecutionContext, message: str):
     """Logs the current RSS memory usage of the process."""
     process = psutil.Process(os.getpid())
@@ -820,10 +842,17 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             if successful_inserts > 0:
                 context.log.info(f"Custom writer successfully inserted {successful_inserts} rows.")
 
+        tracemalloc.start(25) # Start tracing, store 25 stack frames
+        initial_snapshot = None
+        previous_snapshot = None
+
+
         # --- Main Logic ---
         conn = None
         try:
             log_memory_usage(context, "Start of asset execution")
+            initial_snapshot = tracemalloc.take_snapshot()
+            log_memory_snapshot(context, initial_snapshot)
             conn = cloud_sql_engine.connect()
 
             # 1. SETUP: Create schemas and tables if they don't exist
@@ -867,6 +896,8 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             # Create the GCS filesystem object ONCE before the loop
             gcs_fs = gcsfs.GCSFileSystem()
             context.log.info(f"Found {len(parquet_blobs)} batch files. Loading into staging table...")
+
+            previous_snapshot = tracemalloc.take_snapshot() # Snapshot before the loop
             for i, blob in enumerate(parquet_blobs):
                 context.log.info(f"--- Processing Parquet File {i+1}/{len(parquet_blobs)}: {blob.name} ---")
                 
@@ -901,6 +932,11 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                 del df_parquet
                 gc.collect()
                 log_memory_usage(context, f"After processing file {i+1}")
+
+                # Compare snapshot after each iteration ---
+                current_snapshot = tracemalloc.take_snapshot()
+                log_memory_snapshot(context, current_snapshot, previous_snapshot=previous_snapshot)
+                previous_snapshot = current_snapshot
 
             # 3. AGGREGATION: Perform GROUP BY and AVG entirely in SQL
             context.log.info("Aggregating chunk embeddings into a single embedding per repo using SQL...")
@@ -990,6 +1026,11 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             context.log.error(f"A critical error occurred: {e}")
             raise
         finally:
+            # --- Final check ---
+            if initial_snapshot:
+                final_snapshot = tracemalloc.take_snapshot()
+                log_memory_snapshot(context, final_snapshot, previous_snapshot=initial_snapshot, limit=20)
+            tracemalloc.stop()
             # 7. CLEANUP
             if conn:
                 try:
