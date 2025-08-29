@@ -810,7 +810,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         env_config = context.resources.active_env_config
         
         gcs_bucket_name = "bl-repo-corpus-public"
-        gcs_parquet_folder_path = "embeddings_data/akash-qwen-checkpoints/20250828-002628"
+        gcs_parquet_folder_path = "embeddings_data/gemini-001-checkpoints/run_20250825_191318"
         raw_schema = env_config["raw_schema"]
         table_name = "latest_project_repo_corpus_embeddings"
         full_table_name = f"{raw_schema}.{table_name}"
