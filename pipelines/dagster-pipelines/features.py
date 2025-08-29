@@ -926,6 +926,12 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             pca.fit(training_data)
             log_memory_usage(context, "After PCA training")
 
+            # <-- Explicitly delete large PCA training objects -->
+            del df_sample
+            del training_data
+            gc.collect()
+            log_memory_usage(context, "After cleaning up PCA training objects")
+
             # 5. SAVE PCA MODEL to GCS
             context.log.info(f"Saving trained PCA model to gs://{gcs_bucket_name}/{pca_model_gcs_path}...")
             with io.BytesIO() as buffer:
