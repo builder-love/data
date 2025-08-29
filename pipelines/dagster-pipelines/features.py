@@ -763,7 +763,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         # GCS and Schema Config
         gcs_bucket_name = "bl-repo-corpus-public"
         gcs_parquet_folder_path = "embeddings_data/akash-qwen-checkpoints/20250828-002628"
-        pca_model_gcs_path = "embeddings_data/trained_pca_models/repo_pca_model.pkl"
+        pca_model_gcs_path = "embeddings_data/trained_pca_models/qwen3_repo_pca_model.pkl"
         
         raw_schema = env_config["raw_schema"]
         staging_schema = f"{raw_schema}_stg"
