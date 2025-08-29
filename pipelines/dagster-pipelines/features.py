@@ -759,10 +759,30 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         full_staging_table = f"{raw_schema}.{staging_table_name}"
         full_final_table = f"{raw_schema}.{final_table_name}"
         
+        records_processed = 0
         total_chunks_loaded = 0
 
         try:
             log_memory_usage(context, "Start of asset execution")
+            
+            # Define the SQL to create tables if they don't exist
+            setup_sql = f"""
+                CREATE TABLE IF NOT EXISTS {full_staging_table} (
+                    repo TEXT, chunk_id TEXT, embedding VECTOR(1536)
+                );
+                CREATE TABLE IF NOT EXISTS {full_final_table} (
+                    repo TEXT, corpus_embedding VECTOR(1536), data_timestamp TIMESTAMP WITHOUT TIME ZONE
+                );
+            """
+            
+            with cloud_sql_engine.begin() as conn:
+                context.log.info("Ensuring staging and final tables exist...")
+                conn.execute(text(setup_sql))
+                
+                context.log.info(f"Resetting tables: TRUNCATE {full_staging_table} and {full_final_table};")
+                conn.execute(text(f"TRUNCATE TABLE {full_staging_table};"))
+                conn.execute(text(f"TRUNCATE TABLE {full_final_table};"))
+
             bucket = storage_client.bucket(gcs_bucket_name)
             blobs = list(bucket.list_blobs(prefix=gcs_parquet_folder_path))
             parquet_blobs = [b for b in blobs if b.name.endswith('.parquet')]
@@ -772,30 +792,28 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             if not num_batches:
                 return dg.MaterializeResult(metadata={"records_processed": 0})
 
-            # 1. TRUNCATE both staging and final tables for a clean run
-            with cloud_sql_engine.begin() as conn:
-                context.log.info(f"Resetting tables: TRUNCATE {full_staging_table} and {full_final_table};")
-                conn.execute(text(f"TRUNCATE TABLE {full_staging_table};"))
-                conn.execute(text(f"TRUNCATE TABLE {full_final_table};"))
-
-            # 2. Loop through GCS files and stream data into the STAGING table
+            # Loop through GCS files and stream data into the STAGING table
             for i, blob in enumerate(parquet_blobs):
                 context.log.info(f"--- Loading Batch {i+1}/{num_batches}: {blob.name} into staging ---")
                 gcs_path = f"gs://{gcs_bucket_name}/{blob.name}"
                 df = pd.read_parquet(gcs_path, filesystem=gcsfs.GCSFileSystem())
+
+                # The database driver needs a Python list, not a NumPy array.
+                # This converts the 'embedding' column to the correct type.
+                context.log.info("Converting numpy arrays to lists for database insertion...")
+                df['embedding'] = df['embedding'].apply(list)
                 
                 if df.empty:
                     context.log.warning(f"Batch {i+1} is empty. Skipping.")
                     continue
                 
-                # Append the raw chunk data directly to the staging table
                 df.to_sql(
                     name=staging_table_name,
                     con=cloud_sql_engine,
                     schema=raw_schema,
                     if_exists='append',
                     index=False,
-                    method='multi' # Efficient method for bulk inserts
+                    method='multi'
                 )
                 total_chunks_loaded += len(df)
                 log_memory_usage(context, f"After loading batch {i+1}")
@@ -804,7 +822,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
 
             context.log.info(f"Finished loading {total_chunks_loaded} total chunks into {full_staging_table}.")
 
-            # 3. Execute the final aggregation query in PostgreSQL
+            # Execute the final aggregation query in PostgreSQL
             context.log.info("Performing final aggregation in PostgreSQL...")
             log_memory_usage(context, "Before SQL aggregation")
 
@@ -812,7 +830,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                 INSERT INTO {full_final_table} (repo, corpus_embedding, data_timestamp)
                 SELECT
                     repo,
-                    AVG(embedding)::vector({1536}) AS corpus_embedding,
+                    AVG(embedding)::vector(1536) AS corpus_embedding, -- NOTE: Corrected dimension
                     '{data_timestamp}' AS data_timestamp
                 FROM
                     {full_staging_table}
@@ -827,7 +845,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             log_memory_usage(context, "After SQL aggregation")
             context.log.info(f"Successfully aggregated and inserted {records_processed} records into {full_final_table}.")
             
-            # Optional: Clean up the staging table after the run
+            # Optional: Clean up the staging table
             with cloud_sql_engine.begin() as conn:
                 context.log.info(f"Cleaning up staging table: TRUNCATE {full_staging_table};")
                 conn.execute(text(f"TRUNCATE TABLE {full_staging_table};"))
