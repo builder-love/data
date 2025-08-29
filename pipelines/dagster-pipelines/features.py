@@ -911,15 +911,19 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                     # Begin a single transaction for all chunks in this file
                     with conn.begin():
                         for start_row in range(0, len(df_parquet), PARQUET_PROCESSING_CHUNK_SIZE):
+                            context.log.info(f"processing sub-chunk {start_row}")
                             df_sub_chunk = df_parquet.iloc[start_row:start_row + PARQUET_PROCESSING_CHUNK_SIZE]
+                            context.log.info(f"exploding sub-chunk {start_row}")
 
                             df_exploded = df_sub_chunk.explode('corpus_embedding', ignore_index=True)
+                            context.log.info(f"exploded sub-chunk {start_row}")
                             if df_exploded.empty or df_exploded['corpus_embedding'].isnull().all(): continue
-                            
+                            context.log.info(f"sanitizing sub-chunk {start_row}")
                             df_exploded['chunk_id'] = df_exploded['repo'] + '_' + df_exploded.groupby('repo').cumcount().astype(str)
                             df_exploded['corpus_embedding'] = df_exploded['corpus_embedding'].apply(sanitize_and_validate_embedding)
                             df_exploded.dropna(subset=['corpus_embedding'], inplace=True)
-                            
+                            context.log.info(f"sanitized sub-chunk {start_row}")
+
                             if not df_exploded.empty:
                                 df_exploded.to_sql(
                                     staging_chunks_table, conn, schema=staging_schema, if_exists='append',
