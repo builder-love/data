@@ -801,7 +801,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                 # The database driver needs a Python list, not a NumPy array.
                 # This converts the 'embedding' column to the correct type.
                 context.log.info("Converting numpy arrays to lists for database insertion...")
-                df['embedding'] = df['embedding'].apply(list)
+                df['embedding'] = df['embedding'].apply(lambda arr: [float(x) for x in arr])
                 
                 if df.empty:
                     context.log.warning(f"Batch {i+1} is empty. Skipping.")
