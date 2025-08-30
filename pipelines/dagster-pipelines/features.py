@@ -871,29 +871,21 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                             for batch_num, record_batch in enumerate(parquet_file.iter_batches(batch_size=PARQUET_PROCESSING_CHUNK_SIZE)):
                                 log_memory_usage(context, f"Processing batch {batch_num} for file {i+1}")
                                 
-                                df_sub_chunk = record_batch.to_pandas()
-                                if df_sub_chunk.empty: continue
-
-                                # 1. Explode and sanitize the batch as before
-                                df_exploded = df_sub_chunk.explode('corpus_embedding', ignore_index=True)
-                                df_exploded.dropna(subset=['corpus_embedding'], inplace=True)
-                                if df_exploded.empty: continue
-
-                                df_exploded['corpus_embedding'] = df_exploded['corpus_embedding'].apply(sanitize_and_validate_embedding)
-                                df_exploded.dropna(subset=['corpus_embedding'], inplace=True)
-                                if df_exploded.empty: continue
+                                df_aggregated_batch = record_batch.to_pandas()
+                                if df_aggregated_batch.empty: continue
                                 
-                                # 2. Perform in-memory aggregation using Pandas/NumPy
-                                # Group by repo and calculate the mean of the embeddings for this batch
-                                # np.vstack stacks the list of embeddings into a 2D array for averaging
-                                aggregated_series = df_exploded.groupby('repo')['corpus_embedding'].apply(
-                                    lambda x: np.mean(np.vstack(x), axis=0)
+                                # 1. Drop rows where the embedding list is missing
+                                df_aggregated_batch.dropna(subset=['corpus_embedding'], inplace=True)
+                                if df_aggregated_batch.empty: continue
+
+                                # 2. Directly apply the numpy average to each row's list of embeddings
+                                df_aggregated_batch['corpus_embedding'] = df_aggregated_batch['corpus_embedding'].apply(
+                                    lambda embedding_list: np.mean(embedding_list, axis=0) if embedding_list else None
                                 )
-
-                                if aggregated_series.empty: continue
-
-                                # 3. Convert the result to a DataFrame for writing to SQL
-                                df_aggregated_batch = aggregated_series.reset_index()
+                                
+                                # 3. Drop any rows that failed aggregation
+                                df_aggregated_batch.dropna(subset=['corpus_embedding'], inplace=True)
+                                if df_aggregated_batch.empty: continue
 
                                 # 4. Write the aggregated batch directly to the final staging table
                                 df_aggregated_batch.to_sql(
@@ -905,7 +897,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                                     dtype={'corpus_embedding': Vector(ORIGINAL_DIM), 'repo': TEXT}
                                 )
                                 
-                                del df_sub_chunk, df_exploded, aggregated_series, df_aggregated_batch
+                                del df_aggregated_batch
                                 gc.collect()
 
                 except Exception as e:
