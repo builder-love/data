@@ -3750,6 +3750,9 @@ def create_project_repos_readmes_asset(env_prefix: str):
             return results, error_counts
 
         # Main asset logic starts here
+        # first set a consistent timestamp for all rows
+        data_timestamp = pd.Timestamp.now()
+
         with cloud_sql_engine.connect() as conn:
             query = f"SELECT repo, repo_source FROM {clean_schema}.latest_active_distinct_project_repos_with_code"
             repo_df = pd.read_sql(query, conn)
@@ -3800,7 +3803,7 @@ def create_project_repos_readmes_asset(env_prefix: str):
             
             # Create a DataFrame for the current batch
             batch_results_df = pd.DataFrame(batch_results_list)
-            batch_results_df['data_timestamp'] = pd.Timestamp.now(tz='UTC')
+            batch_results_df['data_timestamp'] = data_timestamp
             
             # Determine write method: 'replace' for first batch, 'append' for others
             write_method = 'replace' if i == 0 else 'append'

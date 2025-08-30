@@ -5,8 +5,11 @@ import pandas as pd
 import dagster as dg
 from dagster import AssetKey, AssetIn
 from sqlalchemy import text
+from sqlalchemy.types import TEXT, TIMESTAMP
 import sqlalchemy
-# from sentence_transformers import SentenceTransformer
+from sqlalchemy import text
+from sklearn.decomposition import IncrementalPCA
+from pgvector.sqlalchemy import Vector
 import math
 import numpy as np
 import gc
@@ -15,7 +18,7 @@ import pickle
 import pyarrow as pa
 import pyarrow.parquet as pq
 import gcsfs
-import gc
+import io
 
 def aggregate_corpus_text(features_df: pd.DataFrame, context: dg.OpExecutionContext) -> pd.DataFrame:
     """
@@ -721,16 +724,22 @@ def create_project_repos_corpus_asset(env_prefix: str):
     return _project_repos_corpus_env_specific
 
 
+# Helper function to log memory usage
 def log_memory_usage(context: dg.OpExecutionContext, message: str):
     """Logs the current RSS memory usage of the process."""
     process = psutil.Process(os.getpid())
-    memory_mb = process.memory_info().rss / (1024 * 1024)  # in MB
+    memory_mb = process.memory_info().rss / (1024 * 1024)
     context.log.info(f"{message} - Memory Usage: {memory_mb:.2f} MB")
 
-# factory function to get embeddings from gcs bucket and store them in postgres vector column - table raw.repo_corpus_embeddings
 def create_project_repos_corpus_embeddings_asset(env_prefix: str):
     """
-    Factory function to create an asset that gets embeddings from gcs bucket and stores them in postgres vector column - table raw.repo_corpus_embeddings
+    Factory function to create a Dagster asset that:
+    1. Loads chunked embeddings from GCS into a staging Postgres table.
+    2. Aggregates chunks into a single embedding per repo using SQL.
+    3. Trains a global PCA model on a sample of embeddings to reduce dimensionality.
+    4. Saves the trained PCA model to GCS.
+    5. Applies PCA transformation in batches to all aggregated embeddings.
+    6. Streams the final, reduced-dimension embeddings to the target table.
     """
 
     @dg.asset(
@@ -738,161 +747,285 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         name="project_repos_corpus_embeddings",
         required_resource_keys={"cloud_sql_postgres_resource", "active_env_config", "gcs"},
         group_name="feature_engineering",
-        description="Gets embeddings from gcs bucket and stores them in postgres vector column - table raw.repo_corpus_embeddings",
+        description="Processes and reduces dimensionality of repo embeddings.",
         tags={"feature_engineering": "True"}
     )
     def _project_repos_corpus_embeddings_env_specific(context: dg.OpExecutionContext) -> dg.MaterializeResult:
-
-        # first set datatimestamp w/0 tz
-        data_timestamp = pd.Timestamp.now()
-
-        # helper function to get the average embedding from a list of embeddings
-        def get_average_embedding_with_logging(embedding_data):
-            EXPECTED_DIM = 2560
-
-            if embedding_data is None:
-                return None
-
-            # If data is a numpy array of objects, convert it to a standard list first.
-            # This is the key fix.
-            if isinstance(embedding_data, np.ndarray) and embedding_data.dtype == 'object':
-                embedding_data = embedding_data.tolist()
-
-            final_vector = None
-
-            # Case 1: Data is a single flat vector
-            if isinstance(embedding_data, np.ndarray):
-                final_vector = embedding_data
-            
-            # Case 2: Data is a list of vectors that needs averaging
-            elif isinstance(embedding_data, list):
-                if not embedding_data:
-                    return None
-                try:
-                    # This will now correctly process the converted object array
-                    embedding_array = np.array(embedding_data, dtype=np.float32)
-                    final_vector = np.mean(embedding_array, axis=0)
-                except ValueError:
-                    shapes = [arr.shape for arr in embedding_data if hasattr(arr, 'shape')]
-                    context.log.warning(f"Row has embeddings with inconsistent shapes: {shapes}. Skipping.")
-                    return None
-            
-            if final_vector is None:
-                context.log.warning(f"Could not process embedding of type {type(embedding_data)}. Skipping.")
-                return None
-
-            # Final dimension check
-            if final_vector.shape[0] != EXPECTED_DIM:
-                context.log.warning(
-                    f"Embedding has incorrect dimension. Expected {EXPECTED_DIM}, got {final_vector.shape[0]}. Skipping."
-                )
-                return None
-
-            return final_vector.tolist()
         
-        # custom insert method to insert rows one-by-one and log errors
-        def sql_insert_with_error_handling(dftable, conn, keys, data_iter):
-            """Custom `to_sql` method to insert rows one-by-one and log errors."""
-            for row_data in data_iter:
-                try:
-                    # Create an insert statement for the current row
-                    stmt = dftable.table.insert().values(**dict(zip(keys, row_data)))
-                    conn.execute(stmt)
-                except Exception as e:
-                    # Log the error and the problematic row data without crashing
-                    context.log.warning(f"Failed to insert row: {dict(zip(keys, row_data))}. Error: {e}")
-            conn.commit()
-
-        # --- Asset logic continues ---
+        # --- Configuration ---
         cloud_sql_engine = context.resources.cloud_sql_postgres_resource
-        gcs_resource = context.resources.gcs 
+        gcs_resource = context.resources.gcs
         storage_client = gcs_resource.get_client()
         env_config = context.resources.active_env_config
         
+        data_timestamp = pd.Timestamp.now()
+        
+        # GCS and Schema Config
         gcs_bucket_name = "bl-repo-corpus-public"
         gcs_parquet_folder_path = "embeddings_data/akash-qwen-checkpoints/20250828-002628"
-        raw_schema = env_config["raw_schema"]
-        table_name = "latest_project_repo_corpus_embeddings"
-        full_table_name = f"{raw_schema}.{table_name}"
+        pca_model_gcs_path = "embeddings_data/trained_pca_models/qwen3_repo_pca_model.pkl"
         
-        total_records_processed = 0
+        raw_schema = env_config["raw_schema"]
+        staging_schema = f"{raw_schema}_stg"
 
+        # Table Names
+        staging_chunks_table = "stg_repo_embeddings_chunks"
+        aggregated_table = "stg_repo_embeddings_aggregated"
+        final_table = "latest_project_repo_corpus_embeddings"
+
+        full_staging_chunks_table = f"{staging_schema}.{staging_chunks_table}"
+        full_aggregated_table = f"{staging_schema}.{aggregated_table}"
+        full_final_table = f"{raw_schema}.{final_table}"
+        
+        # PCA Config
+        ORIGINAL_DIM = 2560
+        REDUCED_DIM = 2000
+        PCA_TRAINING_SAMPLE_SIZE = 100000
+        PROCESSING_BATCH_SIZE = 7500
+        PARQUET_PROCESSING_CHUNK_SIZE = 250 
+
+        def sanitize_and_validate_embedding(embedding_data):
+            """
+            Refined helper to validate a single embedding's format and dimensions,
+            and convert it to a list suitable for pgvector.
+            """
+            if embedding_data is None:
+                return None
+
+            # Ensure data is a numpy array for consistent processing
+            if isinstance(embedding_data, list):
+                embedding_data = np.array(embedding_data, dtype=np.float32)
+            
+            if not isinstance(embedding_data, np.ndarray):
+                context.log.warning(f"Embedding is not a recognizable list or numpy array type: {type(embedding_data)}. Skipping.")
+                return None
+
+            # Final dimension check
+            if embedding_data.shape[0] != ORIGINAL_DIM:
+                context.log.warning(f"Embedding has incorrect dimension. Expected {ORIGINAL_DIM}, got {embedding_data.shape[0]}. Skipping.")
+                return None
+
+            return embedding_data.tolist()
+
+        def sql_insert_with_error_handling(dftable, conn, keys, data_iter):
+            """Custom `to_sql` method to insert rows one-by-one and log errors without crashing."""
+            successful_inserts = 0
+            for row_data in data_iter:
+                try:
+                    stmt = dftable.table.insert().values(**dict(zip(keys, row_data)))
+                    conn.execute(stmt)
+                    successful_inserts += 1
+                except Exception as e:
+                    context.log.warning(f"Failed to insert row. Error: {e}")
+            if successful_inserts > 0:
+                context.log.info(f"Custom writer successfully inserted {successful_inserts} rows.")
+
+        # --- Main Logic ---
+        total_records_processed = 0
+        parquet_blobs = []
         try:
             log_memory_usage(context, "Start of asset execution")
+
+            # 1. SETUP: Use a short-lived connection for setup
+            context.log.info("Ensuring schemas and tables exist...")
+            with cloud_sql_engine.connect() as conn:
+                with conn.begin():
+                    conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {staging_schema};"))
+                    conn.execute(text(f"""
+                        CREATE TABLE IF NOT EXISTS {full_staging_chunks_table} (
+                            repo TEXT,
+                            chunk_id TEXT,
+                            corpus_embedding VECTOR({ORIGINAL_DIM})
+                        );
+                    """))
+                    conn.execute(text(f"""
+                        CREATE TABLE IF NOT EXISTS {full_aggregated_table} (
+                            repo TEXT,
+                            corpus_embedding VECTOR({ORIGINAL_DIM})
+                        );
+                    """))
+                    conn.execute(text(f"""
+                        CREATE TABLE IF NOT EXISTS {full_final_table} (
+                            repo TEXT,
+                            corpus_embedding VECTOR({REDUCED_DIM}),
+                            data_timestamp TIMESTAMP WITHOUT TIME ZONE
+                        );
+                    """))
+                    context.log.info("Truncating temporary and final tables for a clean run...")
+                    conn.execute(text(f"TRUNCATE TABLE {full_staging_chunks_table};"))
+                    conn.execute(text(f"TRUNCATE TABLE {full_aggregated_table};"))
+                    conn.execute(text(f"TRUNCATE TABLE {full_final_table};"))
+
+            # 2. STAGING LOAD Stream Parquet files chunk by chunk
             context.log.info(f"Listing batch files from gs://{gcs_bucket_name}/{gcs_parquet_folder_path}...")
             bucket = storage_client.bucket(gcs_bucket_name)
-            blobs = list(bucket.list_blobs(prefix=gcs_parquet_folder_path))
-            parquet_blobs = [b for b in blobs if b.name.endswith('.parquet')]
-            num_batches = len(parquet_blobs)
-            context.log.info(f"Found {num_batches} batch files to process.")
+            parquet_blobs = [b for b in bucket.list_blobs(prefix=gcs_parquet_folder_path) if b.name.endswith('.parquet')]
 
-            if not num_batches:
-                return dg.MaterializeResult(metadata={"records_processed": 0})
+            if not parquet_blobs:
+                context.log.warning("No Parquet files found in GCS path. Exiting.")
+                return dg.MaterializeResult(metadata={"records_processed": 0, "status": "No files found"})
 
-            with cloud_sql_engine.begin() as conn:
-                context.log.info(f"Resetting target table: TRUNCATE TABLE {full_table_name};")
-                conn.execute(text(f"TRUNCATE TABLE {full_table_name};"))
-            
+            gcs_fs = gcsfs.GCSFileSystem()
+            context.log.info(f"Found {len(parquet_blobs)} batch files. Loading into staging table...")
+
             for i, blob in enumerate(parquet_blobs):
-                context.log.info(f"--- Processing Batch {i+1}/{num_batches}: {blob.name} ---")
-                gcs_path = f"gs://{gcs_bucket_name}/{blob.name}"
-                df = pd.read_parquet(gcs_path, filesystem=gcsfs.GCSFileSystem())
-                context.log.info(f"Loaded {len(df)} records from batch.")
-                log_memory_usage(context, f"After loading batch {i+1}")
+                context.log.info(f"--- Processing Parquet File {i+1}/{len(parquet_blobs)}: {blob.name} ---")
+                
+                # Open the Parquet file on GCS without reading it all into memory
+                gcs_file_path = f"gs://{gcs_bucket_name}/{blob.name}"
+                
+                with cloud_sql_engine.connect() as conn:
+                    with conn.begin(): # Start a single transaction for this file
+                        try:
+                            # Use pyarrow to stream the file in batches (chunks)
+                            parquet_file = pq.ParquetFile(gcs_file_path, filesystem=gcs_fs)
+                            
+                            # Use PARQUET_PROCESSING_CHUNK_SIZE for the batch size
+                            for batch_num, record_batch in enumerate(parquet_file.iter_batches(batch_size=PARQUET_PROCESSING_CHUNK_SIZE)):
+                                log_memory_usage(context, f"Processing batch {batch_num} for file {i+1}")
+                                
+                                df_sub_chunk = record_batch.to_pandas()
+                                
+                                if df_sub_chunk.empty:
+                                    continue
+                                
+                                # Explode this small chunk
+                                df_exploded = df_sub_chunk.explode('corpus_embedding', ignore_index=True)
+                                if df_exploded.empty or df_exploded['corpus_embedding'].isnull().all():
+                                    continue
+                                
+                                # --- Your existing processing logic for the chunk ---
+                                df_exploded['chunk_id'] = df_exploded['repo'] + '_' + df_exploded.groupby('repo').cumcount().astype(str)
+                                df_exploded['corpus_embedding'] = df_exploded['corpus_embedding'].apply(sanitize_and_validate_embedding)
+                                df_exploded.dropna(subset=['corpus_embedding'], inplace=True)
+                                
+                                if not df_exploded.empty:
+                                    df_exploded.to_sql(
+                                        staging_chunks_table, conn, schema=staging_schema, if_exists='append',
+                                        index=False, method=sql_insert_with_error_handling,
+                                        dtype={'corpus_embedding': Vector(ORIGINAL_DIM), 'repo': TEXT, 'chunk_id': TEXT}
+                                    )
+                                
+                                # Clean up the small dataframes from this iteration
+                                del df_sub_chunk, df_exploded
+                                gc.collect()
 
-                if not df.empty:
-                    initial_row_count = len(df)
-                    context.log.info(f"Getting ready to average across embedding chunks for {initial_row_count} rows...")
-                    df['corpus_embedding'] = df['corpus_embedding'].apply(get_average_embedding_with_logging)
-                    context.log.info(f"Processed {len(df)} rows with embeddings. Dropping rows with None embeddings...")
-                    df.dropna(subset=['corpus_embedding'], inplace=True)
-                    rows_dropped = initial_row_count - len(df)
-                    if rows_dropped > 0:
-                        context.log.warning(f"Dropped {rows_dropped} rows due to format/dimension issues.")
+                        except Exception as e:
+                            context.log.error(f"Error processing file {blob.name}: {e}")
+                            # don't fail here. Continue processing nexxt file. 
+                            continue 
 
-                if df.empty:
-                    context.log.warning(f"Batch {i+1} is empty after cleaning.")
-                    continue
+                gc.collect() # Extra cleanup after finishing a file
+                log_memory_usage(context, f"After processing file {i+1}")
 
-                # add a timestamp column
-                df['data_timestamp'] = data_timestamp
+            # 3. AGGREGATION: Perform GROUP BY and AVG entirely in SQL
+            context.log.info("Aggregating chunk embeddings into a single embedding per repo using SQL...")
+            with cloud_sql_engine.connect() as conn:
+                with conn.begin():
+                    conn.execute(text(f"""
+                        INSERT INTO {full_aggregated_table} (repo, corpus_embedding)
+                        SELECT repo, AVG(corpus_embedding)::VECTOR({ORIGINAL_DIM})
+                        FROM {full_staging_chunks_table}
+                        GROUP BY repo;
+                    """))
+            log_memory_usage(context, "After SQL aggregation")
 
-                # USE THE CUSTOM INSERT METHOD
-                context.log.info(f"Inserting {len(df)} rows into the database...")
-                df.to_sql(
-                    name=table_name,
-                    con=cloud_sql_engine,
-                    schema=raw_schema,
-                    if_exists='append',
-                    index=False,
-                    method=sql_insert_with_error_handling 
+            # 4. PCA TRAINING: Train a global PCA model on a sample of data
+            context.log.info(f"Fetching a sample of {PCA_TRAINING_SAMPLE_SIZE} embeddings to train PCA model...")
+            with cloud_sql_engine.connect() as conn:
+                df_sample = pd.read_sql(
+                    text(f"SELECT corpus_embedding FROM {full_aggregated_table} LIMIT {PCA_TRAINING_SAMPLE_SIZE}"),
+                    conn
                 )
-                total_records_processed += len(df)
-                context.log.info(f"Successfully processed batch. Total records processed so far: {total_records_processed}")
+            
+            if df_sample.empty:
+                raise ValueError("No data available for PCA training after aggregation.")
 
-                # explicitly garbage collect to ensure memory leakage doesn't kill the pod
-                context.log.info(f"Cleaning up memory for batch {i+1}...")
-                log_memory_usage(context, f"Before cleaning up batch {i+1}")
-                del df
-                gc.collect()
-                log_memory_usage(context, f"After cleaning up batch {i+1}")
+            training_data = np.vstack(df_sample['corpus_embedding'].values)
+            del df_sample
+            gc.collect()
+            
+            context.log.info(f"Training IncrementalPCA model to reduce dims from {ORIGINAL_DIM} to {REDUCED_DIM}...")
+            pca = IncrementalPCA(n_components=REDUCED_DIM, batch_size=512)
+            pca.fit(training_data)
+            log_memory_usage(context, "After PCA training")
+
+            del training_data
+            gc.collect()
+            log_memory_usage(context, "After cleaning up PCA training objects")
+
+            # 5. SAVE PCA MODEL to GCS
+            context.log.info(f"Saving trained PCA model to gs://{gcs_bucket_name}/{pca_model_gcs_path}...")
+            with io.BytesIO() as buffer:
+                pickle.dump(pca, buffer)
+                buffer.seek(0)
+                model_blob = bucket.blob(pca_model_gcs_path)
+                model_blob.upload_from_file(buffer, content_type='application/octet-stream')
+            
+            # 6. BATCH TRANSFORMATION & FINAL LOAD
+            context.log.info("Applying PCA transformation and loading to final table in batches...")
+            with cloud_sql_engine.connect() as conn:
+                offset = 0
+                while True:
+                    log_memory_usage(context, f"Processing batch starting at offset {offset}")
+                    df_batch = pd.read_sql(
+                        text(f"SELECT repo, corpus_embedding FROM {full_aggregated_table} ORDER BY repo LIMIT {PROCESSING_BATCH_SIZE} OFFSET {offset}"),
+                        conn
+                    )
+                    
+                    if df_batch.empty:
+                        context.log.info("All batches processed.")
+                        break
+                    
+                    original_vectors = np.vstack(df_batch['corpus_embedding'].values)
+                    reduced_vectors = pca.transform(original_vectors)
+                    
+                    df_final = pd.DataFrame({
+                        'repo': df_batch['repo'],
+                        'corpus_embedding': list(reduced_vectors),
+                        'data_timestamp': data_timestamp
+                    })
+                    
+                    df_final.to_sql(
+                        name=final_table,
+                        con=conn,
+                        schema=raw_schema,
+                        if_exists='append',
+                        index=False,
+                        dtype={'corpus_embedding': Vector(REDUCED_DIM), 'repo': TEXT, 'data_timestamp': TIMESTAMP}
+                    )
+                    
+                    total_records_processed += len(df_final)
+                    context.log.info(f"Processed batch. Total records in final table: {total_records_processed}")
+                    offset += PROCESSING_BATCH_SIZE
+                    del df_batch, df_final, original_vectors, reduced_vectors
+                    gc.collect()
 
         except Exception as e:
-            context.log.error(f"A critical error occurred during the asset execution: {e}")
+            context.log.error(f"A critical error occurred: {e}")
             raise
+        finally:
+            # 7. CLEANUP: Use a final short-lived connection
+            with cloud_sql_engine.connect() as conn:
+                try:
+                    with conn.begin():
+                        context.log.info("Cleaning up temporary staging tables...")
+                        conn.execute(text(f"DROP TABLE IF EXISTS {full_staging_chunks_table};"))
+                        conn.execute(text(f"DROP TABLE IF EXISTS {full_aggregated_table};"))
+                except Exception as cleanup_e:
+                    context.log.error(f"Failed to drop staging tables: {cleanup_e}")
+            log_memory_usage(context, "End of asset execution after cleanup")
 
-        context.log.info(f" Successfully refreshed {full_table_name} with {total_records_processed} records.")
-        
         return dg.MaterializeResult(
             metadata={
                 "records_processed": total_records_processed,
-                "batches": len(parquet_blobs),
-                "gcs_source_path": f"gs://{gcs_bucket_name}/{gcs_parquet_folder_path}"
+                "batches_from_gcs": len(parquet_blobs),
+                "final_embedding_dimension": REDUCED_DIM,
+                "pca_model_path": f"gs://{gcs_bucket_name}/{pca_model_gcs_path}"
             }
         )
 
     return _project_repos_corpus_embeddings_env_specific
-
 
 
 

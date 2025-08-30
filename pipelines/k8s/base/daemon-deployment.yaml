@@ -23,6 +23,13 @@ spec:
       - name: dagster-daemon
         image: us-central1-docker.pkg.dev/data-pipelines-450611/dagster-repo/dagster-app:latest
         command: ["dagster-daemon", "run"]
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
         volumeMounts:
         - name: dagster-instance-volume
           mountPath: /opt/dagster/dagster_home/dagster.yaml
