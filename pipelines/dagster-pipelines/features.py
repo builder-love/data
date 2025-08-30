@@ -766,7 +766,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         pca_model_gcs_path = "embeddings_data/trained_pca_models/qwen3_repo_pca_model.pkl"
         
         raw_schema = env_config["raw_schema"]
-        staging_schema = f"{raw_schema}_stg"
+        staging_schema = f"{raw_schema}"
 
         # Table Names
         aggregated_table = "stg_repo_embeddings_aggregated"
