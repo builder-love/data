@@ -883,15 +883,17 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                             df_sub_chunk = df_parquet.iloc[start_row:start_row + PARQUET_PROCESSING_CHUNK_SIZE]
 
                             df_exploded = df_sub_chunk.explode('corpus_embedding', ignore_index=True)
+                            log_memory_usage(context, f"After exploding sub-chunk for file {i+1}")
                             if df_exploded.empty or df_exploded['corpus_embedding'].isnull().all():
                                 context.log.warning("Sub-chunk was empty after exploding. Skipping.")
                                 continue
-                            
+                            context.log.info(f"Sanitizing sub-chunk for file {i+1}")
                             df_exploded['chunk_id'] = df_exploded['repo'] + '_' + df_exploded.groupby('repo').cumcount().astype(str)
                             df_exploded['corpus_embedding'] = df_exploded['corpus_embedding'].apply(sanitize_and_validate_embedding)
                             df_exploded.dropna(subset=['corpus_embedding'], inplace=True)
-                            
+
                             if not df_exploded.empty:
+                                context.log.info(f"Writing sub-chunk for file {i+1} to staging table")
                                 df_exploded.to_sql(
                                     staging_chunks_table, conn, schema=staging_schema, if_exists='append',
                                     index=False, method=sql_insert_with_error_handling, 
