@@ -856,52 +856,66 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                     conn.execute(text(f"TRUNCATE TABLE {full_aggregated_table};"))
                     conn.execute(text(f"TRUNCATE TABLE {full_final_table};"))
 
-            # 2. STAGING LOAD: Load all parquet files from GCS into the staging chunks table
+            # 2. STAGING LOAD Stream Parquet files chunk by chunk
             context.log.info(f"Listing batch files from gs://{gcs_bucket_name}/{gcs_parquet_folder_path}...")
             bucket = storage_client.bucket(gcs_bucket_name)
             parquet_blobs = [b for b in bucket.list_blobs(prefix=gcs_parquet_folder_path) if b.name.endswith('.parquet')]
-            
+
             if not parquet_blobs:
                 context.log.warning("No Parquet files found in GCS path. Exiting.")
                 return dg.MaterializeResult(metadata={"records_processed": 0, "status": "No files found"})
 
             gcs_fs = gcsfs.GCSFileSystem()
             context.log.info(f"Found {len(parquet_blobs)} batch files. Loading into staging table...")
+
             for i, blob in enumerate(parquet_blobs):
                 context.log.info(f"--- Processing Parquet File {i+1}/{len(parquet_blobs)}: {blob.name} ---")
                 
+                # Open the Parquet file on GCS without reading it all into memory
+                gcs_file_path = f"gs://{gcs_bucket_name}/{blob.name}"
+                
                 with cloud_sql_engine.connect() as conn:
-                    df_parquet = pd.read_parquet(f"gs://{gcs_bucket_name}/{blob.name}", filesystem=gcs_fs)
-                    if df_parquet.empty:
-                        context.log.warning(f"Parquet file {blob.name} is empty. Skipping.")
-                        continue
-                    
-                    log_memory_usage(context, f"Before processing sub-chunks for file {i+1}")
-                    
-                    with conn.begin():
-                        for start_row in range(0, len(df_parquet), PARQUET_PROCESSING_CHUNK_SIZE):
-                            df_sub_chunk = df_parquet.iloc[start_row:start_row + PARQUET_PROCESSING_CHUNK_SIZE]
+                    with conn.begin(): # Start a single transaction for this file
+                        try:
+                            # Use pyarrow to stream the file in batches (chunks)
+                            parquet_file = pq.ParquetFile(gcs_file_path, filesystem=gcs_fs)
+                            
+                            # Use PARQUET_PROCESSING_CHUNK_SIZE for the batch size
+                            for batch_num, record_batch in enumerate(parquet_file.iter_batches(batch_size=PARQUET_PROCESSING_CHUNK_SIZE)):
+                                log_memory_usage(context, f"Processing batch {batch_num} for file {i+1}")
+                                
+                                df_sub_chunk = record_batch.to_pandas()
+                                
+                                if df_sub_chunk.empty:
+                                    continue
+                                
+                                # Explode this small chunk
+                                df_exploded = df_sub_chunk.explode('corpus_embedding', ignore_index=True)
+                                if df_exploded.empty or df_exploded['corpus_embedding'].isnull().all():
+                                    continue
+                                
+                                # --- Your existing processing logic for the chunk ---
+                                df_exploded['chunk_id'] = df_exploded['repo'] + '_' + df_exploded.groupby('repo').cumcount().astype(str)
+                                df_exploded['corpus_embedding'] = df_exploded['corpus_embedding'].apply(sanitize_and_validate_embedding)
+                                df_exploded.dropna(subset=['corpus_embedding'], inplace=True)
+                                
+                                if not df_exploded.empty:
+                                    df_exploded.to_sql(
+                                        staging_chunks_table, conn, schema=staging_schema, if_exists='append',
+                                        index=False, method=sql_insert_with_error_handling,
+                                        dtype={'corpus_embedding': Vector(ORIGINAL_DIM), 'repo': TEXT, 'chunk_id': TEXT}
+                                    )
+                                
+                                # Clean up the small dataframes from this iteration
+                                del df_sub_chunk, df_exploded
+                                gc.collect()
 
-                            df_exploded = df_sub_chunk.explode('corpus_embedding', ignore_index=True)
-                            log_memory_usage(context, f"After exploding sub-chunk at row {start_row} for file {i+1}")
-                            if df_exploded.empty or df_exploded['corpus_embedding'].isnull().all():
-                                context.log.warning("Sub-chunk was empty after exploding. Skipping.")
-                                continue
-                            df_exploded['chunk_id'] = df_exploded['repo'] + '_' + df_exploded.groupby('repo').cumcount().astype(str)
-                            df_exploded['corpus_embedding'] = df_exploded['corpus_embedding'].apply(sanitize_and_validate_embedding)
-                            df_exploded.dropna(subset=['corpus_embedding'], inplace=True)
+                        except Exception as e:
+                            context.log.error(f"Error processing file {blob.name}: {e}")
+                            # don't fail here. Continue processing nexxt file. 
+                            continue 
 
-                            if not df_exploded.empty:
-                                df_exploded.to_sql(
-                                    staging_chunks_table, conn, schema=staging_schema, if_exists='append',
-                                    index=False, method=sql_insert_with_error_handling, 
-                                    dtype={'corpus_embedding': Vector(ORIGINAL_DIM), 'repo': TEXT, 'chunk_id': TEXT}
-                                )
-                            del df_sub_chunk, df_exploded
-                            gc.collect()
-
-                del df_parquet
-                gc.collect()
+                gc.collect() # Extra cleanup after finishing a file
                 log_memory_usage(context, f"After processing file {i+1}")
 
             # 3. AGGREGATION: Perform GROUP BY and AVG entirely in SQL
