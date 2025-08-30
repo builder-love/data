@@ -24,6 +24,13 @@ spec:
         # The image will be dynamically set by Cloud Build
         image: us-central1-docker.pkg.dev/data-pipelines-450611/dagster-repo/dagster-app:latest
         command: ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000"]
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
         ports:
         - containerPort: 3000
         volumeMounts:
