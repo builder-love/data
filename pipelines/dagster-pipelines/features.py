@@ -791,6 +791,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             valid_embeddings = []
             for emb in embedding_list:
                 if emb is None:
+                    context.log.warning(f"Embedding is None. Skipping.")
                     continue
 
                 # Ensure data is a numpy array for consistent processing
@@ -800,7 +801,9 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                 # Check for correct type and dimension
                 if isinstance(emb, np.ndarray) and emb.shape[0] == original_dim:
                     valid_embeddings.append(emb)
-                # Silently skip invalid embeddings, but you could add a context.log.warning here if needed
+                else:
+                    context.log.warning(f"Embedding is not a numpy array or has incorrect dimension. Skipping.")
+                    continue
 
             return valid_embeddings if valid_embeddings else None
 
@@ -888,6 +891,13 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                                 df_aggregated_batch['corpus_embedding'] = df_aggregated_batch['corpus_embedding'].apply(
                                     lambda valid_embedding_list: np.mean(valid_embedding_list, axis=0)
                                 )
+
+                                # check df_aggregated_batch has records
+                                if df_aggregated_batch.empty:
+                                    context.log.warning(f"The aggregated dataframe for batch {batch_num} in file {i+1} has no records. Raising exception.")
+                                    raise
+                                else:
+                                    context.log.info(f"The aggregated dataframe for batch {batch_num} in file {i+1} has {len(df_aggregated_batch)} records. Inserting into staging table.")
                                 
                                 # 4. Write the aggregated batch to the staging table
                                 df_aggregated_batch.to_sql(
