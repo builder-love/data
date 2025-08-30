@@ -853,7 +853,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                 context.log.warning("No Parquet files found in GCS path. Exiting.")
                 return dg.MaterializeResult(metadata={"records_processed": 0, "status": "No files found"})
 
-            context.log.info(f"Found {len(parquet_blobs)} batch files. Loading into staging table...")
+            context.log.info(f"Found {len(parquet_blobs)} batch files. Loading into staging table...{full_aggregated_table}")
 
             for i, blob in enumerate(parquet_blobs):
                 context.log.info(f"--- Processing Parquet File {i+1}/{len(parquet_blobs)}: {blob.name} ---")
@@ -868,7 +868,9 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                             parquet_file = pq.ParquetFile(gcs_file_path, filesystem=gcs_fs)
                             
                             for batch_num, record_batch in enumerate(parquet_file.iter_batches(batch_size=PARQUET_PROCESSING_CHUNK_SIZE)):
-                                log_memory_usage(context, f"Processing batch {batch_num} for file {i+1}")
+                                # log this every 10 batches
+                                if batch_num % 10 == 0:
+                                    log_memory_usage(context, f"Processing batch {batch_num} for file {i+1}")
                                 
                                 df_aggregated_batch = record_batch.to_pandas()
                                 if df_aggregated_batch.empty: continue
@@ -900,9 +902,13 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                                 del df_aggregated_batch
                                 gc.collect()
 
+                        # count the number of rows in the staging table
+                        num_rows = pd.read_sql(f"SELECT COUNT(*) FROM {full_aggregated_table}", conn).iloc[0,0]
+                        context.log.info(f"Number of rows in staging table: {num_rows}")
+
                 except Exception as e:
                     context.log.error(f"Error processing file {blob.name}: {e}")
-                    continue
+                    raise
                 finally:
                     if parquet_file:
                         parquet_file.close()
