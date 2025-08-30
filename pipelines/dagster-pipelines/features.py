@@ -782,7 +782,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         REDUCED_DIM = 2000
         PCA_TRAINING_SAMPLE_SIZE = 100000
         PROCESSING_BATCH_SIZE = 7500
-        PARQUET_PROCESSING_CHUNK_SIZE = 250 
+        PARQUET_PROCESSING_CHUNK_SIZE = 100 
 
         def sanitize_and_validate_embedding(embedding_data):
             """
@@ -901,8 +901,14 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                                 
                                 if not df_exploded.empty:
                                     df_exploded.to_sql(
-                                        staging_chunks_table, conn, schema=staging_schema, if_exists='append',
-                                        index=False, method=sql_insert_with_error_handling,
+                                        staging_chunks_table, 
+                                        conn, 
+                                        schema=staging_schema, 
+                                        if_exists='append',
+                                        index=False, 
+                                        # method=sql_insert_with_error_handling,
+                                        batch_size=25000,
+                                        method='multi',
                                         dtype={'corpus_embedding': Vector(ORIGINAL_DIM), 'repo': TEXT, 'chunk_id': TEXT}
                                     )
                                 
