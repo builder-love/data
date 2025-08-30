@@ -766,13 +766,12 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         pca_model_gcs_path = "embeddings_data/trained_pca_models/qwen3_repo_pca_model.pkl"
         
         raw_schema = env_config["raw_schema"]
-        staging_schema = f"{raw_schema}"
 
         # Table Names
         aggregated_table = "stg_repo_embeddings_aggregated"
         final_table = "latest_project_repo_corpus_embeddings"
 
-        full_aggregated_table = f"{staging_schema}.{aggregated_table}"
+        full_aggregated_table = f"{raw_schema}.{aggregated_table}"
         full_final_table = f"{raw_schema}.{final_table}"
         
         # PCA Config
@@ -892,7 +891,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                                 df_aggregated_batch.to_sql(
                                     aggregated_table, 
                                     conn, 
-                                    schema=staging_schema, 
+                                    schema=raw_schema, 
                                     if_exists='append',
                                     index=False, 
                                     dtype={'corpus_embedding': Vector(ORIGINAL_DIM), 'repo': TEXT}
