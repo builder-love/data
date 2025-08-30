@@ -782,28 +782,28 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         PROCESSING_BATCH_SIZE = 10000
         PARQUET_PROCESSING_CHUNK_SIZE = 100
 
-        def sanitize_and_validate_embedding(embedding_data):
+        def sanitize_embedding_list(embedding_list, original_dim):
             """
-            Refined helper to validate a single embedding's format and dimensions,
-            and convert it to a list suitable for pgvector.
+            Takes a list of embeddings, validates each one, and returns a clean list of valid embeddings.
             """
-            if embedding_data is None:
+            if not isinstance(embedding_list, list) or not embedding_list:
                 return None
-
-            # Ensure data is a numpy array for consistent processing
-            if isinstance(embedding_data, list):
-                embedding_data = np.array(embedding_data, dtype=np.float32)
             
-            if not isinstance(embedding_data, np.ndarray):
-                context.log.warning(f"Embedding is not a recognizable list or numpy array type: {type(embedding_data)}. Skipping.")
-                return None
+            valid_embeddings = []
+            for emb in embedding_list:
+                if emb is None:
+                    continue
 
-            # Final dimension check
-            if embedding_data.shape[0] != ORIGINAL_DIM:
-                context.log.warning(f"Embedding has incorrect dimension. Expected {ORIGINAL_DIM}, got {embedding_data.shape[0]}. Skipping.")
-                return None
+                # Ensure data is a numpy array for consistent processing
+                if isinstance(emb, list):
+                    emb = np.array(emb, dtype=np.float32)
+                
+                # Check for correct type and dimension
+                if isinstance(emb, np.ndarray) and emb.shape[0] == original_dim:
+                    valid_embeddings.append(emb)
+                # Silently skip invalid embeddings, but you could add a context.log.warning here if needed
 
-            return embedding_data.tolist()
+            return valid_embeddings if valid_embeddings else None
 
         def sql_insert_with_error_handling(dftable, conn, keys, data_iter):
             """Custom `to_sql` method to insert rows one-by-one and log errors without crashing."""
@@ -874,20 +874,21 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                                 df_aggregated_batch = record_batch.to_pandas()
                                 if df_aggregated_batch.empty: continue
                                 
-                                # 1. Drop rows where the embedding list is missing
+                                # 1. Sanitize the list of embeddings in each row
+                                df_aggregated_batch['corpus_embedding'] = df_aggregated_batch['corpus_embedding'].apply(
+                                    lambda lst: sanitize_embedding_list(lst, ORIGINAL_DIM)
+                                )
+
+                                # 2. Drop rows where the embedding list is now empty or None
                                 df_aggregated_batch.dropna(subset=['corpus_embedding'], inplace=True)
                                 if df_aggregated_batch.empty: continue
 
-                                # 2. Directly apply the numpy average to each row's list of embeddings
+                                # 3. Now, it's safe to apply the numpy average to the clean list
                                 df_aggregated_batch['corpus_embedding'] = df_aggregated_batch['corpus_embedding'].apply(
-                                    lambda embedding_list: np.mean(embedding_list, axis=0) if embedding_list else None
+                                    lambda valid_embedding_list: np.mean(valid_embedding_list, axis=0)
                                 )
                                 
-                                # 3. Drop any rows that failed aggregation
-                                df_aggregated_batch.dropna(subset=['corpus_embedding'], inplace=True)
-                                if df_aggregated_batch.empty: continue
-
-                                # 4. Write the aggregated batch directly to the final staging table
+                                # 4. Write the aggregated batch to the staging table
                                 df_aggregated_batch.to_sql(
                                     aggregated_table, 
                                     conn, 
