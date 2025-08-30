@@ -779,8 +779,8 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         ORIGINAL_DIM = 2560
         REDUCED_DIM = 2000
         PCA_TRAINING_SAMPLE_SIZE = 100000
-        PROCESSING_BATCH_SIZE = 7500
-        PARQUET_PROCESSING_CHUNK_SIZE = 100 
+        PROCESSING_BATCH_SIZE = 10000
+        PARQUET_PROCESSING_CHUNK_SIZE = 50
 
         def sanitize_and_validate_embedding(embedding_data):
             """
