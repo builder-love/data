@@ -877,7 +877,9 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                                     log_memory_usage(context, f"Processing batch {batch_num} for file {i+1}")
                                 
                                 df_aggregated_batch = record_batch.to_pandas()
-                                if df_aggregated_batch.empty: continue
+                                if df_aggregated_batch.empty: 
+                                    context.log.warning(f"The aggregated dataframe for batch {batch_num} in file {i+1} has no records. Skipping.")
+                                    continue
                                 
                                 # 1. Sanitize the list of embeddings in each row
                                 df_aggregated_batch['corpus_embedding'] = df_aggregated_batch['corpus_embedding'].apply(
@@ -886,7 +888,9 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
 
                                 # 2. Drop rows where the embedding list is now empty or None
                                 df_aggregated_batch.dropna(subset=['corpus_embedding'], inplace=True)
-                                if df_aggregated_batch.empty: continue
+                                if df_aggregated_batch.empty: 
+                                    context.log.warning(f"The aggregated dataframe for batch {batch_num} in file {i+1} has no records. Skipping.")
+                                    continue
 
                                 # 3. Now, it's safe to apply the numpy average to the clean list
                                 df_aggregated_batch['corpus_embedding'] = df_aggregated_batch['corpus_embedding'].apply(
