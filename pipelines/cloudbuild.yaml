@@ -139,11 +139,12 @@ steps:
   secretEnv: ['DB_USER', 'DB_PASSWORD']
   args: [
     'build',
+    '-f', 'pipelines/Dockerfile',
     # Attach this build to our custom network
     '--network=dbt-build-net',
     '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA',
     '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest',
-    './pipelines'
+    '.'
   ]
   waitFor: ['Download Zig Archive'] 
 
