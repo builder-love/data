@@ -853,12 +853,12 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             bucket = storage_client.bucket(gcs_bucket_name)
             parquet_blobs = [b for b in bucket.list_blobs(prefix=gcs_parquet_folder_path) if b.name.endswith('.parquet')]
 
-            if not parquet_blobs:
-                context.log.warning("No Parquet files found in GCS path. Exiting.")
-                return dg.MaterializeResult(metadata={"records_processed": 0, "status": "No files found"})
-
             context.log.info(f"Found {len(parquet_blobs)} batch files. Loading into staging table...{full_aggregated_table}")
 
+            # 2.1. Setup GCS File System
+            gcs_fs = gcsfs.GCSFileSystem()
+
+            # 2.2. Process each Parquet file
             for i, blob in enumerate(parquet_blobs):
                 if not blob:
                     context.log.warning(f"No blob found for file {i+1}. Skipping.")
@@ -866,7 +866,6 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
 
                 context.log.info(f"--- Processing Parquet File {i+1}/{len(parquet_blobs)}: {blob.name} ---")
                 
-                gcs_fs = gcsfs.GCSFileSystem()
                 gcs_file_path = f"gs://{gcs_bucket_name}/{blob.name}"
                 
                 parquet_file = None
@@ -880,10 +879,6 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                                 continue
                             
                             for batch_num, record_batch in enumerate(parquet_file.iter_batches(batch_size=PARQUET_PROCESSING_CHUNK_SIZE)):
-
-                                if not record_batch:
-                                    context.log.warning(f"No record batch found for batch {batch_num} in file {i+1}. Skipping.")
-                                    continue
                                 
                                 # log this every 10 batches
                                 if batch_num % 10 == 0:
@@ -942,7 +937,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                 finally:
                     if parquet_file:
                         parquet_file.close()
-                    del parquet_file, gcs_fs
+                    del parquet_file
                     gc.collect()
                     log_memory_usage(context, f"After processing file {i+1}")
 
