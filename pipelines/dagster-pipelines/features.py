@@ -876,7 +876,9 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                                 if batch_num % 10 == 0:
                                     log_memory_usage(context, f"Processing batch {batch_num} for file {i+1}")
                                 
+                                context.log.info(f"Converting record batch to pandas dataframe for batch {batch_num} in file {i+1}")
                                 df_aggregated_batch = record_batch.to_pandas()
+
                                 if df_aggregated_batch.empty: 
                                     context.log.warning(f"The aggregated dataframe for batch {batch_num} in file {i+1} has no records. Skipping.")
                                     continue
