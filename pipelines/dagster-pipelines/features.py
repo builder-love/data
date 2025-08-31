@@ -877,6 +877,10 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                             if not parquet_file:
                                 context.log.warning(f"No parquet file found for file {i+1}. Skipping.")
                                 continue
+
+                            # print parquet file meta data and schema
+                            context.log.info(f"Parquet file metadata: {parquet_file.metadata}")
+                            context.log.info(f"Parquet file schema: {parquet_file.schema}")
                             
                             for batch_num, record_batch in enumerate(parquet_file.iter_batches(batch_size=PARQUET_PROCESSING_CHUNK_SIZE)):
                                 
