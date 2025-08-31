@@ -891,10 +891,6 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                             if not parquet_file:
                                 context.log.warning(f"No parquet file found for file {i+1}. Skipping.")
                                 continue
-
-                            # print parquet file meta data and schema
-                            context.log.info(f"Parquet file metadata: {parquet_file.metadata}")
-                            context.log.info(f"Parquet file schema: {parquet_file.schema}")
                             
                             for batch_num, record_batch in enumerate(parquet_file.iter_batches(batch_size=PARQUET_PROCESSING_CHUNK_SIZE)):
                                 
@@ -908,9 +904,6 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                                 if df_aggregated_batch.empty: 
                                     context.log.warning(f"to_pandas() function unsuccessful. df_aggregated_batch object is empty for batch {batch_num} in file {i+1}. Skipping.")
                                     continue
-
-                                # print the first 2 rows of the dataframe
-                                context.log.info(f"First 2 rows of the dataframe: {df_aggregated_batch.head(2)}")
                                 
                                 # 1. Sanitize the list of embeddings in each row
                                 df_aggregated_batch['corpus_embedding'] = df_aggregated_batch['corpus_embedding'].apply(
@@ -947,10 +940,6 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                                 
                                 del df_aggregated_batch
                                 gc.collect()
-
-                        # count the number of rows in the staging table
-                        num_rows = pd.read_sql(f"SELECT COUNT(*) FROM {full_aggregated_table}", conn).iloc[0,0]
-                        context.log.info(f"Number of rows in staging table: {num_rows}")
 
                 except Exception as e:
                     context.log.error(f"Error processing file {blob.name}: {e}")
