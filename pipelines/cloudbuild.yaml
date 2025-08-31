@@ -130,7 +130,7 @@ steps:
 - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
   id: 'Download Zig Archive'
   entrypoint: 'gsutil'
-  args: ['cp', 'gs://bl-build-artifacts/zig-linux-x86_64-0.14.0.tar.xz', '.']
+  args: ['cp', 'gs://bl-build-artifacts/zig-linux-x86_64-0.14.0.tar.xz', 'pipelines/']
   waitFor: ['Create .env File']
 
 # 7. Build the main application image.
@@ -139,12 +139,11 @@ steps:
   secretEnv: ['DB_USER', 'DB_PASSWORD']
   args: [
     'build',
-    '-f', 'pipelines/Dockerfile',
     # Attach this build to our custom network
     '--network=dbt-build-net',
     '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:$SHORT_SHA',
     '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest',
-    '.'
+    './pipelines'
   ]
   waitFor: ['Download Zig Archive'] 
 
