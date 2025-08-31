@@ -97,3 +97,4 @@ dagster-gcp==0.27.3
 psutil==7.0.0
 gcsfs==2025.7.0
 pgvector==0.4.1
+pyarrow>=12.0.0
