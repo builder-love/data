@@ -783,29 +783,29 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
 
         def sanitize_embedding_list(embedding_list, original_dim):
             """
-            Takes a list of embeddings, validates each one, and returns a clean list of valid embeddings.
+            Takes a list of embeddings, validates each one, and returns a clean list.
+            This version handles an extra layer of nesting found in the source data.
             """
             if not isinstance(embedding_list, list) or not embedding_list:
                 return None
             
+            # --- Flatten the list by one level ---
+            try:
+                embedding_list = [item for sublist in embedding_list for item in sublist]
+            except TypeError:
+                # If the data is not nested as expected, log a warning and proceed
+                context.log.warning("Encountered a non-nested list in sanitize_embedding_list.")
+
             valid_embeddings = []
             for emb in embedding_list:
                 if emb is None:
-                    context.log.warning(f"Embedding is None. Skipping.")
+                    context.log.warning("Embedding is None. Skipping.")
                     continue
-
-                # Ensure data is a numpy array for consistent processing
                 if isinstance(emb, list):
                     emb = np.array(emb, dtype=np.float32)
-                
-                # Check for correct type and dimension
+                # The check will now work correctly on the unwrapped embedding
                 if isinstance(emb, np.ndarray) and emb.shape[0] == original_dim:
-                    context.log.info(f"Embedding is a numpy array and has correct dimension. Adding to valid embeddings.")
                     valid_embeddings.append(emb)
-                else:
-                    context.log.warning(f"Embedding is not a numpy array or has incorrect dimension. Skipping.")
-                    continue
-
             return valid_embeddings if valid_embeddings else None
 
         def sql_insert_with_error_handling(dftable, conn, keys, data_iter):
@@ -892,8 +892,11 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                                 df_aggregated_batch = record_batch.to_pandas()
 
                                 if df_aggregated_batch.empty: 
-                                    context.log.warning(f"The aggregated dataframe for batch {batch_num} in file {i+1} has no records. Skipping.")
+                                    context.log.warning(f"to_pandas() function unsuccessful. df_aggregated_batch object is empty for batch {batch_num} in file {i+1}. Skipping.")
                                     continue
+
+                                # print the first 2 rows of the dataframe
+                                context.log.info(f"First 2 rows of the dataframe: {df_aggregated_batch.head(2)}")
                                 
                                 # 1. Sanitize the list of embeddings in each row
                                 df_aggregated_batch['corpus_embedding'] = df_aggregated_batch['corpus_embedding'].apply(
