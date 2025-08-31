@@ -783,29 +783,33 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
 
         def sanitize_embedding_list(embedding_list, original_dim):
             """
-            Takes a list of embeddings, validates each one, and returns a clean list.
-            This version handles an extra layer of nesting found in the source data.
+            Takes a list of embedding vectors, validates each one, and returns a
+            clean list of NumPy arrays.
             """
             if not isinstance(embedding_list, list) or not embedding_list:
                 return None
-            
-            # --- Flatten the list by one level ---
-            try:
-                embedding_list = [item for sublist in embedding_list for item in sublist]
-            except TypeError:
-                # If the data is not nested as expected, log a warning and proceed
-                context.log.warning("Encountered a non-nested list in sanitize_embedding_list.")
 
             valid_embeddings = []
+            # The `embedding_list` is the outer list, e.g., [[...vector_1...], [...vector_2...]]
+            # `emb` will be the inner list, e.g., [...vector_1...]
             for emb in embedding_list:
                 if emb is None:
                     context.log.warning("Embedding is None. Skipping.")
                     continue
+                    
+                # Ensure the item is a NumPy array for the shape check
                 if isinstance(emb, list):
                     emb = np.array(emb, dtype=np.float32)
-                # The check will now work correctly on the unwrapped embedding
-                if isinstance(emb, np.ndarray) and emb.shape[0] == original_dim:
+                
+                # Check if it's a 1D array of the correct length
+                if isinstance(emb, np.ndarray) and len(emb.shape) == 1 and emb.shape[0] == original_dim:
                     valid_embeddings.append(emb)
+                else:
+                    # This will help debug if some vectors have the wrong dimension
+                    shape = emb.shape if hasattr(emb, 'shape') else 'N/A'
+                    context.log.warning(f"Skipping an invalid embedding with shape: {shape}")
+
+            # Return the list of valid NumPy arrays, or None if the list is empty
             return valid_embeddings if valid_embeddings else None
 
         def sql_insert_with_error_handling(dftable, conn, keys, data_iter):
