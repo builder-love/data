@@ -848,7 +848,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                     conn.execute(text(f"TRUNCATE TABLE {full_aggregated_table};"))
                     conn.execute(text(f"TRUNCATE TABLE {full_final_table};"))
 
-            # 2. STAGING LOAD: Load all parquet files from GCS into the staging chunks table
+            # 2. STAGING LOAD to staging using In-Memory Aggregation
             context.log.info(f"Listing batch files from gs://{gcs_bucket_name}/{gcs_parquet_folder_path}...")
             bucket = storage_client.bucket(gcs_bucket_name)
             parquet_blobs = [b for b in bucket.list_blobs(prefix=gcs_parquet_folder_path) if b.name.endswith('.parquet')]
@@ -857,48 +857,70 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                 context.log.warning("No Parquet files found in GCS path. Exiting.")
                 return dg.MaterializeResult(metadata={"records_processed": 0, "status": "No files found"})
 
-            gcs_fs = gcsfs.GCSFileSystem()
-            context.log.info(f"Found {len(parquet_blobs)} batch files. Loading into staging table...")
+            context.log.info(f"Found {len(parquet_blobs)} batch files. Loading into staging table...{full_aggregated_table}")
 
             for i, blob in enumerate(parquet_blobs):
-                try:
-                    context.log.info(f"--- Processing Parquet File {i+1}/{len(parquet_blobs)}: {blob.name} ---")
+                if not blob:
+                    context.log.warning(f"No blob found for file {i+1}. Skipping.")
+                    continue
 
+                context.log.info(f"--- Processing Parquet File {i+1}/{len(parquet_blobs)}: {blob.name} ---")
+                
+                gcs_fs = gcsfs.GCSFileSystem()
+                gcs_file_path = f"gs://{gcs_bucket_name}/{blob.name}"
+                
+                parquet_file = None
+                try:
                     with cloud_sql_engine.connect() as conn:
                         with conn.begin():
+                            parquet_file = pq.ParquetFile(gcs_file_path, filesystem=gcs_fs)
 
-                            # Read parquet file in chunks using pandas
-                            parquet_iterator = pd.read_parquet(f"gs://{gcs_bucket_name}/{blob.name}", filesystem=gcs_fs, chunksize=PARQUET_PROCESSING_CHUNK_SIZE)
+                            if not parquet_file:
+                                context.log.warning(f"No parquet file found for file {i+1}. Skipping.")
+                                continue
+                            
+                            for batch_num, record_batch in enumerate(parquet_file.iter_batches(batch_size=PARQUET_PROCESSING_CHUNK_SIZE)):
 
-                            for batch_num, df_chunk in enumerate(parquet_iterator):
+                                if not record_batch:
+                                    context.log.warning(f"No record batch found for batch {batch_num} in file {i+1}. Skipping.")
+                                    continue
+                                
+                                # log this every 10 batches
                                 if batch_num % 10 == 0:
                                     log_memory_usage(context, f"Processing batch {batch_num} for file {i+1}")
+                                
+                                context.log.info(f"Converting record batch to pandas dataframe for batch {batch_num} in file {i+1}")
+                                df_aggregated_batch = record_batch.to_pandas()
 
-                                # The loop handles empty chunks, so this first check is sufficient.
-                                if df_chunk.empty:
-                                    context.log.warning(f"Batch {batch_num} in file {i+1} is empty after reading. Skipping.")
+                                if df_aggregated_batch.empty: 
+                                    context.log.warning(f"The aggregated dataframe for batch {batch_num} in file {i+1} has no records. Skipping.")
                                     continue
-
+                                
                                 # 1. Sanitize the list of embeddings in each row
-                                df_chunk['corpus_embedding'] = df_chunk['corpus_embedding'].apply(
+                                df_aggregated_batch['corpus_embedding'] = df_aggregated_batch['corpus_embedding'].apply(
                                     lambda lst: sanitize_embedding_list(lst, ORIGINAL_DIM)
                                 )
 
                                 # 2. Drop rows where the embedding list is now empty or None
-                                df_chunk.dropna(subset=['corpus_embedding'], inplace=True)
-                                
-                                # Consolidated all empty checks into this single block.
-                                if df_chunk.empty:
-                                    context.log.warning(f"Batch {batch_num} in file {i+1} is empty after sanitization. Skipping.")
+                                df_aggregated_batch.dropna(subset=['corpus_embedding'], inplace=True)
+                                if df_aggregated_batch.empty: 
+                                    context.log.warning(f"The aggregated dataframe for batch {batch_num} in file {i+1} has no records. Skipping.")
                                     continue
 
-                                # 3. Now, it's safe to apply the numpy average
-                                df_chunk['corpus_embedding'] = df_chunk['corpus_embedding'].apply(
-                                    lambda valid_list: np.mean(valid_list, axis=0)
+                                # 3. Now, it's safe to apply the numpy average to the clean list
+                                df_aggregated_batch['corpus_embedding'] = df_aggregated_batch['corpus_embedding'].apply(
+                                    lambda valid_embedding_list: np.mean(valid_embedding_list, axis=0)
                                 )
+
+                                # check df_aggregated_batch has records
+                                if df_aggregated_batch.empty:
+                                    context.log.warning(f"The aggregated dataframe for batch {batch_num} in file {i+1} has no records. Raising exception.")
+                                    raise
+                                else:
+                                    context.log.info(f"The aggregated dataframe for batch {batch_num} in file {i+1} has {len(df_aggregated_batch)} records. Inserting into staging table.")
                                 
                                 # 4. Write the aggregated batch to the staging table
-                                df_chunk.to_sql(
+                                df_aggregated_batch.to_sql(
                                     aggregated_table, 
                                     conn, 
                                     schema=raw_schema, 
@@ -906,8 +928,8 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                                     index=False, 
                                     dtype={'corpus_embedding': Vector(ORIGINAL_DIM), 'repo': TEXT}
                                 )
-                            
-                                del df_chunk
+                                
+                                del df_aggregated_batch
                                 gc.collect()
 
                         # count the number of rows in the staging table
@@ -918,14 +940,13 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                     context.log.error(f"Error processing file {blob.name}: {e}")
                     raise
                 finally:
+                    if parquet_file:
+                        parquet_file.close()
+                    del parquet_file, gcs_fs
+                    gc.collect()
                     log_memory_usage(context, f"After processing file {i+1}")
 
-            # cleanup the gcs connections
-            del gcs_fs, parquet_blobs
-            gc.collect()
-
             # 4. PCA TRAINING: Train a global PCA model on a sample of data
-            log_memory_usage(context, f"Before PCAs training")
             context.log.info(f"Fetching a sample of {PCA_TRAINING_SAMPLE_SIZE} embeddings to train PCA model...")
             with cloud_sql_engine.connect() as conn:
                 df_sample = pd.read_sql(
