@@ -6,38 +6,46 @@ import pandas as pd
 import pyarrow.parquet as pq
 from google.cloud import storage
 
-def sanitize_embedding_list(embedding_list, original_dim):
+def sanitize_embedding_list(cell_value, original_dim):
     """
-    Takes a list of embedding vectors, validates each one, and returns a
-    clean list of NumPy arrays.
+    Takes a list or NumPy array of embedding vectors, validates each one,
+    and returns a clean list of NumPy arrays.
     """
-    if not isinstance(embedding_list, list) or not embedding_list:
-        print(f"Embedding list is not a list or is empty. Embedding is type: {type(embedding_list)}. Returning None.")
+    list_of_vectors = []
+    
+    # Check the type of the input from the DataFrame cell
+    if isinstance(cell_value, list):
+        # This was the originally expected format
+        list_of_vectors = cell_value
+    elif isinstance(cell_value, np.ndarray):
+        # This is the optimized format Pandas creates.
+        # Convert the NumPy array back into a list of its rows.
+        list_of_vectors = list(cell_value)
+    else:
+        # If it's another type, it's invalid.
+        print(f"Invalid type found in embedding column: {type(cell_value)}")
+        return None
+
+    if not list_of_vectors:
         return None
 
     valid_embeddings = []
-    # The `embedding_list` is the outer list, e.g., [[...vector_1...], [...vector_2...]]
-    # `emb` will be the inner list, e.g., [...vector_1...]
-    for emb in embedding_list:
+    for emb in list_of_vectors:
         if emb is None:
             print("Embedding is None. Skipping.")
             continue
             
-        # Ensure the item is a NumPy array for the shape check
         if isinstance(emb, list):
             print(f"Embedding is a list. Converting to NumPy array.")
             emb = np.array(emb, dtype=np.float32)
         
-        # Check if it's a 1D array of the correct length
         if isinstance(emb, np.ndarray) and len(emb.shape) == 1 and emb.shape[0] == original_dim:
             print(f"Embedding is a NumPy array and has the correct dimension. Adding to valid embeddings.")
             valid_embeddings.append(emb)
         else:
-            # This will help debug if some vectors have the wrong dimension
             shape = emb.shape if hasattr(emb, 'shape') else 'N/A'
             print(f"Skipping an invalid embedding with shape: {shape}")
 
-    # Return the list of valid NumPy arrays, or None if the list is empty
     return valid_embeddings if valid_embeddings else None
 
 def main():

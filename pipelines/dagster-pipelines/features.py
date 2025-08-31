@@ -815,7 +815,6 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                     emb = np.array(emb, dtype=np.float32)
                 
                 if isinstance(emb, np.ndarray) and len(emb.shape) == 1 and emb.shape[0] == original_dim:
-                    context.log.info(f"Embedding is a NumPy array and has the correct dimension. Adding to valid embeddings.")
                     valid_embeddings.append(emb)
                 else:
                     shape = emb.shape if hasattr(emb, 'shape') else 'N/A'
