@@ -126,7 +126,14 @@ steps:
       EOT
   waitFor: ['Get Proxy IP']
 
-# 6. Build the main application image.
+# 6. Download the Zig archive from GCS
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: 'Download Zig Archive'
+  entrypoint: 'gsutil'
+  args: ['cp', 'gs://bl-build-artifacts/zig-linux-x86_64-0.14.0.tar.xz', '.']
+  waitFor: ['Create .env File']
+
+# 7. Build the main application image.
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Build App Image'
   secretEnv: ['DB_USER', 'DB_PASSWORD']
@@ -138,22 +145,22 @@ steps:
     '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app:latest',
     './pipelines'
   ]
-  waitFor: ['Create .env File'] # Ensure proxy is started before building
+  waitFor: ['Download Zig Archive'] 
 
-# 7. Stop and remove the proxy container (important for cleanup).
+# 8. Stop and remove the proxy container (important for cleanup).
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Stop Proxy Container'
   args: ['rm', '-f', 'proxy-service']
   # This step runs even if the build fails, ensuring cleanup.
   waitFor: ['Build App Image']
 
-# 8. Push the final image.
+# 9. Push the final image.
 - name: 'gcr.io/cloud-builders/docker'
   id: 'Push Image to GCR'
   args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/dagster-repo/dagster-app', '--all-tags']
   waitFor: ['Stop Proxy Container'] # Wait for build and cleanup
 
-# 9. Update the configmap.yaml with the new image, update the DAGSTER_ENV, and deploy.
+# 10. Update the configmap.yaml with the new image, update the DAGSTER_ENV, and deploy.
 - name: 'gcr.io/cloud-builders/gcloud'
   id: 'Update Manifests and Deploy'
   entrypoint: 'bash'
