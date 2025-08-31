@@ -800,6 +800,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                 
                 # Check for correct type and dimension
                 if isinstance(emb, np.ndarray) and emb.shape[0] == original_dim:
+                    context.log.info(f"Embedding is a numpy array and has correct dimension. Adding to valid embeddings.")
                     valid_embeddings.append(emb)
                 else:
                     context.log.warning(f"Embedding is not a numpy array or has incorrect dimension. Skipping.")
