@@ -65,22 +65,23 @@ FROM python:3.13-slim
 # Create a non-root user and group
 RUN groupadd --system app && useradd --system --gid app appuser
 
-# Install git for cloning the repo, and wget to download zig
+# Install git, xz-utils, AND the gcloud SDK for gsutil
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
-    wget \
     xz-utils \
+    apt-transport-https \
+    ca-certificates \
+    gnupg \
+    google-cloud-sdk \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Download, install, and link Zig correctly
-RUN wget https://ziglang.org/download/0.14.0/zig-linux-x86_64-0.14.0.tar.xz && \
+# The archive will be copied from GCS now
+ARG GCS_BUCKET_NAME
+RUN gsutil cp gs://bl-build-artifacts/zig-linux-x86_64-0.14.0.tar.xz . && \
     tar -xf zig-linux-x86_64-0.14.0.tar.xz && \
-    # Move the entire directory
     mv zig-linux-x86_64-0.14.0 /usr/local/lib/zig && \
-    # Create a symbolic link to the executable
     ln -s /usr/local/lib/zig/zig /usr/local/bin/zig && \
-    # Clean up the downloaded archive
     rm zig-linux-x86_64-0.14.0.tar.xz
 
 WORKDIR /opt/dagster/app
