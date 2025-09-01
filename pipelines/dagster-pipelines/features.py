@@ -780,6 +780,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         PCA_TRAINING_SAMPLE_SIZE = 75000
         PROCESSING_BATCH_SIZE = 10000
         PARQUET_PROCESSING_CHUNK_SIZE = 100
+        PCA_BATCH_SIZE = 512
 
         def sanitize_embedding_list(cell_value, original_dim):
             """
@@ -974,15 +975,18 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                 context.log.info(f"Training sample series has {len(training_sample_series)} rows after final sampling")
 
             log_memory_usage(context, "After creating sample for PCA training")
-            training_data = np.vstack(training_sample_series.values)
+            training_data = np.array(training_sample_series.tolist())
             del training_sample_series
             gc.collect()
 
             log_memory_usage(context, "After creating training data, and dropping sample dataframe")
             
             context.log.info(f"Training IncrementalPCA model to reduce dims from {ORIGINAL_DIM} to {REDUCED_DIM}...")
-            pca = IncrementalPCA(n_components=REDUCED_DIM, batch_size=512)
-            pca.fit(training_data)
+            pca = IncrementalPCA(n_components=REDUCED_DIM, batch_size=PCA_BATCH_SIZE)
+            context.log.info("Fitting IncrementalPCA model in explicit batches...")
+            for i in range(0, training_data.shape[0], PCA_BATCH_SIZE):
+                batch = training_data[i:i + PCA_BATCH_SIZE]
+                pca.partial_fit(batch)
             log_memory_usage(context, "After PCA training")
 
             del training_data
