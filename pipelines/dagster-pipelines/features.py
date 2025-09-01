@@ -964,12 +964,14 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             # 4. PCA TRAINING: Train a global PCA model on a sample of data
             context.log.info("Combining collected samples to create PCA training set...")
             training_sample_series = pd.concat(pca_samples, ignore_index=True)
+            context.log.info(f"Training sample series has {len(training_sample_series)} rows")
             del pca_samples # Free up the list of dataframes
             gc.collect()
-            
+
             # Update the variable name to work with the Series
             if len(training_sample_series) > PCA_TRAINING_SAMPLE_SIZE:
                 training_sample_series = training_sample_series.sample(n=PCA_TRAINING_SAMPLE_SIZE)
+                context.log.info(f"Training sample series has {len(training_sample_series)} rows after final sampling")
 
             log_memory_usage(context, "After creating sample for PCA training")
             training_data = np.vstack(training_sample_series.values)
