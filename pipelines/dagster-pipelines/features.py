@@ -777,7 +777,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         # PCA Config
         ORIGINAL_DIM = 2560
         REDUCED_DIM = 2000
-        PCA_TRAINING_SAMPLE_SIZE = 100000
+        PCA_TRAINING_SAMPLE_SIZE = 75000
         PROCESSING_BATCH_SIZE = 10000
         PARQUET_PROCESSING_CHUNK_SIZE = 100
 
@@ -898,7 +898,6 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                                 if batch_num % 10 == 0:
                                     log_memory_usage(context, f"Processing batch {batch_num} for file {i+1}")
                                 
-                                context.log.info(f"Converting record batch to pandas dataframe for batch {batch_num} in file {i+1}")
                                 df_aggregated_batch = record_batch.to_pandas()
 
                                 if df_aggregated_batch.empty: 
@@ -925,8 +924,6 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                                 if df_aggregated_batch.empty:
                                     context.log.warning(f"The aggregated dataframe for batch {batch_num} in file {i+1} has no records. Raising exception.")
                                     raise
-                                else:
-                                    context.log.info(f"The aggregated dataframe for batch {batch_num} in file {i+1} has {len(df_aggregated_batch)} records. Inserting into staging table.")
                                 
                                 # 4. Write the aggregated batch to the staging table
                                 df_aggregated_batch.to_sql(
@@ -961,10 +958,14 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             
             if df_sample.empty:
                 raise ValueError("No data available for PCA training after aggregation.")
+            
+            log_memory_usage(context, "After fetching sample for PCA training")
 
             training_data = np.vstack(df_sample['corpus_embedding'].values)
             del df_sample
             gc.collect()
+
+            log_memory_usage(context, "After creating training data, and dropping sample dataframe")
             
             context.log.info(f"Training IncrementalPCA model to reduce dims from {ORIGINAL_DIM} to {REDUCED_DIM}...")
             pca = IncrementalPCA(n_components=REDUCED_DIM, batch_size=512)
