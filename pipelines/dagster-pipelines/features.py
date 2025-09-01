@@ -872,6 +872,9 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             # 2.1. Setup GCS File System
             gcs_fs = gcsfs.GCSFileSystem()
 
+            # create a list to hold a sample of the embeddings for PCA
+            pca_samples = []
+
             # 2.2. Process each Parquet file
             for i, blob in enumerate(parquet_blobs):
                 if not blob:
@@ -934,6 +937,9 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                                     index=False, 
                                     dtype={'corpus_embedding': Vector(ORIGINAL_DIM), 'repo': TEXT}
                                 )
+
+                                # Add a random 25% of the processed chunk to our list of samples
+                                pca_samples.append(df_aggregated_batch.sample(frac=0.25)['corpus_embedding'])
                                 
                                 del df_aggregated_batch
                                 gc.collect()
@@ -948,21 +954,26 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                     gc.collect()
                     log_memory_usage(context, f"After processing file {i+1}")
 
-            # 4. PCA TRAINING: Train a global PCA model on a sample of data
-            context.log.info(f"Fetching a sample of {PCA_TRAINING_SAMPLE_SIZE} embeddings to train PCA model...")
-            with cloud_sql_engine.connect() as conn:
-                df_sample = pd.read_sql(
-                    text(f"SELECT corpus_embedding FROM {full_aggregated_table} LIMIT {PCA_TRAINING_SAMPLE_SIZE}"),
-                    conn
-                )
-            
-            if df_sample.empty:
-                raise ValueError("No data available for PCA training after aggregation.")
-            
-            log_memory_usage(context, "After fetching sample for PCA training")
+            # force cleanup of gcs and parquet_blobs objects
+            context.log.info("Finished processing all GCS files. Cleaning up GCS objects...")
+            del gcs_fs
+            del parquet_blobs
+            gc.collect()
+            log_memory_usage(context, "After cleaning up GCS objects")
 
-            training_data = np.vstack(df_sample['corpus_embedding'].values)
-            del df_sample
+            # 4. PCA TRAINING: Train a global PCA model on a sample of data
+            context.log.info("Combining collected samples to create PCA training set...")
+            training_sample_series = pd.concat(pca_samples, ignore_index=True)
+            del pca_samples # Free up the list of dataframes
+            gc.collect()
+            
+            # Update the variable name to work with the Series
+            if len(training_sample_series) > PCA_TRAINING_SAMPLE_SIZE:
+                training_sample_series = training_sample_series.sample(n=PCA_TRAINING_SAMPLE_SIZE)
+
+            log_memory_usage(context, "After creating sample for PCA training")
+            training_data = np.vstack(training_sample_series.values)
+            del training_sample_series
             gc.collect()
 
             log_memory_usage(context, "After creating training data, and dropping sample dataframe")
