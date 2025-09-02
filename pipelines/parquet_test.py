@@ -25,7 +25,7 @@ def test_pca_partial_fit():
     ORIGINAL_DIM = 2560
     REDUCED_DIM = 2000
     PCA_TRAINING_SAMPLE_SIZE = 10000  
-    PCA_BATCH_SIZE = 512             # The batch size for partial_fit
+    PCA_BATCH_SIZE = 2500
 
     # --- Database Connection ---
     db_url = os.getenv("DATABASE_URL")

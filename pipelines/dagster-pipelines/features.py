@@ -19,6 +19,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import gcsfs
 import io
+import ast
 
 def aggregate_corpus_text(features_df: pd.DataFrame, context: dg.OpExecutionContext) -> pd.DataFrame:
     """
@@ -1015,6 +1016,11 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                     if df_batch.empty:
                         context.log.info("All batches processed.")
                         break
+
+                    # The VECTOR type is read as a string; convert it back to a numeric array.
+                    df_batch['corpus_embedding'] = df_batch['corpus_embedding'].apply(
+                        lambda s: np.array(ast.literal_eval(s), dtype=np.float32)
+                    )
                     
                     original_vectors = np.vstack(df_batch['corpus_embedding'].values)
                     reduced_vectors = pca.transform(original_vectors)
