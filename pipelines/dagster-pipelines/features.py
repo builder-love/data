@@ -1004,46 +1004,59 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                 
                 # Each loop gets its own connection and transaction
                 with cloud_sql_engine.connect() as conn:
-                    df_batch = pd.read_sql(
-                        text(f"SELECT repo, corpus_embedding FROM {full_aggregated_table} ORDER BY repo LIMIT {PROCESSING_BATCH_SIZE} OFFSET {offset}"),
-                        conn
-                    )
-                    
-                    if df_batch.empty:
-                        context.log.info("All batches processed.")
-                        break
-
-                    # Convert the string vectors back to numeric arrays
-                    df_batch['corpus_embedding'] = df_batch['corpus_embedding'].apply(
-                        lambda s: np.array(ast.literal_eval(s), dtype=np.float32)
-                    )
-                    
-                    # Apply PCA transformation
-                    original_vectors = np.vstack(df_batch['corpus_embedding'].values)
-                    reduced_vectors = pca.transform(original_vectors)
-                    
-                    df_final = pd.DataFrame({
-                        'repo': df_batch['repo'],
-                        'corpus_embedding': list(reduced_vectors),
-                        'data_timestamp': data_timestamp
-                    })
-
-                    # This transaction block handles writing just one batch
                     with conn.begin():
-                        df_final.to_sql(
-                            name=final_table,
-                            con=conn,
-                            schema=raw_schema,
-                            if_exists='append',
-                            index=False,
-                            dtype={'corpus_embedding': Vector(REDUCED_DIM), 'repo': TEXT, 'data_timestamp': TIMESTAMP}
+                        df_batch = pd.read_sql(
+                            text(f"SELECT repo, corpus_embedding FROM {full_aggregated_table} ORDER BY repo LIMIT {PROCESSING_BATCH_SIZE} OFFSET {offset}"),
+                            conn
                         )
-                # The commit for this batch happens here before the next loop starts
                         
-                total_records_processed += len(df_final)
-                context.log.info(f"Processed batch. Total records in final table: {total_records_processed}")
+                        # If the batch is empty, we do nothing inside this transaction.
+                        # The loop will break after the 'with' block finishes.
+                        if not df_batch.empty:
+
+                            # Convert the string vectors back to numeric arrays
+                            df_batch['corpus_embedding'] = df_batch['corpus_embedding'].apply(
+                                lambda s: np.array(ast.literal_eval(s), dtype=np.float32)
+                            )
+                            
+                            # Apply PCA transformation
+                            context.log.info(f"Applying PCA transformation to {len(df_batch)} embeddings...")
+                            original_vectors = np.vstack(df_batch['corpus_embedding'].values)
+                            reduced_vectors = pca.transform(original_vectors)
+                            
+                            context.log.info(f"Writing {len(df_batch)} embeddings to the database...")
+                            df_final = pd.DataFrame({
+                                'repo': df_batch['repo'],
+                                'corpus_embedding': list(reduced_vectors),
+                                'data_timestamp': data_timestamp
+                            })
+                            
+                            df_final.to_sql(
+                                name=final_table,
+                                con=conn,
+                                schema=raw_schema,
+                                if_exists='append',
+                                index=False,
+                                dtype={'corpus_embedding': Vector(REDUCED_DIM), 'repo': TEXT, 'data_timestamp': TIMESTAMP}
+                            )
+
+                            # Update counters and log success INSIDE the successful path
+                            total_records_processed += len(df_final)
+                            context.log.info(f"Processed batch. Total records in final table: {total_records_processed}")
+                            
+                            # Clean up variables from this batch
+                            del df_final, original_vectors, reduced_vectors
+                            gc.collect()
+
+                # The transaction is committed/closed here.
+                # Now, check if we should exit the while loop.
+                if df_batch.empty:
+                    context.log.info("All batches processed.")
+                    break
+                
+                # Update offset for the next loop
                 offset += PROCESSING_BATCH_SIZE
-                del df_batch, df_final, original_vectors, reduced_vectors
+                del df_batch
                 gc.collect()
 
         except Exception as e:
