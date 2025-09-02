@@ -878,7 +878,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             pca_samples = []
 
             # 2.2. Process each Parquet file
-            for i, blob in enumerate(parquet_blobs[:2]):
+            for i, blob in enumerate(parquet_blobs):
                 if not blob:
                     context.log.warning(f"No blob found for file {i+1}. Skipping.")
                     continue
@@ -1005,6 +1005,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                 # Each loop gets its own connection and transaction
                 with cloud_sql_engine.connect() as conn:
                     with conn.begin():
+                        context.log.info(f"Reading batch from {full_aggregated_table} starting at offset {offset}...")
                         df_batch = pd.read_sql(
                             text(f"SELECT repo, corpus_embedding FROM {full_aggregated_table} ORDER BY repo LIMIT {PROCESSING_BATCH_SIZE} OFFSET {offset}"),
                             conn
@@ -1014,6 +1015,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                         # The loop will break after the 'with' block finishes.
                         if not df_batch.empty:
 
+                            context.log.info(f"Converting {len(df_batch)} embeddings from string to numeric arrays...")
                             # Convert the string vectors back to numeric arrays
                             df_batch['corpus_embedding'] = df_batch['corpus_embedding'].apply(
                                 lambda s: np.array(ast.literal_eval(s), dtype=np.float32)
