@@ -1,142 +1,110 @@
-import gc
-
-import gcsfs
+import os
+import logging
 import numpy as np
 import pandas as pd
-import pyarrow.parquet as pq
-from google.cloud import storage
+from sqlalchemy import create_engine, text
+from sklearn.decomposition import IncrementalPCA
 
-def sanitize_embedding_list(cell_value, original_dim):
+# --- Basic Logging Setup ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+def test_pca_partial_fit():
     """
-    Takes a list or NumPy array of embedding vectors, validates each one,
-    and returns a clean list of NumPy arrays.
+    Connects to the database, fetches a sample of embeddings, and tests
+    the IncrementalPCA using a manual partial_fit loop.
     """
-    list_of_vectors = []
-    
-    # Check the type of the input from the DataFrame cell
-    if isinstance(cell_value, list):
-        # This was the originally expected format
-        list_of_vectors = cell_value
-    elif isinstance(cell_value, np.ndarray):
-        # This is the optimized format Pandas creates.
-        # Convert the NumPy array back into a list of its rows.
-        list_of_vectors = list(cell_value)
-    else:
-        # If it's another type, it's invalid.
-        print(f"Invalid type found in embedding column: {type(cell_value)}")
-        return None
-
-    if not list_of_vectors:
-        return None
-
-    valid_embeddings = []
-    for emb in list_of_vectors:
-        if emb is None:
-            print("Embedding is None. Skipping.")
-            continue
-            
-        if isinstance(emb, list):
-            print(f"Embedding is a list. Converting to NumPy array.")
-            emb = np.array(emb, dtype=np.float32)
-        
-        if isinstance(emb, np.ndarray) and len(emb.shape) == 1 and emb.shape[0] == original_dim:
-            print(f"Embedding is a NumPy array and has the correct dimension. Adding to valid embeddings.")
-            valid_embeddings.append(emb)
-        else:
-            shape = emb.shape if hasattr(emb, 'shape') else 'N/A'
-            print(f"Skipping an invalid embedding with shape: {shape}")
-
-    return valid_embeddings if valid_embeddings else None
-
-def main():
-    """Main function to read and debug Parquet files from GCS."""
-
     # --- Configuration ---
-    GCS_BUCKET_NAME = "bl-repo-corpus-public"
-    GCS_PARQUET_FOLDER_PATH = "embeddings_data/akash-qwen-checkpoints/20250828-002628"
+    RAW_SCHEMA = "raw_stg"  # Manually set your schema
+    AGGREGATED_TABLE = "stg_repo_embeddings_aggregated"
+    full_aggregated_table = f"{RAW_SCHEMA}.{AGGREGATED_TABLE}"
+
     ORIGINAL_DIM = 2560
-    PARQUET_PROCESSING_CHUNK_SIZE = 1000
+    REDUCED_DIM = 2000
+    PCA_TRAINING_SAMPLE_SIZE = 10000  
+    PCA_BATCH_SIZE = 512             # The batch size for partial_fit
 
-    # --- Initialize GCS Client ---
-    storage_client = storage.Client()
-    bucket = storage_client.bucket(GCS_BUCKET_NAME)
-    gcs_fs = gcsfs.GCSFileSystem()
-
-    all_processed_chunks = []
+    # --- Database Connection ---
+    db_url = os.getenv("DATABASE_URL")
+    if not db_url:
+        logging.error("DATABASE_URL environment variable not set.")
+        raise ValueError("DATABASE_URL must be set for the script to run.")
+    
     try:
-        # 1. List Parquet files from GCS
-        print(f"Listing files from gs://{GCS_BUCKET_NAME}/{GCS_PARQUET_FOLDER_PATH}...")
-        parquet_blobs = list(bucket.list_blobs(prefix=GCS_PARQUET_FOLDER_PATH))
-        parquet_blobs = [b for b in parquet_blobs if b.name.endswith('.parquet')]
+        engine = create_engine(db_url)
+        logging.info("Successfully connected to the database.")
+    except Exception as e:
+        logging.error(f"Failed to connect to the database: {e}")
+        return
 
-        if not parquet_blobs:
-            print("No Parquet files found in GCS path. Exiting.")
+    # 1. Fetch Sample Data from the Staging Table
+    logging.info(f"Fetching {PCA_TRAINING_SAMPLE_SIZE} records from {full_aggregated_table}...")
+    try:
+        with engine.connect() as conn:
+            df_sample = pd.read_sql(
+                text(f"SELECT corpus_embedding FROM {full_aggregated_table} LIMIT {PCA_TRAINING_SAMPLE_SIZE}"),
+                conn
+            )
+        
+        if df_sample.empty:
+            logging.error("No data returned from the database. Cannot test PCA.")
             return
-
-        print(f"Found {len(parquet_blobs)} Parquet files. Starting processing...")
-
-        # 2. Process each Parquet file
-        # just sample the first file
-        for i, blob in enumerate(parquet_blobs[:1]):
-            gcs_file_path = f"gs://{GCS_BUCKET_NAME}/{blob.name}"
-            
-            try:
-                parquet_file = pq.ParquetFile(gcs_file_path, filesystem=gcs_fs)
-
-                # print parquet file meta data and schema
-                print(f"Parquet file metadata: {parquet_file.metadata}")
-                print(f"Parquet file schema: {parquet_file.schema}")
-                
-                for batch_num, record_batch in enumerate(parquet_file.iter_batches(batch_size=PARQUET_PROCESSING_CHUNK_SIZE)):
-                    
-                    df_chunk = record_batch.to_pandas()
-                    if df_chunk.empty: 
-                        print(f"to_pandas() operation on parquet record_batch resulted in an empty dataframe for batch {batch_num} in file {i+1}. Skipping.")
-                        continue
-
-                    # force print the complete output of the first row in the dataframe
-                    print(f"df_chunk has {len(df_chunk)} rows")
-                    print(f"Complete view of dataframe row 1: {df_chunk.iloc[0]}")
-                    
-                    # Process embeddings
-                    print(f"Sanitizing embeddings for batch {batch_num} in file {i+1}")
-                    df_chunk['corpus_embedding'] = df_chunk['corpus_embedding'].apply(
-                        lambda lst: sanitize_embedding_list(lst, ORIGINAL_DIM)
-                    )
-                    print(f"Dropping rows where the embedding list is now empty or None for batch {batch_num} in file {i+1}")
-                    df_chunk.dropna(subset=['corpus_embedding'], inplace=True)
-
-                    if df_chunk.empty:
-                        print(f"The aggregated dataframe for batch {batch_num} in file {i+1} has no records. Skipping.")
-                        continue
-
-                    print(f"Applying numpy average to the clean list for batch {batch_num} in file {i+1}")
-                    df_chunk['corpus_embedding'] = df_chunk['corpus_embedding'].apply(
-                        lambda valid_list: np.mean(valid_list, axis=0)
-                    )
-                    
-                    # --- DEBUGGING OUTPUT ---
-                    print(f"\n--- DEBUG: Processed Batch {batch_num} from File {i+1} ---")
-                    print(f"Shape of this processed chunk: {df_chunk.shape}")
-                    print(df_chunk.head())
-                    print("-" * 50)
-                    
-                    del df_chunk; gc.collect()
-            
-            except Exception as e:
-                print(f"Error processing file {blob.name}: {e}")
-                # We continue to the next file in case of an error with one
-                continue
-
-        # 3. Final Summary
-        if not all_processed_chunks:
-            print("No data was processed.")
-            return
-
+        
+        logging.info(f"Successfully fetched {len(df_sample)} records.")
 
     except Exception as e:
-        print(f"A critical error occurred: {e}")
-        raise
+        logging.error(f"Failed to fetch data from the database: {e}")
+        return
+
+    # 2. Prepare the Training Data Array
+    logging.info("Preparing data for PCA training by stacking vectors...")
+    try:
+        # Using .tolist() first is a robust way to convert a Series of arrays
+        training_data = np.array(df_sample['corpus_embedding'].tolist(), dtype=np.float32)
+        logging.info(f"Created training data array with shape: {training_data.shape}")
+        
+        # Verify that the number of features matches what you expect
+        if training_data.shape[1] != ORIGINAL_DIM:
+            logging.error(
+                f"Data feature mismatch! Expected {ORIGINAL_DIM} but got {training_data.shape[1]}"
+            )
+            return
+
+    except Exception as e:
+        logging.error(f"Failed to create NumPy array from DataFrame: {e}")
+        return
+
+    # 3. Initialize and Fit the IncrementalPCA Model
+    logging.info(
+        f"Initializing IncrementalPCA to reduce from {ORIGINAL_DIM} to {REDUCED_DIM} dimensions."
+    )
+    pca = IncrementalPCA(n_components=REDUCED_DIM, batch_size=PCA_BATCH_SIZE)
+
+    logging.info(f"Fitting model in batches of {PCA_BATCH_SIZE} using partial_fit...")
+    try:
+        # This is the explicit loop that avoids the .fit() bug
+        for i in range(0, training_data.shape[0], PCA_BATCH_SIZE):
+            batch = training_data[i:i + PCA_BATCH_SIZE]
+            pca.partial_fit(batch)
+            if (i // PCA_BATCH_SIZE) % 10 == 0: # Log progress every 10 batches
+                 logging.info(f"  Processed batch starting at index {i}...")
+
+        logging.info("Successfully completed partial_fit loop without errors.")
+
+    except Exception as e:
+        logging.error(f"An error occurred during the partial_fit loop: {e}")
+        return
+
+    # 4. Final Verification
+    logging.info(f"PCA model fitting complete.")
+    logging.info(f"Number of components seen by PCA model: {pca.n_components_}")
+    logging.info(f"Number of features seen by PCA model: {pca.n_features_in_}")
+    logging.info(f"Total samples seen by PCA model: {pca.n_samples_seen_}")
+    print("\n✅ PCA partial_fit test completed successfully!")
+
 
 if __name__ == "__main__":
-    main()
+    test_pca_partial_fit()

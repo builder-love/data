@@ -780,7 +780,7 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         PCA_TRAINING_SAMPLE_SIZE = 75000
         PROCESSING_BATCH_SIZE = 10000
         PARQUET_PROCESSING_CHUNK_SIZE = 100
-        PCA_BATCH_SIZE = 512
+        PCA_BATCH_SIZE = 2500
 
         def sanitize_embedding_list(cell_value, original_dim):
             """
@@ -1044,15 +1044,16 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
             context.log.error(f"A critical error occurred: {e}")
             raise
         finally:
+            context.log.info("End of asset execution")
             # 7. CLEANUP: Use a final short-lived connection
-            with cloud_sql_engine.connect() as conn:
-                try:
-                    with conn.begin():
-                        context.log.info("Cleaning up temporary staging tables...")
-                        conn.execute(text(f"DROP TABLE IF EXISTS {full_aggregated_table};"))
-                except Exception as cleanup_e:
-                    context.log.error(f"Failed to drop staging tables: {cleanup_e}")
-            log_memory_usage(context, "End of asset execution after cleanup")
+            # with cloud_sql_engine.connect() as conn:
+            #     try:
+            #         with conn.begin():
+            #             context.log.info("Cleaning up temporary staging tables...")
+            #             conn.execute(text(f"DROP TABLE IF EXISTS {full_aggregated_table};"))
+            #     except Exception as cleanup_e:
+            #         context.log.error(f"Failed to drop staging tables: {cleanup_e}")
+            # log_memory_usage(context, "End of asset execution after cleanup")
 
         return dg.MaterializeResult(
             metadata={
