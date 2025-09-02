@@ -956,13 +956,6 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                     gc.collect()
                     log_memory_usage(context, f"After processing file {i+1}")
 
-            # force cleanup of gcs and parquet_blobs objects
-            context.log.info("Finished processing all GCS files. Cleaning up GCS objects...")
-            del gcs_fs
-            del parquet_blobs
-            gc.collect()
-            log_memory_usage(context, "After cleaning up GCS objects")
-
             # 4. PCA TRAINING: Train a global PCA model on a sample of data
             context.log.info("Combining collected samples to create PCA training set...")
             training_sample_series = pd.concat(pca_samples, ignore_index=True)
@@ -1018,13 +1011,16 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
                         break
 
                     # The VECTOR type is read as a string; convert it back to a numeric array.
+                    context.log.info("Converting corpus_embedding from string to numeric array...")
                     df_batch['corpus_embedding'] = df_batch['corpus_embedding'].apply(
                         lambda s: np.array(ast.literal_eval(s), dtype=np.float32)
                     )
                     
+                    context.log.info("Transforming embeddings...")
                     original_vectors = np.vstack(df_batch['corpus_embedding'].values)
                     reduced_vectors = pca.transform(original_vectors)
                     
+                    context.log.info("Writing transformed embeddings to the database...")
                     df_final = pd.DataFrame({
                         'repo': df_batch['repo'],
                         'corpus_embedding': list(reduced_vectors),
@@ -1052,14 +1048,14 @@ def create_project_repos_corpus_embeddings_asset(env_prefix: str):
         finally:
             context.log.info("End of asset execution")
             # 7. CLEANUP: Use a final short-lived connection
-            # with cloud_sql_engine.connect() as conn:
-            #     try:
-            #         with conn.begin():
-            #             context.log.info("Cleaning up temporary staging tables...")
-            #             conn.execute(text(f"DROP TABLE IF EXISTS {full_aggregated_table};"))
-            #     except Exception as cleanup_e:
-            #         context.log.error(f"Failed to drop staging tables: {cleanup_e}")
-            # log_memory_usage(context, "End of asset execution after cleanup")
+            with cloud_sql_engine.connect() as conn:
+                try:
+                    with conn.begin():
+                        context.log.info("Cleaning up temporary staging tables...")
+                        conn.execute(text(f"DROP TABLE IF EXISTS {full_aggregated_table};"))
+                except Exception as cleanup_e:
+                    context.log.error(f"Failed to drop staging tables: {cleanup_e}")
+            log_memory_usage(context, "End of asset execution after cleanup")
 
         return dg.MaterializeResult(
             metadata={
