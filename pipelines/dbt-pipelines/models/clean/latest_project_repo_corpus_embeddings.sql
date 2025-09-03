@@ -11,5 +11,10 @@
     ]
 ) }}
 
-SELECT *
-FROM {{ source('raw', 'latest_project_repo_corpus_embeddings') }} 
+SELECT 
+    embeddings.*, 
+    projects.project_title
+
+FROM {{ source('raw', 'latest_project_repo_corpus_embeddings') }} embeddings 
+LEFT JOIN {{ ref('latest_project_repos')}} projects
+    on embeddings.repo = projects.repo

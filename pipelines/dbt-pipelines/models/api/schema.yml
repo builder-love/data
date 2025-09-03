@@ -1070,6 +1070,7 @@ models:
           - dbt_expectations.expect_column_values_to_be_of_type:
               column_type: text
       - name: corpus_embedding
+      - name: project_title
     tests:
       - unique_combination_of_columns:
           column_names: [repo, data_timestamp]
