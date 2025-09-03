@@ -3,7 +3,7 @@
 {{ 
     config(
         materialized='view',
-        unique_key='repo || data_timestamp',
+        unique_key='project_title || repo || data_timestamp',
         tags=['api_data']
     ) 
 }} 

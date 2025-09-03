@@ -2446,7 +2446,7 @@ models:
       - name: project_title
     tests:
       - unique_combination_of_columns:
-          column_names: [repo, data_timestamp]
+          column_names: [project_title, repo, data_timestamp]
       - check_row_count_stability:
           lower_threshold_factor: 0.50 # New count should not be less than 50% of old count
           upper_threshold_factor: 1.50 # New count should not be more than 150% of old count

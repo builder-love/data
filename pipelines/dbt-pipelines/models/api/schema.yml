@@ -1073,4 +1073,4 @@ models:
       - name: project_title
     tests:
       - unique_combination_of_columns:
-          column_names: [repo, data_timestamp]
+          column_names: [project_title, repo, data_timestamp]
