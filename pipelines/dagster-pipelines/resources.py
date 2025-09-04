@@ -31,8 +31,7 @@ DBT_PROJECT_DIR = "./dbt-pipelines"
 DBT_PROFILES_DIR = DBT_PROJECT_DIR # Assuming profiles.yml is in the dbt project directory
 
 # dbt resource for STAGING environment
-# This will use the 'stg' target from your profiles.yml by default if 'target' is not specified,
-# or you can explicitly set it.
+# This will use the 'stg' target from your profiles.yml by default if 'target' is not specified, or you can explicitly set it.
 dbt_stg_resource = DbtCliResource(
     project_dir=os.fspath(DBT_PROJECT_DIR),
     profiles_dir=os.fspath(DBT_PROFILES_DIR),
