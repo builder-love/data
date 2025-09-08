@@ -39,6 +39,14 @@ RUN mkdir -p /opt/dagster/dagster_home
 WORKDIR /opt/dagster/app/dbt-pipelines
 
 # Use the build arguments to compile dbt.
+# FIRST, clean any old artifacts to ensure a fresh build and break the cache.
+RUN dbt clean
+
+# NEXT, install dependencies. This can still be cached.
+RUN set -a && . ../.env && set +a && \
+    dbt deps 
+
+# Use the build arguments to compile dbt.
 # We set them as environment variables for this single RUN command.
 RUN set -a && . ../.env && set +a && \
     dbt deps 
