@@ -64,6 +64,10 @@ RUN set -a && . ../.env && set +a && \
         dbt compile --threads 16 --target stg --target-path "target/stg"; \
     fi
 
+# === DEBUG STEP 1: VERIFY FILES EXIST IN BUILDER ===
+RUN echo "--- Listing contents of target directory in builder stage ---" && \
+    ls -R /opt/dagster/app/dbt-pipelines/target
+
 # After dbt compile is finished, remove the .env file so it's not copied to the final image.
 RUN rm ../.env
 
@@ -103,6 +107,10 @@ COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/pytho
 COPY --from=builder --chown=appuser:app /opt/dagster /opt/dagster
 # explicitly copy the generated dbt artifacts on top of the source code
 COPY --from=builder --chown=appuser:app /opt/dagster/app/dbt-pipelines/target /opt/dagster/app/dbt-pipelines/target
+
+# === DEBUG STEP 2: VERIFY FILES WERE COPIED TO FINAL IMAGE ===
+RUN echo "--- Listing contents of target directory in final stage ---" && \
+    ls -R /opt/dagster/app/dbt-pipelines/target
 
 EXPOSE 3000
 
