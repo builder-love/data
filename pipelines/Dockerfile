@@ -109,7 +109,6 @@ COPY --from=builder --chown=appuser:app /opt/dagster /opt/dagster
 COPY --from=builder --chown=appuser:app /opt/dagster/app/dbt-pipelines/target /opt/dagster/app/dbt-pipelines/target
 
 # === DEBUG STEP 2: VERIFY FILES WERE COPIED TO FINAL IMAGE ===
-# debug step 2
 RUN echo "--- Listing contents of target directory in final stage ---" && \
     ls -R /opt/dagster/app/dbt-pipelines/target
 
