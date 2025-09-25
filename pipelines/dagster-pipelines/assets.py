@@ -4928,13 +4928,24 @@ def create_github_project_repos_contributors_asset(env_prefix: str):
             with cloud_sql_engine.connect() as conn:
                 query = text(f"SELECT repo FROM {clean_schema}.latest_active_distinct_project_repos WHERE is_active = true AND repo_source = 'github'")
                 github_repos = [row[0] for row in conn.execute(query)]
-            
+
+            # get the total number of repos to process for logs
+            total_repos = len(github_repos)
+            context.log.info(f"Found {total_repos} GitHub repos to process.")
+
             etags_from_db = _get_etags_from_db(context, raw_schema, etag_table_name, github_repos)
             current_batch, etags_to_update = [], {}
             total_rows_inserted, repos_processed, repos_updated, repos_skipped_304, repos_failed = 0, 0, 0, 0, 0
 
+            LOG_INTERVAL_REPOS = 1000
+
             for i, repo_url in enumerate(github_repos):
                 repos_processed += 1
+
+                if repos_processed % LOG_INTERVAL_REPOS == 0:
+                    percentage_complete = (repos_processed / total_repos) * 100
+                    context.log.info(f"Progress: {repos_processed}/{total_repos} repos processed ({percentage_complete:.2f}%).")
+
                 try:
                     owner, repo_name = urlparse(repo_url).path.strip("/").split("/")
                     existing_etag = etags_from_db.get(repo_url)
