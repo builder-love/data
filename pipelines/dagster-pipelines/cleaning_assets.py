@@ -394,7 +394,7 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                                 contributor_user_view_type,
                                 contributor_name,
                                 contributor_email,
-                                data_timestamp
+                                data_timestamp,
                             1 as priority FROM {raw_schema}.{temp_new_contributors_table}
                             {'UNION ALL' if final_contributors_exists else ''}
                             {'SELECT *, 2 as priority FROM ' + raw_schema + '.' + final_table_name_contributors if final_contributors_exists else ''}
