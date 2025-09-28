@@ -9,6 +9,7 @@ from dagster import AssetKey, op, Out, Output, In, Nothing, AssetMaterialization
 from .resources import dbt_stg_resource, dbt_prod_resource
 import gzip
 from pathlib import Path
+import inspect
 
 # Define a simple, empty Config class for assets that don't need specific config keys.
 class EmptyConfig(Config):
