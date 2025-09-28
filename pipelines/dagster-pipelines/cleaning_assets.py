@@ -372,7 +372,30 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                     combine_sql_contributors = f"""
                         CREATE TABLE {raw_schema}.{staging_table_name_contributors} AS
                         WITH combined_data AS (
-                            SELECT *, 1 as priority FROM {raw_schema}.{temp_new_contributors_table}
+                            SELECT 
+                                contributor_unique_id_builder_love,
+                                contributor_login,
+                                contributor_id,
+                                contributor_node_id,
+                                contributor_avatar_url,
+                                contributor_gravatar_id,
+                                contributor_url,
+                                contributor_html_url,
+                                contributor_followers_url,
+                                contributor_following_url,
+                                contributor_gists_url,
+                                contributor_starred_url,
+                                contributor_subscriptions_url,
+                                contributor_organizations_url,
+                                contributor_repos_url,
+                                contributor_events_url,
+                                contributor_received_events_url,
+                                contributor_type,
+                                contributor_user_view_type,
+                                contributor_name,
+                                contributor_email,
+                                data_timestamp
+                            1 as priority FROM {raw_schema}.{temp_new_contributors_table}
                             {'UNION ALL' if final_contributors_exists else ''}
                             {'SELECT *, 2 as priority FROM ' + raw_schema + '.' + final_table_name_contributors if final_contributors_exists else ''}
                         ),
@@ -381,12 +404,28 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                             FROM combined_data
                         )
                         SELECT 
-                            contributor_unique_id_builder_love, contributor_login, contributor_id, contributor_node_id, 
-                            contributor_avatar_url, contributor_gravatar_id, contributor_url, contributor_html_url, 
-                            contributor_followers_url, contributor_following_url, contributor_gists_url, 
-                            contributor_starred_url, contributor_subscriptions_url, contributor_organizations_url, 
-                            contributor_repos_url, contributor_events_url, contributor_received_events_url, 
-                            contributor_type, contributor_user_view_type, contributor_name, contributor_email, data_timestamp
+                            contributor_unique_id_builder_love,
+                            contributor_login,
+                            contributor_id,
+                            contributor_node_id,
+                            contributor_avatar_url,
+                            contributor_gravatar_id,
+                            contributor_url,
+                            contributor_html_url,
+                            contributor_followers_url,
+                            contributor_following_url,
+                            contributor_gists_url,
+                            contributor_starred_url,
+                            contributor_subscriptions_url,
+                            contributor_organizations_url,
+                            contributor_repos_url,
+                            contributor_events_url,
+                            contributor_received_events_url,
+                            contributor_type,
+                            contributor_user_view_type,
+                            contributor_name,
+                            contributor_email,
+                            data_timestamp
                         FROM ranked_data WHERE rn = 1;
                     """
                     conn.execute(text(combine_sql_contributors))
