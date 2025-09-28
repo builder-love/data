@@ -254,7 +254,7 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                     conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{staging_table_name_contributors} CASCADE;"))
                     conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{staging_table_name_project_repos_contributors} CASCADE;"))
                     # conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{temp_staging_all_contributors} CASCADE;"))
-                    conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{temp_staging_all_project_repos_contributors} CASCADE;"))
+                    # conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{temp_staging_all_project_repos_contributors} CASCADE;"))
 
                     # --- Generator for Streaming Data ---
                     def generate_contributor_rows(db_connection):
