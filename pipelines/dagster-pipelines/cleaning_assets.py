@@ -9,6 +9,7 @@ from dagster import AssetKey, op, Out, Output, In, Nothing, AssetMaterialization
 from .resources import dbt_stg_resource, dbt_prod_resource
 import gzip
 from pathlib import Path
+from sqlalchemy import inspect
 
 # Define a simple, empty Config class for assets that don't need specific config keys.
 class EmptyConfig(Config):
@@ -116,35 +117,33 @@ def run_validations(context,
                     new_contributors_count: int, 
                     new_project_repos_contributors_count: int, 
                     engine, 
-                    clean_schema: str,
+                    # This parameter now receives the schema where the target table lives (raw)
+                    target_schema: str,
                     final_table_name_contributors: str = "latest_contributors", 
                     final_table_name_project_repos_contributors: str = "latest_project_repos_contributors") -> bool:
     """Runs validation checks using record counts against the existing final table."""
     
     context.log.info("-------------************** Running validations on record counts **************-------------")
 
-    # empty data and NULL column checks are implicitly handled by the streaming logic.
-    # If the process generates 0 records, it will be caught here.
-
     existing_record_count_val_contributors = 0
     existing_record_count_val_project_repos_contributors = 0
 
     try:
-        context.log.info(f"Checking existing data in {clean_schema}.{final_table_name_contributors} and {clean_schema}.{final_table_name_project_repos_contributors}...")
+        context.log.info(f"Checking existing data in {target_schema}.{final_table_name_contributors} and {target_schema}.{final_table_name_project_repos_contributors}...")
         with engine.connect() as conn:
             # Check for contributors table
-            if conn.dialect.has_table(conn, final_table_name_contributors, schema=clean_schema):
-                result_count = conn.execute(text(f"SELECT COUNT(*) FROM {clean_schema}.{final_table_name_contributors}"))
+            if conn.dialect.has_table(conn, final_table_name_contributors, schema=target_schema):
+                result_count = conn.execute(text(f"SELECT COUNT(*) FROM {target_schema}.{final_table_name_contributors}"))
                 existing_record_count_val_contributors = result_count.scalar()
             else:
-                context.log.warning(f"Final table {clean_schema}.{final_table_name_contributors} does not exist. Assuming 0 records.")
+                context.log.warning(f"Final table {target_schema}.{final_table_name_contributors} does not exist. Assuming 0 records.")
 
             # Check for project_repos_contributors table
-            if conn.dialect.has_table(conn, final_table_name_project_repos_contributors, schema=clean_schema):
-                result_count = conn.execute(text(f"SELECT COUNT(*) FROM {clean_schema}.{final_table_name_project_repos_contributors}"))
+            if conn.dialect.has_table(conn, final_table_name_project_repos_contributors, schema=target_schema):
+                result_count = conn.execute(text(f"SELECT COUNT(*) FROM {target_schema}.{final_table_name_project_repos_contributors}"))
                 existing_record_count_val_project_repos_contributors = result_count.scalar()
             else:
-                context.log.warning(f"Final table {clean_schema}.{final_table_name_project_repos_contributors} does not exist. Assuming 0 records.")
+                context.log.warning(f"Final table {target_schema}.{final_table_name_project_repos_contributors} does not exist. Assuming 0 records.")
     except Exception as e:
         context.log.error(f"Error accessing existing data: {e}", exc_info=True)
         raise ValueError(f"Validation failed: Error accessing existing data.")
@@ -210,8 +209,10 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
         old_table_name_project_repos_contributors = "latest_project_repos_contributors_old"
         
         # A temporary table to hold all contributor records before deduplication
-        temp_staging_all_contributors = "latest_contributors_all_temp"
-        temp_staging_all_project_repos_contributors = "latest_project_repos_contributors_all_temp"
+        # temp_staging_all_contributors = "latest_contributors_all_temp"
+        # temp_staging_all_project_repos_contributors = "latest_project_repos_contributors_all_temp"
+        # A temporary table to hold only the NEWLY processed contributor records
+        temp_new_contributors_table = "temp_newly_processed_contributors"
 
         # tell the user what environment they are running in
         context.log.info(f"------************** Process is running in {env_config['env']} environment. *****************---------")
@@ -246,15 +247,16 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                     context.log.info("Date validation passed. Proceeding with data extraction...")
 
                     # set the data_timestamp up front so it doesn't change with batching
-                    data_timestamp = pd.Timestamp.now()
+                    # data_timestamp = pd.Timestamp.now()
+                    data_timestamp = max_source_ts_aware
 
                     # --- Setup Staging Tables ---
                     context.log.info("Dropping old staging tables if they exist...")
                 
                     conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{staging_table_name_contributors} CASCADE;"))
                     conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{staging_table_name_project_repos_contributors} CASCADE;"))
-                    conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{temp_staging_all_contributors} CASCADE;"))
-                    conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{temp_staging_all_project_repos_contributors} CASCADE;"))
+                    # conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{temp_staging_all_contributors} CASCADE;"))
+                    # conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{temp_staging_all_project_repos_contributors} CASCADE;"))
 
                     # --- Generator for Streaming Data ---
                     def generate_contributor_rows(db_connection):
@@ -332,82 +334,134 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                                 context.log.warning(f"Skipping repo '{repo}' due to processing error: {e}")
                                 continue
 
-                    # --- Process and Load Data in Chunks ---
-                    context.log.info("Processing data in chunks and loading to staging tables...")
-                    chunk_size = 10000  # Number of contributor records per chunk
+                    # --- Process and Load NEW Data into a Temporary Table in RAW schema ---
+                    context.log.info(f"Processing new data and loading to temporary table '{raw_schema}.{temp_new_contributors_table}'...")
+                    chunk_size = 10000
                     data_chunk = []
 
-                    # Define the columns for each target table once
-                    latest_project_repos_contributors_columns = ['contributor_unique_id_builder_love', 'repo', 'contributor_contributions', 'data_timestamp']
-                    latest_contributors_columns = ['contributor_unique_id_builder_love', 'contributor_login', 'contributor_id', 'contributor_node_id', 'contributor_avatar_url', 'contributor_gravatar_id', 'contributor_url', 'contributor_html_url', 'contributor_followers_url', 'contributor_following_url', 'contributor_gists_url', 'contributor_starred_url', 'contributor_subscriptions_url', 'contributor_organizations_url', 'contributor_repos_url', 'contributor_events_url', 'contributor_received_events_url', 'contributor_type', 'contributor_user_view_type', 'contributor_name', 'contributor_email', 'data_timestamp']
+                    temp_table_columns = [
+                        'repo', 'contributor_login', 'contributor_id', 'contributor_node_id', 
+                        'contributor_avatar_url', 'contributor_gravatar_id', 'contributor_url', 
+                        'contributor_html_url', 'contributor_followers_url', 'contributor_following_url', 
+                        'contributor_gists_url', 'contributor_starred_url', 'contributor_subscriptions_url', 
+                        'contributor_organizations_url', 'contributor_repos_url', 'contributor_events_url', 
+                        'contributor_received_events_url', 'contributor_type', 'contributor_user_view_type', 
+                        'contributor_contributions', 'contributor_name', 'contributor_email', 
+                        'contributor_unique_id_builder_love', 'data_timestamp'
+                    ]
 
                     for row_dict in generate_contributor_rows(conn):
                         data_chunk.append(row_dict)
                         if len(data_chunk) >= chunk_size:
-                            chunk_df = pd.DataFrame(data_chunk)
+                            chunk_df = pd.DataFrame(data_chunk).reindex(columns=temp_table_columns)
                             chunk_df['data_timestamp'] = data_timestamp
-                            
-                            # Write to project_repos_contributors staging table
-                            chunk_df[latest_project_repos_contributors_columns].to_sql(temp_staging_all_project_repos_contributors, conn, schema=raw_schema, if_exists='append', index=False)
-                            
-                            # Write to temporary table that allows duplicates
-                            chunk_df[latest_contributors_columns].to_sql(temp_staging_all_contributors, conn, schema=raw_schema, if_exists='append', index=False)
+                            chunk_df.to_sql(temp_new_contributors_table, conn, schema=raw_schema, if_exists='append', index=False)
+                            data_chunk = []
 
-                            data_chunk = [] # Reset chunk
-
-                    # Process the final, smaller chunk
                     if data_chunk:
-                        chunk_df = pd.DataFrame(data_chunk)
+                        chunk_df = pd.DataFrame(data_chunk).reindex(columns=temp_table_columns)
                         chunk_df['data_timestamp'] = data_timestamp
-                        chunk_df[latest_project_repos_contributors_columns].to_sql(temp_staging_all_project_repos_contributors, conn, schema=raw_schema, if_exists='append', index=False)
-                        chunk_df[latest_contributors_columns].to_sql(temp_staging_all_contributors, conn, schema=raw_schema, if_exists='append', index=False)
-                    
-                    context.log.info("Finished streaming data to intermediate tables.")
+                        chunk_df.to_sql(temp_new_contributors_table, conn, schema=raw_schema, if_exists='append', index=False)
 
-                    # --- Offload Duplicate Removal to SQL ---
-                    context.log.info("Removing duplicates from both tables data using the postgres DB...")
+                    # --- Combine New and Existing Data from RAW schema ---
+                    context.log.info("Combining new and existing data from RAW schema into final staging tables...")
+                    inspector = inspect(conn)
+                    final_contributors_exists = inspector.has_table(final_table_name_contributors, schema=raw_schema)
+                    final_project_repos_exists = inspector.has_table(final_table_name_project_repos_contributors, schema=raw_schema)
 
-                    # Using DISTINCT ON is highly efficient in PostgreSQL
-                    deduplication_query_contributors = text(f"""
+                    # For latest_contributors
+                    combine_sql_contributors = f"""
                         CREATE TABLE {raw_schema}.{staging_table_name_contributors} AS
-                        SELECT DISTINCT ON (contributor_unique_id_builder_love) *
-                        FROM {raw_schema}.{temp_staging_all_contributors};
-                    """)
-                    conn.execute(deduplication_query_contributors)
-                    # Clean up the temporary table
-                    conn.execute(text(f"DROP TABLE {raw_schema}.{temp_staging_all_contributors};"))
+                        WITH combined_data AS (
+                            SELECT 
+                                contributor_unique_id_builder_love,
+                                contributor_login,
+                                contributor_id,
+                                contributor_node_id,
+                                contributor_avatar_url,
+                                contributor_gravatar_id,
+                                contributor_url,
+                                contributor_html_url,
+                                contributor_followers_url,
+                                contributor_following_url,
+                                contributor_gists_url,
+                                contributor_starred_url,
+                                contributor_subscriptions_url,
+                                contributor_organizations_url,
+                                contributor_repos_url,
+                                contributor_events_url,
+                                contributor_received_events_url,
+                                contributor_type,
+                                contributor_user_view_type,
+                                contributor_name,
+                                contributor_email,
+                                data_timestamp,
+                            1 as priority FROM {raw_schema}.{temp_new_contributors_table}
+                            {'UNION ALL' if final_contributors_exists else ''}
+                            {'SELECT *, 2 as priority FROM ' + raw_schema + '.' + final_table_name_contributors if final_contributors_exists else ''}
+                        ),
+                        ranked_data AS (
+                            SELECT *, ROW_NUMBER() OVER(PARTITION BY contributor_unique_id_builder_love ORDER BY priority ASC, data_timestamp DESC) as rn
+                            FROM combined_data
+                        )
+                        SELECT 
+                            contributor_unique_id_builder_love,
+                            contributor_login,
+                            contributor_id,
+                            contributor_node_id,
+                            contributor_avatar_url,
+                            contributor_gravatar_id,
+                            contributor_url,
+                            contributor_html_url,
+                            contributor_followers_url,
+                            contributor_following_url,
+                            contributor_gists_url,
+                            contributor_starred_url,
+                            contributor_subscriptions_url,
+                            contributor_organizations_url,
+                            contributor_repos_url,
+                            contributor_events_url,
+                            contributor_received_events_url,
+                            contributor_type,
+                            contributor_user_view_type,
+                            contributor_name,
+                            contributor_email,
+                            data_timestamp
+                        FROM ranked_data WHERE rn = 1;
+                    """
+                    conn.execute(text(combine_sql_contributors))
 
-                    deduplication_query_project_repos = text(f"""
+                    # For latest_project_repos_contributors
+                    combine_sql_project_repos = f"""
                         CREATE TABLE {raw_schema}.{staging_table_name_project_repos_contributors} AS
-                        SELECT DISTINCT ON (contributor_unique_id_builder_love, repo, contributor_contributions, data_timestamp) *
-                        FROM {raw_schema}.{temp_staging_all_project_repos_contributors};
-                    """)
-                    conn.execute(deduplication_query_project_repos)
-                    # Clean up the temporary table
-                    conn.execute(text(f"DROP TABLE {raw_schema}.{temp_staging_all_project_repos_contributors};"))
+                        WITH combined_data AS (
+                            SELECT contributor_unique_id_builder_love, repo, contributor_contributions, data_timestamp, 1 as priority
+                            FROM {raw_schema}.{temp_new_contributors_table}
+                            {'UNION ALL' if final_project_repos_exists else ''}
+                            {'SELECT contributor_unique_id_builder_love, repo, contributor_contributions, data_timestamp, 2 as priority FROM ' + raw_schema + '.' + final_table_name_project_repos_contributors if final_project_repos_exists else ''}
+                        ),
+                        ranked_data AS (
+                            SELECT *, ROW_NUMBER() OVER(PARTITION BY contributor_unique_id_builder_love, repo ORDER BY priority ASC, data_timestamp DESC) as rn
+                            FROM combined_data
+                        )
+                        SELECT contributor_unique_id_builder_love, repo, contributor_contributions, data_timestamp
+                        FROM ranked_data WHERE rn = 1;
+                    """
+                    conn.execute(text(combine_sql_project_repos))
 
-                    context.log.info("Duplicate removal complete.")
+                    conn.execute(text(f"DROP TABLE {raw_schema}.{temp_new_contributors_table};"))
 
-                # --- Validate Using Staging Table Counts ---
+                # --- Validate Using Staging Table Counts against existing clean schema table ---
                 new_count_contributors = conn.execute(text(f"SELECT COUNT(*) FROM {raw_schema}.{staging_table_name_contributors}")).scalar()
                 new_count_project_repos = conn.execute(text(f"SELECT COUNT(*) FROM {raw_schema}.{staging_table_name_project_repos_contributors}")).scalar()
                 
-                if not new_count_contributors or not new_count_project_repos:
-                    context.log.warning(f"Staging process resulted in zero records. new count contributors: {new_count_contributors}, new count project repos: {new_count_project_repos}")
-                    raise ValueError("Staging process resulted in zero records.")
-
-                validations_passed = run_validations(
+                run_validations(
                     context=context,
                     new_contributors_count=new_count_contributors,
                     new_project_repos_contributors_count=new_count_project_repos,
                     engine=cloud_sql_engine,
-                    clean_schema=clean_schema # clean_schema is where final tables are
+                    target_schema=clean_schema # Validate against the tables in the clean schema
                 )
-
-                if not validations_passed:
-                    # The run_validations function will raise an error if it fails
-                    context.log.warning("Validation checks failed. Halting asset materialization.")
-                    return # Or handle as needed
 
                 context.log.info("All validations passed. Proceeding with atomic swap...")
 
