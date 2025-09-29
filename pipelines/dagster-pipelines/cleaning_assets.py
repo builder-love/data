@@ -208,9 +208,6 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
         final_table_name_project_repos_contributors = "latest_project_repos_contributors"
         old_table_name_project_repos_contributors = "latest_project_repos_contributors_old"
         
-        # A temporary table to hold all contributor records before deduplication
-        # temp_staging_all_contributors = "latest_contributors_all_temp"
-        # temp_staging_all_project_repos_contributors = "latest_project_repos_contributors_all_temp"
         # A temporary table to hold only the NEWLY processed contributor records
         temp_new_contributors_table = "temp_newly_processed_contributors"
 
@@ -247,7 +244,6 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                     context.log.info("Date validation passed. Proceeding with data extraction...")
 
                     # set the data_timestamp up front so it doesn't change with batching
-                    # data_timestamp = pd.Timestamp.now()
                     data_timestamp = max_source_ts_aware
 
                     # --- Setup Staging Tables ---
@@ -255,8 +251,6 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                 
                     conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{staging_table_name_contributors} CASCADE;"))
                     conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{staging_table_name_project_repos_contributors} CASCADE;"))
-                    # conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{temp_staging_all_contributors} CASCADE;"))
-                    # conn.execute(text(f"DROP TABLE IF EXISTS {raw_schema}.{temp_staging_all_project_repos_contributors} CASCADE;"))
 
                     # --- Generator for Streaming Data ---
                     def generate_contributor_rows(db_connection):
