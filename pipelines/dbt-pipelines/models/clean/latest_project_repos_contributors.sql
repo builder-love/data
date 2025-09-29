@@ -8,5 +8,11 @@
     tags=['latest_clean_data']
 ) }}
 
-SELECT *
+-- the raw schema table has multiple data_timestamp values since we are only processing new data in raw.project_repos_contributors
+-- for the clean schema table, we can use today's date as the data_timestamp
+SELECT 
+    contributor_unique_id_builder_love,
+    repo,
+    contributor_contributions,
+    {{ dbt.current_timestamp() }}::timestamp as data_timestamp
 FROM {{ source('raw', 'latest_project_repos_contributors') }} 
