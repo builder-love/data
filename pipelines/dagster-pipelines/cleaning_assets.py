@@ -247,7 +247,8 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                     context.log.info("Date validation passed. Proceeding with data extraction...")
 
                     # set the data_timestamp up front so it doesn't change with batching
-                    data_timestamp = pd.Timestamp.now()
+                    # data_timestamp = pd.Timestamp.now()
+                    data_timestamp = max_source_ts_aware
 
                     # --- Setup Staging Tables ---
                     context.log.info("Dropping old staging tables if they exist...")
@@ -450,7 +451,7 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
 
                     conn.execute(text(f"DROP TABLE {raw_schema}.{temp_new_contributors_table};"))
 
-                # --- Validate Using Staging Table Counts against existing RAW table ---
+                # --- Validate Using Staging Table Counts against existing clean schema table ---
                 new_count_contributors = conn.execute(text(f"SELECT COUNT(*) FROM {raw_schema}.{staging_table_name_contributors}")).scalar()
                 new_count_project_repos = conn.execute(text(f"SELECT COUNT(*) FROM {raw_schema}.{staging_table_name_project_repos_contributors}")).scalar()
                 
@@ -459,7 +460,7 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                     new_contributors_count=new_count_contributors,
                     new_project_repos_contributors_count=new_count_project_repos,
                     engine=cloud_sql_engine,
-                    target_schema=raw_schema # Validate against the tables in the raw schema
+                    target_schema=clean_schema # Validate against the tables in the clean schema
                 )
 
                 context.log.info("All validations passed. Proceeding with atomic swap...")
