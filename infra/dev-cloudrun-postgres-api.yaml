@@ -1,0 +1,114 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  annotations:
+    run.googleapis.com/client-name: gcloud
+    run.googleapis.com/client-version: 537.0.0
+    run.googleapis.com/ingress: all
+    run.googleapis.com/ingress-status: all
+    run.googleapis.com/operation-id: 3c7567bb-03cb-40d8-b01e-0cfad1ef6c40
+    run.googleapis.com/urls: '["https://bl-api-dev-16828062121.us-central1.run.app","https://bl-api-dev-j3kmnvk35q-uc.a.run.app"]'
+    serving.knative.dev/creator: trevor@builder.love
+    serving.knative.dev/lastModifier: 16828062121-compute@developer.gserviceaccount.com
+  creationTimestamp: '2025-05-23T17:08:01.033370Z'
+  generation: 76
+  labels:
+    cloud.googleapis.com/location: us-central1
+    commit-sha: e7478a5ee2daee371ceedb0b6d126d5d80a23dea
+    gcb-build-id: b3526761-a678-4fb7-8938-50e47e4929d0
+    gcb-trigger-id: 7c655a64-ec5b-4fa3-bd22-bd023904c79d
+    gcb-trigger-region: global
+    managed-by: gcp-cloud-build-deploy-cloud-run
+  name: bl-api-dev
+  namespace: '16828062121'
+  resourceVersion: AAY96H+I53M
+  selfLink: /apis/serving.knative.dev/v1/namespaces/16828062121/services/bl-api-dev
+  uid: 9fc6f76a-903c-4d21-9202-4df51eef3601
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/maxScale: '1'
+        run.googleapis.com/client-name: gcloud
+        run.googleapis.com/client-version: 537.0.0
+        run.googleapis.com/cloudsql-instances: data-pipelines-450611:us-central1:builder-love
+        run.googleapis.com/network-interfaces: '[{"network":"default","subnetwork":"default"}]'
+        run.googleapis.com/startup-cpu-boost: 'true'
+        run.googleapis.com/vpc-access-egress: private-ranges-only
+      labels:
+        client.knative.dev/nonce: ucwndicgsa
+        commit-sha: e7478a5ee2daee371ceedb0b6d126d5d80a23dea
+        gcb-build-id: b3526761-a678-4fb7-8938-50e47e4929d0
+        gcb-trigger-id: 7c655a64-ec5b-4fa3-bd22-bd023904c79d
+        gcb-trigger-region: global
+        managed-by: gcp-cloud-build-deploy-cloud-run
+        run.googleapis.com/startupProbeType: Default
+    spec:
+      containerConcurrency: 40
+      containers:
+      - env:
+        - name: DATABASE_HOST
+          value: /cloudsql/data-pipelines-450611:us-central1:builder-love
+        - name: DATABASE_USER
+          value: api_user
+        - name: DATABASE_NAME
+          value: postgres
+        - name: GCP_PROJECT_ID
+          value: data-pipelines-450611
+        - name: GCP_LOCATION
+          value: us-central1
+        - name: ENV
+          value: development
+        - name: GCE_EMBED_URL
+          value: http://10.128.0.2:8000/embed
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              key: latest
+              name: api_user_pwd
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              key: latest
+              name: API_KEY
+        image: us-central1-docker.pkg.dev/data-pipelines-450611/cloud-run-source-deploy/api/bl-api-stg:e7478a5ee2daee371ceedb0b6d126d5d80a23dea
+        name: bl-api-1
+        ports:
+        - containerPort: 8080
+          name: http1
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 512Mi
+        startupProbe:
+          failureThreshold: 1
+          periodSeconds: 240
+          tcpSocket:
+            port: 8080
+          timeoutSeconds: 240
+      serviceAccountName: vercel-backend-sa@data-pipelines-450611.iam.gserviceaccount.com
+      timeoutSeconds: 300
+  traffic:
+  - latestRevision: true
+    percent: 100
+status:
+  address:
+    url: https://bl-api-dev-j3kmnvk35q-uc.a.run.app
+  conditions:
+  - lastTransitionTime: '2025-09-03T16:57:21.649523Z'
+    status: 'True'
+    type: Ready
+  - lastTransitionTime: '2025-09-03T16:57:20.390161Z'
+    status: 'True'
+    type: ConfigurationsReady
+  - lastTransitionTime: '2025-09-03T16:57:21.609334Z'
+    status: 'True'
+    type: RoutesReady
+  latestCreatedRevisionName: bl-api-dev-00076-mmg
+  latestReadyRevisionName: bl-api-dev-00076-mmg
+  observedGeneration: 76
+  traffic:
+  - latestRevision: true
+    percent: 100
+    revisionName: bl-api-dev-00076-mmg
+  url: https://bl-api-dev-j3kmnvk35q-uc.a.run.app
