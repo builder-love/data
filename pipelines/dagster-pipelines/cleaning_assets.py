@@ -223,7 +223,7 @@ def create_process_compressed_contributors_data_asset(env_prefix: str):
                     # first get data_timestamp from source and target tables to compare
                     result = conn.execute(text(f"select max(data_timestamp) from {raw_schema}.project_repos_contributors"))
                     max_source_ts_aware = result.scalar()
-                    result = conn.execute(text(f"select max(data_timestamp) from {clean_schema}.latest_contributors"))
+                    result = conn.execute(text(f"select max(data_timestamp) from {raw_schema}.latest_contributors"))
                     target_ts_aware_contributors = result.scalar()
 
                     # confirm max_source_ts_aware and target_ts_aware_contributors are not None
